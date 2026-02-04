@@ -1,8 +1,0 @@
-{
-	"SourceFiles": [
-		"C:\\Github\\UE5-EmploymentProj\\EmploymentProj\\Source\\EmploymentProj\\EmploymentProj.Build.cs",
-		"C:\\Github\\UE5-EmploymentProj\\EmploymentProj\\Source\\EmploymentProj.Target.cs",
-		"C:\\Github\\UE5-EmploymentProj\\EmploymentProj\\Source\\EmploymentProjEditor.Target.cs"
-	],
-	"EngineVersion": "5.7.2"
-}
