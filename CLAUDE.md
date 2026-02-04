@@ -8,6 +8,7 @@ UE5 C++ multiplayer extraction shooter ("EmploymentProj") - a portfolio project 
 
 - **DOCS.md**: Technical roadmap - maps job posting requirements to implementation stages and UE5 architecture decisions
 - **GAME.md**: Game design document - gameplay systems, core loop, and scope definitions
+- **Notes/**: Per-stage technical study notes (01_GameplayFramework, 02_Replication, 03_NetPrediction, 04_GAS) - contain UE5 API details, code patterns, and implementation checklists
 
 ## Architecture (Target)
 
