@@ -6,9 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 UE5 C++ multiplayer extraction shooter ("EmploymentProj") - a portfolio project demonstrating UE5 gameplay programming, networking/replication, and GAS. All documentation is in Korean.
 
-- **DOCS.md**: Technical roadmap - maps job posting requirements to implementation stages and UE5 architecture decisions
-- **GAME.md**: Game design document - gameplay systems, core loop, and scope definitions
-- **Notes/**: Per-stage technical study notes (01_GameplayFramework, 02_Replication, 03_NetPrediction, 04_GAS) - contain UE5 API details, code patterns, and implementation checklists
+- **DOCS/DOCS.md**: Technical roadmap - maps job posting requirements to implementation stages and UE5 architecture decisions
+- **DOCS/GAME.md**: Game design document - gameplay systems, core loop, and scope definitions
+- **DOCS/Notes/**: Per-stage technical study notes (01_GameplayFramework, 02_Replication, 03_NetPrediction, 04_GAS) - contain UE5 API details, code patterns, and implementation checklists
 
 ## Architecture (Target)
 
