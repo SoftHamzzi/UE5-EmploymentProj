@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="18.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <None Include="..\..\.vsconfig" />
+    <Filter Include="Config">
+      <UniqueIdentifier>{FA535FFB-25E1-3D20-B416-52F9BE21E06E}</UniqueIdentifier>
+    </Filter>
+    <None Include="..\..\Config\DefaultEditor.ini">
+      <Filter>Config</Filter>
+    </None>
+    <None Include="..\..\Config\DefaultEngine.ini">
+      <Filter>Config</Filter>
+    </None>
+    <None Include="..\..\Config\DefaultGame.ini">
+      <Filter>Config</Filter>
+    </None>
+    <None Include="..\..\Config\DefaultInput.ini">
+      <Filter>Config</Filter>
+    </None>
+    <None Include="..\..\EmploymentProj.uproject" />
+    <None Include="..\..\EmploymentProj.uproject.DotSettings.user" />
+    <Filter Include="Source">
+      <UniqueIdentifier>{F31BBDD1-B3E8-3BCC-9652-680E16935819}</UniqueIdentifier>
+    </Filter>
+    <None Include="..\..\Source\EmploymentProj.Target.cs">
+      <Filter>Source</Filter>
+    </None>
+    <None Include="..\..\Source\EmploymentProjEditor.Target.cs">
+      <Filter>Source</Filter>
+    </None>
+    <Filter Include="Source\EmploymentProj">
+      <UniqueIdentifier>{CEC1AA7F-3326-3BDE-90F3-3250FFECDB39}</UniqueIdentifier>
+    </Filter>
+    <None Include="..\..\Source\EmploymentProj\EmploymentProj.Build.cs">
+      <Filter>Source\EmploymentProj</Filter>
+    </None>
+    <ClCompile Include="..\..\Source\EmploymentProj\EmploymentProj.cpp">
+      <Filter>Source\EmploymentProj</Filter>
+    </ClCompile>
+    <ClInclude Include="..\..\Source\EmploymentProj\EmploymentProj.h">
+      <Filter>Source\EmploymentProj</Filter>
+    </ClInclude>
+    <Filter Include="Source\EmploymentProj\Private">
+      <UniqueIdentifier>{A5B50917-9F22-3377-BB35-69558D948295}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source\EmploymentProj\Private\Core">
+      <UniqueIdentifier>{DB5D2DA8-3EC8-3822-833C-B8E8402EF73F}</UniqueIdentifier>
+    </Filter>
+    <ClCompile Include="..\..\Source\EmploymentProj\Private\Core\EPGameMode.cpp">
+      <Filter>Source\EmploymentProj\Private\Core</Filter>
+    </ClCompile>
+    <Filter Include="Source\EmploymentProj\Public">
+      <UniqueIdentifier>{2316D6F7-4D8D-3566-9BE2-9CC93032E5BE}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source\EmploymentProj\Public\Core">
+      <UniqueIdentifier>{BF80DA52-CC26-33B1-BEDC-A221E1EBA590}</UniqueIdentifier>
+    </Filter>
+    <ClInclude Include="..\..\Source\EmploymentProj\Public\Core\EPGameMode.h">
+      <Filter>Source\EmploymentProj\Public\Core</Filter>
+    </ClInclude>
+    <Filter Include="Source\EmploymentProj\Public\Types">
+      <UniqueIdentifier>{658EB6B3-9226-3DE8-B9D9-7AF630A2FE42}</UniqueIdentifier>
+    </Filter>
+    <ClInclude Include="..\..\Source\EmploymentProj\Public\Types\EPTypes.h">
+      <Filter>Source\EmploymentProj\Public\Types</Filter>
+    </ClInclude>
+    <None Include="..\..\UpgradeLog.htm" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,14 @@
+{
+    "Version": "1.2",
+    "Data": {
+        "Source": "c:\\github\\ue5-employmentproj\\employmentproj\\source\\employmentproj\\private\\eptypes.cpp",
+        "ProvidedModule": "",
+        "PCH": "c:\\github\\ue5-employmentproj\\employmentproj\\intermediate\\build\\win64\\x64\\employmentprojeditor\\development\\unrealed\\sharedpch.unrealed.project.valapi.valexpapi.cpp20.h.pch",
+        "Includes": [
+            "c:\\github\\ue5-employmentproj\\employmentproj\\intermediate\\build\\win64\\x64\\unrealeditor\\development\\employmentproj\\definitions.employmentproj.h",
+            "c:\\github\\ue5-employmentproj\\employmentproj\\source\\employmentproj\\public\\eptypes.h"
+        ],
+        "ImportedModules": [],
+        "ImportedHeaderUnits": []
+    }
+}

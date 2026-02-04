@@ -29,25 +29,51 @@ UE5 dedicated server model. All game logic is server-authoritative.
 - AI: Behavior Tree based simple enemies (patrol→detect→chase→shoot)
 - Data-driven: UPrimaryDataAsset for weapons, items, vending machine tables
 
+## Project Structure
+
+```
+UE5-EmploymentProj/          <- Git root
+├── CLAUDE.md
+├── DOCS/                    <- Design docs & study notes
+├── .claude/                 <- Claude Code config (agents, skills, scripts)
+└── EmploymentProj/          <- UE5 project root
+    ├── EmploymentProj.uproject
+    ├── Source/
+    ├── Config/
+    ├── Content/
+    └── Binaries/
+```
+
 ## Build Commands
 
-UE5 project (once .uproject exists):
+UE5 project (run from EmploymentProj/ subdirectory):
 
 ```bash
 # Generate VS project files (Windows)
-UnrealBuildTool.exe -projectfiles -project="EmploymentProj.uproject" -game -engine
+UnrealBuildTool.exe -projectfiles -project="EmploymentProj/EmploymentProj.uproject" -game -engine
 
 # Build (Development Editor)
-UnrealBuildTool.exe EmploymentProj Win64 Development -project="EmploymentProj.uproject"
+UnrealBuildTool.exe EmploymentProj Win64 Development -project="EmploymentProj/EmploymentProj.uproject"
 
 # Build (Development Server - for dedicated server)
-UnrealBuildTool.exe EmploymentProjServer Win64 Development -project="EmploymentProj.uproject"
+UnrealBuildTool.exe EmploymentProjServer Win64 Development -project="EmploymentProj/EmploymentProj.uproject"
 ```
+
+## Design Principles
+
+This is a **job portfolio project**. Code must be structurally complete, not just functional.
+
+- **Public/Private folder separation**: Follow UE5 standard module layout (headers in Public/, implementations in Private/) even for a single module, to demonstrate production-level project structure
+- **Minimal access**: Use protected/private for members not needed externally. Apply least-privilege UPROPERTY specifiers
+- **Minimal includes**: Use forward declarations in headers. Only #include in .cpp files
+- **Comments explain "why"**: Let code speak for "what". Comments justify design decisions
+- **Server authority**: All game logic runs on server. Clients only request. Always check HasAuthority()
 
 ## Conventions
 
 - All gameplay C++ classes use UE5 reflection macros (UCLASS, UPROPERTY, UFUNCTION)
 - Replicated variables use `ReplicatedUsing` with `OnRep_` callbacks where client-side reaction is needed
 - Server RPCs are prefixed `Server_` (e.g., `Server_Fire`, `Server_UseVendingMachine`)
+- Source layout: `Public/` for headers, `Private/` for .cpp, organized by feature (Core/, Data/, Types/)
 - Git branching: `main` (always builds), `feature/*` per system (e.g., `feature/net-fire`, `feature/gas`)
 - Platform: Windows (win32)

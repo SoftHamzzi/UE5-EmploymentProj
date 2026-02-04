@@ -1,0 +1,9 @@
+{
+	"RemapUnityFiles": 
+	{
+		"Module.EmploymentProj.gen.cpp.obj": [
+			"EmploymentProj.init.gen.cpp.obj",
+			"EPTypes.gen.cpp.obj"
+		]
+	}
+}

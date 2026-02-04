@@ -1,0 +1,21 @@
+{
+    "Version": "1.2",
+    "Data": {
+        "Source": "c:\\github\\ue5-employmentproj\\employmentproj\\source\\employmentproj\\private\\core\\epgamemode.cpp",
+        "ProvidedModule": "",
+        "PCH": "c:\\github\\ue5-employmentproj\\employmentproj\\intermediate\\build\\win64\\x64\\employmentprojeditor\\development\\unrealed\\sharedpch.unrealed.project.valapi.valexpapi.cpp20.h.pch",
+        "Includes": [
+            "c:\\github\\ue5-employmentproj\\employmentproj\\intermediate\\build\\win64\\x64\\unrealeditor\\development\\employmentproj\\definitions.employmentproj.h",
+            "c:\\github\\ue5-employmentproj\\employmentproj\\source\\employmentproj\\public\\core\\epgamemode.h",
+            "c:\\program files\\epic games\\ue_5.7\\engine\\source\\runtime\\engine\\classes\\gameframework\\gamemode.h",
+            "c:\\program files\\epic games\\ue_5.7\\engine\\source\\runtime\\engine\\classes\\gameframework\\gamemodebase.h",
+            "c:\\program files\\epic games\\ue_5.7\\engine\\source\\runtime\\engine\\classes\\engine\\serverstatreplicator.h",
+            "c:\\program files\\epic games\\ue_5.7\\engine\\intermediate\\build\\win64\\unrealeditor\\inc\\engine\\uht\\serverstatreplicator.generated.h",
+            "c:\\program files\\epic games\\ue_5.7\\engine\\intermediate\\build\\win64\\unrealeditor\\inc\\engine\\uht\\gamemodebase.generated.h",
+            "c:\\program files\\epic games\\ue_5.7\\engine\\intermediate\\build\\win64\\unrealeditor\\inc\\engine\\uht\\gamemode.generated.h",
+            "c:\\github\\ue5-employmentproj\\employmentproj\\intermediate\\build\\win64\\unrealeditor\\inc\\employmentproj\\uht\\epgamemode.generated.h"
+        ],
+        "ImportedModules": [],
+        "ImportedHeaderUnits": []
+    }
+}
