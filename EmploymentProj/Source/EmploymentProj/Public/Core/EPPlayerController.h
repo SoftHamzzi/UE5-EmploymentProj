@@ -17,6 +17,11 @@ class EMPLOYMENTPROJ_API AEPPlayerController : public APlayerController
 public:
 	AEPPlayerController();
 	
+	FORCEINLINE UInputAction* GetMoveAction() const { return MoveAction; }
+	FORCEINLINE UInputAction* GetLookAction() const { return LookAction; }
+	FORCEINLINE UInputAction* GetJumpAction() const { return JumpAction; }
+	FORCEINLINE UInputAction* GetSprintAction() const { return SprintAction; }
+	
 protected:
 	// --- Enhanced Input ---
 	
@@ -32,6 +37,9 @@ protected:
 	
 	UPROPERTY(EditDefaultsOnly, Category = "Input")
 	TObjectPtr<UInputAction> JumpAction;
+	
+	UPROPERTY(EditDefaultsOnly, Category = "Input")
+	TObjectPtr<UInputAction> SprintAction;
 	
 	// --- 오버라이드 ---
 	virtual void BeginPlay() override;

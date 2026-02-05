@@ -25,6 +25,12 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Camera")
 	TObjectPtr<UCameraComponent> FirstPersonCamera;
 	
+	UPROPERTY(EditDefaultsOnly, Category = "Movement")
+	float WalkSpeed = 350.f;
+	
+	UPROPERTY(EditDefaultsOnly, Category = "Movement")
+	float SprintSpeed = 650.f;
+	
 	// --- 오버라이드 ---
 	virtual void BeginPlay() override;
 	
@@ -41,5 +47,8 @@ protected:
 	// 점프
 	void Input_Jump(const FInputActionValue& Value);
 	void Input_StopJumping(const FInputActionValue& Value);
-
+	
+	// 질주
+	void Input_StartSprint(const FInputActionValue& Value);
+	void Input_StopSprint(const FInputActionValue& Value);
 };

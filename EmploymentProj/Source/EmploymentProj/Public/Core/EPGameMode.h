@@ -6,9 +6,8 @@
 #include "GameFramework/GameMode.h"
 #include "EPGameMode.generated.h"
 
-/**
- * 
- */
+class APlayerStart;
+
 UCLASS()
 class EMPLOYMENTPROJ_API AEPGameMode : public AGameMode
 {
@@ -29,7 +28,12 @@ protected:
 	// 생존 플레이어 수 (서버 전용, 복제 안 함)
 	int32 AlivePlayerCount = 0;
 	
+	UPROPERTY()
+	TArray<AActor*> PlayerStarts;
+	
 	// --- AGameMode 오버라이드 ---
+	virtual void BeginPlay() override;
+	
 	// 플레이어 로그인 완료 시
 	virtual void PostLogin(APlayerController* NewPlayer) override;
 	
