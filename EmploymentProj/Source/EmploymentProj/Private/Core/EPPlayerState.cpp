@@ -28,9 +28,9 @@ void AEPPlayerState::SetDead(bool bDead)
 	
 }
 	
-void AEPPlayerState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& LifetimeProps) const
+void AEPPlayerState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
 {
-	Super::GetLifetimeReplicatedProps(LifetimeProps);
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 	DOREPLIFETIME(AEPPlayerState, KillCount);
 	DOREPLIFETIME(AEPPlayerState, bIsExtracted);
 	DOREPLIFETIME(AEPPlayerState, bIsDead);

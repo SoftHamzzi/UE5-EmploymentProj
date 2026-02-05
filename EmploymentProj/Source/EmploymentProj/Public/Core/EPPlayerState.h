@@ -39,5 +39,5 @@ public:
 	void SetDead(bool bDead);
 	
 protected:
-	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& LifetimeProps) const override;
+	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 };
