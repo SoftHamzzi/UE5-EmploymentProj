@@ -86,3 +86,16 @@ Thumbs.db
 
 EmploymentProj/Backup/
 UpgradeLog.htm
+
+# ============================================================
+# External Assets (Large files - use Git LFS if needed)
+# ============================================================
+
+EmploymentProj/Content/Megascans/
+EmploymentProj/Content/MSPresets/
+
+# ============================================================
+# Misc
+# ============================================================
+
+AGENTS.md
