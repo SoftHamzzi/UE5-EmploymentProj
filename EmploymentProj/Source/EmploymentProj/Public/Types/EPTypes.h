@@ -8,9 +8,9 @@
 UENUM(BlueprintType)
 enum class EEPMatchPhase : uint8
 {
-	Waiting UMETA(DisplayName = "Waiting"),
-	Playing UMETA(DisplayName = "Playing"),
-	Ended UMETA(DisplayName = "Ended")
+	Waiting	UMETA(DisplayName = "Waiting"),
+	Playing	UMETA(DisplayName = "Playing"),
+	Ended	UMETA(DisplayName = "Ended")
 };
 
 UENUM(BlueprintType)

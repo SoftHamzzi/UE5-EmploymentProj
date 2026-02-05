@@ -25,6 +25,9 @@ protected:
 	int32 MinPlayersToStart = 1;
 	
 	FTimerHandle MatchTimerHandle;
+
+	// 생존 플레이어 수 (서버 전용, 복제 안 함)
+	int32 AlivePlayerCount = 0;
 	
 	// --- AGameMode 오버라이드 ---
 	// 플레이어 로그인 완료 시

@@ -141,6 +141,10 @@ protected:
     // 매치 타이머 핸들
     FTimerHandle MatchTimerHandle;
 
+    // 생존 플레이어 수 (서버 전용, 복제 안 함)
+    // 타르코프처럼 클라이언트는 현재 방에 몇 명 있는지 모름
+    int32 AlivePlayerCount = 0;
+
     // --- AGameMode 오버라이드 ---
 
     // 플레이어 로그인 완료 시
@@ -203,6 +207,7 @@ public:
     AEPGameState();
 
     // --- 복제 변수 ---
+    // 주의: 플레이어 수(AlivePlayerCount)는 복제하지 않음. 타르코프처럼 몇 명인지 모르게.
 
     // 매치 남은 시간 (초). 서버에서 매 초 갱신.
     UPROPERTY(ReplicatedUsing = OnRep_RemainingTime, BlueprintReadOnly, Category = "Match")
@@ -211,10 +216,6 @@ public:
     // 현재 매치 단계 (UI 표시용)
     UPROPERTY(ReplicatedUsing = OnRep_MatchPhase, BlueprintReadOnly, Category = "Match")
     EEPMatchPhase MatchPhase;
-
-    // 생존 플레이어 수
-    UPROPERTY(Replicated, BlueprintReadOnly, Category = "Match")
-    int32 AlivePlayerCount;
 
     // --- OnRep 콜백 ---
 
@@ -241,6 +242,7 @@ protected:
 **핵심 포인트:**
 - `RemainingTime`: OnRep으로 클라에서 UI 갱신 트리거
 - `MatchPhase`: 게임 로직용 단순 enum (AGameMode의 MatchState와 동기화)
+- `AlivePlayerCount`는 GameState에 **두지 않음**: 타르코프처럼 플레이어는 현재 방에 몇 명 있는지 몰라야 함. 서버(GameMode)에서만 관리.
 - `GetLifetimeReplicatedProps()`: 모든 Replicated 변수를 등록하는 필수 오버라이드
 
 ---
@@ -323,10 +325,9 @@ public:
     AEPPlayerState();
 
     // --- 복제 변수 ---
-
-    // 소지금
-    UPROPERTY(ReplicatedUsing = OnRep_Money, BlueprintReadOnly, Category = "Stats")
-    int32 Money;
+    // 주의: 매치 내 돈(Money)은 여기에 두지 않음.
+    // 타르코프처럼 돈은 인벤토리 아이템으로 처리. 사망 시 자연스럽게 드랍됨.
+    // 아래는 매치 외 "계정 잔고"나 매치 결과 집계용으로만 사용하거나, 인벤토리 구현 전 임시용.
 
     // 킬 수
     UPROPERTY(Replicated, BlueprintReadOnly, Category = "Stats")
@@ -340,15 +341,7 @@ public:
     UPROPERTY(Replicated, BlueprintReadOnly, Category = "Stats")
     bool bIsDead;
 
-    // --- OnRep 콜백 ---
-
-    UFUNCTION()
-    void OnRep_Money();
-
     // --- 서버 전용 함수 ---
-
-    // 돈 추가 (킬 보상, 탈출 보너스 등)
-    void AddMoney(int32 Amount);
 
     // 킬 카운트 증가
     void AddKill();
@@ -365,9 +358,9 @@ protected:
 ```
 
 **핵심 포인트:**
-- `Money`만 OnRep 사용 (UI 갱신 필요). 나머지는 단순 Replicated.
+- `Money`는 PlayerState에 **두지 않음**: 타르코프처럼 매치 내 돈은 인벤토리 아이템으로 처리. 가방에 돈이 있어야 자판기 사용 가능. 사망 시 인벤토리와 함께 드랍.
 - Setter 함수는 서버에서만 호출. Authority 체크 포함.
-- 1단계에서는 변수 선언 + 복제 등록까지. 실제 로직은 2단계에서.
+- 1단계에서는 변수 선언 + 복제 등록까지. 인벤토리 시스템은 후순위.
 
 ---
 
@@ -653,7 +646,8 @@ UE5Editor.exe ProjectName 127.0.0.1 -game -log
 - [ ] 제한 시간 만료 시 매치 종료 (WaitingPostMatch 전환)
 - [ ] 2인 접속 시 각각 다른 위치에 스폰
 - [ ] 클라이언트에서 RemainingTime이 실시간 감소 (복제 확인)
-- [ ] 클라이언트에서 PlayerState 변수(Money 등) 복제 확인
+- [ ] 클라이언트에서 PlayerState 변수(KillCount, bIsExtracted 등) 복제 확인
+- [ ] 클라이언트에서 AlivePlayerCount는 알 수 없음 (GameMode에만 존재, 복제 안 됨)
 - [ ] DataAsset으로 Pistol, Rifle 에셋 생성 가능
 - [ ] 모든 핵심 변수에 UPROPERTY 매크로 적용
 - [ ] 모든 클래스에 UCLASS, GENERATED_BODY 적용
@@ -671,7 +665,7 @@ void AEPGameState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLife
 
     DOREPLIFETIME(AEPGameState, RemainingTime);
     DOREPLIFETIME(AEPGameState, MatchPhase);
-    DOREPLIFETIME(AEPGameState, AlivePlayerCount);
+    // AlivePlayerCount는 GameState에 없음 - GameMode(서버 전용)에서 관리
 }
 ```
 - `#include "Net/UnrealNetwork.h"` 필수
