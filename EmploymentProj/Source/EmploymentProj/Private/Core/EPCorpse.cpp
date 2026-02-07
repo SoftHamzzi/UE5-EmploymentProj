@@ -2,26 +2,37 @@
 
 
 #include "Core/EPCorpse.h"
+#include "Net/UnrealNetwork.h"
+
+#include "Core/EPCharacter.h"
+#include "Types/EPTypes.h"
 
 // Sets default values
 AEPCorpse::AEPCorpse()
 {
- 	// Set this actor to call Tick() every frame.  You can turn this off to improve performance if you don't need it.
-	PrimaryActorTick.bCanEverTick = true;
-
+	bReplicates = true;
+	// bAlwaysRelevant = false; (기본 값)
+	
+	CorpseMesh = CreateDefaultSubobject<USkeletalMeshComponent>("CorpseMesh");
+	RootComponent = CorpseMesh;
 }
 
-// Called when the game starts or when spawned
-void AEPCorpse::BeginPlay()
+// 사망한 캐릭터로부터 초기화 (서버에서 호출)
+void AEPCorpse::InitializeFromCharacter(AEPCharacter* DeadCharacter)
 {
-	Super::BeginPlay();
+	
+}
+	
+// 상호작용 (루팅)
+void AEPCorpse::Interact(AEPCharacter* Looter)
+{
 	
 }
 
-// Called every frame
-void AEPCorpse::Tick(float DeltaTime)
+void AEPCorpse::GetLifetimeReplicatedProps(TArray<class FLifetimeProperty>& OutLifetimeProps) const
 {
-	Super::Tick(DeltaTime);
-
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+	
+	DOREPLIFETIME(AEPCorpse, Inventory);
+	DOREPLIFETIME(AEPCorpse, PlayerName);
 }
-

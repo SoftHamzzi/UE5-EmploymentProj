@@ -5,6 +5,18 @@
 #include "CoreMinimal.h"
 #include "EPTypes.generated.h"
 
+USTRUCT(BlueprintType)
+struct FItemData
+{
+	GENERATED_BODY()
+	
+	UPROPERTY(EditAnywhere)
+	FName ItemName;
+	
+	UPROPERTY(EditAnywhere)
+	int32 Value;
+};
+
 UENUM(BlueprintType)
 enum class EEPMatchPhase : uint8
 {
