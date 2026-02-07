@@ -22,6 +22,27 @@ AEPGameMode::AEPGameMode()
 	GameStateClass = AEPGameState::StaticClass();
 }
 
+// --- Server 테스트용 ---
+void AEPGameMode::AddKillToPlayer(int32 PlayerIndex)
+{
+	if (!HasAuthority()) return;
+
+	int32 Index = 0;
+	for (FConstPlayerControllerIterator It = GetWorld()->GetPlayerControllerIterator(); It; ++It, ++Index)
+	{
+		if (Index != PlayerIndex) continue;
+
+		if (APlayerController* PC = It->Get())
+		{
+			if (AEPPlayerState* PS = PC->GetPlayerState<AEPPlayerState>())
+			{
+				PS->AddKill();
+			}
+		}
+		return;
+	}
+}
+
 // --- AGameMode 오버라이드 ---
 void AEPGameMode::BeginPlay()
 {
@@ -33,6 +54,8 @@ void AEPGameMode::BeginPlay()
 // 플레이어 로그인 완료 시
 void AEPGameMode::PostLogin(APlayerController* NewPlayer) {
 	Super::PostLogin(NewPlayer);
+	
+	UE_LOG(LogTemp, Warning, TEXT("Player %d Join."), NewPlayer->GetUniqueID());
 }
 	
 // 플레이어 로그아웃 시
@@ -44,11 +67,23 @@ void AEPGameMode::Logout(AController* Exiting)
 // 스폰 위치 결정(랜덤 배정)
 AActor* AEPGameMode::ChoosePlayerStart_Implementation(AController* Player)
 {
-	if (PlayerStarts.Num() > 0)
+	TArray<AActor*> Available;
+	
+	for (AActor* Start : PlayerStarts)
 	{
-		const int32 Index = FMath::RandRange(0, PlayerStarts.Num() - 1);
-		return PlayerStarts[Index];
+		if (Start && !UsedPlayerStarts.Contains(Start))
+			Available.Add(Start);
 	}
+	
+	if (Available.Num() > 0)
+	{
+		const int32 Index = FMath::RandRange(0, Available.Num() - 1);
+		AActor* Chosen = Available[Index];
+		UsedPlayerStarts.Add(Chosen);
+		return Chosen;
+	}
+	
+	UsedPlayerStarts.Reset();
 	return Super::ChoosePlayerStart_Implementation(Player);
 }
 	

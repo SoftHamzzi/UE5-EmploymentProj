@@ -16,6 +16,11 @@ class EMPLOYMENTPROJ_API AEPGameMode : public AGameMode
 	
 public:
 	AEPGameMode();
+
+	// --- Exec 테스트 ---
+	// 서버 콘솔에서 호출: 특정 플레이어의 킬 카운트 증가
+	UFUNCTION(Exec)
+	void AddKillToPlayer(int32 PlayerIndex);
 	
 protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Match")
@@ -54,6 +59,9 @@ protected:
 	
 	// 매치 시작 가능 여부
 	virtual bool ReadyToStartMatch_Implementation() override;
+	
+	TSet<TWeakObjectPtr<AActor>> UsedPlayerStarts;
+	
 	
 	// --- 매치 로직 ---
 	// 매치 타이머 틱 (1초마다)

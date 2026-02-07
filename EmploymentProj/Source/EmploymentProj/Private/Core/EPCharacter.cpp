@@ -4,6 +4,7 @@
 #include "Core/EPCharacter.h"
 #include "Camera/CameraComponent.h"
 #include "Core/EPPlayerController.h"
+#include "Net/UnrealNetwork.h"
 
 #include "InputAction.h"
 #include "InputActionValue.h"
@@ -13,15 +14,17 @@
 AEPCharacter::AEPCharacter()
 {
 	// PrimaryActorTick.bCanEverTick = true;
+	GetMesh()->FirstPersonPrimitiveType = EFirstPersonPrimitiveType::WorldSpaceRepresentation;
 	
 	FirstPersonCamera = CreateDefaultSubobject<UCameraComponent>("Camera");
 	FirstPersonCamera->bUsePawnControlRotation = true;
-	FirstPersonCamera->SetupAttachment(RootComponent);
+	FirstPersonCamera->SetupAttachment(GetMesh(), FName("head"));
+	FirstPersonCamera->SetRelativeLocationAndRotation(FirstPersonCameraOffset, FRotator(0.0f, 90.0f, -90.0f));
 	bUseControllerRotationYaw = true;
 	
 	UCharacterMovementComponent* Movement = GetCharacterMovement();
 	Movement->JumpZVelocity = 420.f;
-	Movement->AirControl = 0.1f;
+	Movement->AirControl = 0.5f;
 	
 	Movement->BrakingDecelerationFalling = 700.f;
 	// Movement->FallingLateralFriction = 0f; // 공중 마찰력
@@ -118,10 +121,29 @@ void AEPCharacter::Input_StopJumping(const FInputActionValue& Value)
 
 void AEPCharacter::Input_StartSprint(const FInputActionValue& Value)
 {
-	GetCharacterMovement()->MaxWalkSpeed = SprintSpeed;
+	Server_SetSprinting(true);
 }
 
 void AEPCharacter::Input_StopSprint(const FInputActionValue& Value)
 {
-	GetCharacterMovement()->MaxWalkSpeed = WalkSpeed;
+	Server_SetSprinting(false);
+}
+
+void AEPCharacter::OnRep_IsSprinting()
+{
+	GetCharacterMovement()->MaxWalkSpeed = bIsSprinting ? SprintSpeed : WalkSpeed;
+}
+
+void AEPCharacter::Server_SetSprinting_Implementation(bool bNewSprinting)
+{
+	bIsSprinting = bNewSprinting;
+	
+	GetCharacterMovement()->MaxWalkSpeed = bIsSprinting ? SprintSpeed : WalkSpeed;
+}
+
+void AEPCharacter::GetLifetimeReplicatedProps(TArray<class FLifetimeProperty>& OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+	
+	DOREPLIFETIME(AEPCharacter, bIsSprinting);
 }
