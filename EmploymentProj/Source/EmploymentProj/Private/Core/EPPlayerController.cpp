@@ -4,6 +4,7 @@
 
 #include "EnhancedInputSubsystems.h"
 #include "InputAction.h"
+#include "Core/EPCharacter.h"
 
 AEPPlayerController::AEPPlayerController()
 {
@@ -24,4 +25,9 @@ void AEPPlayerController::BeginPlay()
 void AEPPlayerController::OnPossess(APawn* InPawn)
 {
 	Super::OnPossess(InPawn);
+}
+
+void AEPPlayerController::Client_OnKill_Implementation(AEPCharacter* Victim)
+{
+	
 }

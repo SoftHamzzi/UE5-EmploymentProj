@@ -23,13 +23,13 @@ void AEPGameState::OnRep_MatchPhase()
 // GameMode에서 호출. 남은 시간 설정
 void AEPGameState::SetRemainingTime(float NewTime)
 {
-	
+	RemainingTime = NewTime;
 }
 	
 // GameMode에서 호출. 매치 단계 변경
 void AEPGameState::SetMatchPhase(EEPMatchPhase NewPhase)
 {
-	
+	MatchPhase = NewPhase;
 }
 	
 // Replication 등록

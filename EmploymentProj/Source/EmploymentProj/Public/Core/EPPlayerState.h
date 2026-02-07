@@ -13,30 +13,32 @@ class EMPLOYMENTPROJ_API AEPPlayerState : public APlayerState
 	
 public:
 	AEPPlayerState();
-	// --- 복제 변수 ---
 	
-	// 킬 수
-	UPROPERTY(Replicated, BlueprintReadOnly, Category = "Stats")
-	int32 KillCount;
+	// --- Getter ---
+	int32 GetKillCount() const { return KillCount; }
 	
-	// 탈출 성공 여부
-	UPROPERTY(Replicated, BlueprintReadOnly, Category = "Stats")
-	bool bIsExtracted;
-	
-	// 사망 여부
-	UPROPERTY(Replicated, BlueprintReadOnly, Category = "Stats")
-	bool bIsDead;
-	
-	// --- OnRep 콜백 ---
-	
-	// 킬 카운트 증가
+	// --- 서버 전용 함수
 	void AddKill();
-	
-	// 탈출 처리
 	void SetExtracted(bool bExtracted);
 	
-	// 사망 처리
-	void SetDead(bool bDead);
+protected:
+	// --- 복제 변수 ---
+	// COND_OwnerOnly: 본인에게만 복제 (타인은 모름)
+	
+	// 킬 수 (본인만 앎)
+	UPROPERTY(ReplicatedUsing = OnRep_KillCount)
+	int32 KillCount = 0;
+	
+	// 탈출 성공 여부 (본인만 앎)
+	UPROPERTY(ReplicatedUsing = OnRep_IsExtracted)
+	bool bIsExtracted = false;
+	
+	// --- OnRep 콜백 ---
+	UFUNCTION()
+	void OnRep_KillCount();
+	
+	UFUNCTION()
+	void OnRep_IsExtracted();
 	
 protected:
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;

@@ -34,7 +34,8 @@ Source/
     │   │   ├── EPGameState.h
     │   │   ├── EPPlayerController.h
     │   │   ├── EPPlayerState.h
-    │   │   └── EPCharacter.h
+    │   │   ├── EPCharacter.h
+    │   │   └── EPCorpse.h            ← 시체 액터 (루팅용)
     │   ├── Data/
     │   │   ├── EPWeaponData.h
     │   │   └── EPItemData.h
@@ -287,12 +288,21 @@ protected:
     UPROPERTY(EditDefaultsOnly, Category = "Input")
     TObjectPtr<UInputAction> JumpAction;
 
+    UPROPERTY(EditDefaultsOnly, Category = "Input")
+    TObjectPtr<UInputAction> SprintAction;
+
     // --- 오버라이드 ---
 
     virtual void BeginPlay() override;
 
     // Input Mapping Context 등록
     virtual void OnPossess(APawn* InPawn) override;
+
+public:
+    // --- Client RPC ---
+    // 킬 피드백 (서버 → 킬러 클라)
+    UFUNCTION(Client, Reliable)
+    void Client_OnKill(AEPCharacter* Victim);
 };
 ```
 
@@ -300,7 +310,7 @@ protected:
 - Enhanced Input 사용 (UE5 표준)
 - `BeginPlay()`에서 Input Mapping Context를 Subsystem에 등록
 - Input Action 바인딩은 Character 쪽에서 처리 (SetupPlayerInputComponent)
-- 1단계에서는 기본 이동 입력만. RPC는 2단계 이후에 추가.
+- `Client_OnKill`: 킬 발생 시 서버가 킬러에게만 피드백 전송 (Client RPC)
 
 ---
 
@@ -324,43 +334,53 @@ class EMPLOYMENTPROJ_API AEPPlayerState : public APlayerState
 public:
     AEPPlayerState();
 
-    // --- 복제 변수 ---
-    // 주의: 매치 내 돈(Money)은 여기에 두지 않음.
-    // 타르코프처럼 돈은 인벤토리 아이템으로 처리. 사망 시 자연스럽게 드랍됨.
-    // 아래는 매치 외 "계정 잔고"나 매치 결과 집계용으로만 사용하거나, 인벤토리 구현 전 임시용.
-
-    // 킬 수
-    UPROPERTY(Replicated, BlueprintReadOnly, Category = "Stats")
-    int32 KillCount;
-
-    // 탈출 성공 여부
-    UPROPERTY(Replicated, BlueprintReadOnly, Category = "Stats")
-    bool bIsExtracted;
-
-    // 사망 여부
-    UPROPERTY(Replicated, BlueprintReadOnly, Category = "Stats")
-    bool bIsDead;
+    // --- Getter ---
+    int32 GetKillCount() const { return KillCount; }
 
     // --- 서버 전용 함수 ---
-
-    // 킬 카운트 증가
     void AddKill();
-
-    // 탈출 처리
     void SetExtracted(bool bExtracted);
 
-    // 사망 처리
-    void SetDead(bool bDead);
-
 protected:
+    // --- 복제 변수 ---
+    // COND_OwnerOnly: 본인에게만 복제 (타인은 모름)
+
+    // 킬 수 (본인만 앎)
+    UPROPERTY(ReplicatedUsing = OnRep_KillCount)
+    int32 KillCount = 0;
+
+    // 탈출 성공 여부 (본인만 앎)
+    UPROPERTY(ReplicatedUsing = OnRep_IsExtracted)
+    bool bIsExtracted = false;
+
+    // --- OnRep 콜백 ---
+    UFUNCTION()
+    void OnRep_KillCount();
+
+    UFUNCTION()
+    void OnRep_IsExtracted();
+
     virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 };
 ```
 
 **핵심 포인트:**
-- `Money`는 PlayerState에 **두지 않음**: 타르코프처럼 매치 내 돈은 인벤토리 아이템으로 처리. 가방에 돈이 있어야 자판기 사용 가능. 사망 시 인벤토리와 함께 드랍.
+- `KillCount`, `bIsExtracted`: **COND_OwnerOnly**로 본인에게만 복제. 타인은 알 수 없음.
+- `bIsDead`: **PlayerState에 두지 않음**. 사망은 Corpse 액터로 처리 (Relevancy 적용).
+- `Money`: **PlayerState에 두지 않음**. 인벤토리 아이템으로 처리.
 - Setter 함수는 서버에서만 호출. Authority 체크 포함.
-- 1단계에서는 변수 선언 + 복제 등록까지. 인벤토리 시스템은 후순위.
+
+```cpp
+// EPPlayerState.cpp
+void AEPPlayerState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+    Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+
+    // 본인에게만 복제
+    DOREPLIFETIME_CONDITION(AEPPlayerState, KillCount, COND_OwnerOnly);
+    DOREPLIFETIME_CONDITION(AEPPlayerState, bIsExtracted, COND_OwnerOnly);
+}
+```
 
 ---
 
@@ -424,7 +444,72 @@ protected:
 
 ---
 
-### 3-6. UEPWeaponData (← UPrimaryDataAsset 상속)
+### 3-6. AEPCorpse (← AActor 상속)
+
+**역할**: 사망한 플레이어의 시체. 루팅 가능.
+
+```cpp
+// EPCorpse.h
+#pragma once
+
+#include "CoreMinimal.h"
+#include "GameFramework/Actor.h"
+#include "EPCorpse.generated.h"
+
+class AEPCharacter;
+
+UCLASS()
+class EMPLOYMENTPROJ_API AEPCorpse : public AActor
+{
+    GENERATED_BODY()
+
+public:
+    AEPCorpse();
+
+    // 사망한 캐릭터로부터 초기화 (서버에서 호출)
+    void InitializeFromCharacter(AEPCharacter* DeadCharacter);
+
+    // 상호작용 (루팅)
+    void Interact(AEPCharacter* Looter);
+
+protected:
+    // 시체 메시
+    UPROPERTY(VisibleAnywhere)
+    TObjectPtr<USkeletalMeshComponent> CorpseMesh;
+
+    // 인벤토리 (복제됨 - Relevancy 범위 내)
+    UPROPERTY(Replicated)
+    TArray<FItemData> Inventory;
+
+    // 플레이어 이름
+    UPROPERTY(Replicated)
+    FString PlayerName;
+
+    virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+};
+```
+
+**핵심 포인트:**
+- `bReplicates = true`: 동적 스폰 시 클라이언트에 복제
+- `bAlwaysRelevant = false` (기본값): Relevancy 적용 → 멀리 있으면 복제 안 됨
+- PlayerState에 bIsDead를 두지 않고, 시체 액터로 분리
+- 사망 처리: Character.Die() → Corpse 스폰 → Character 숨김
+
+```cpp
+// EPCorpse.cpp - Constructor
+AEPCorpse::AEPCorpse()
+{
+    bReplicates = true;
+    // bAlwaysRelevant = false; (기본값)
+
+    CorpseMesh = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("CorpseMesh"));
+    RootComponent = CorpseMesh;
+}
+```
+
+---
+
+### 3-7. UEPWeaponData (← UPrimaryDataAsset 상속)
 
 **역할**: 무기 속성 정의. 에디터에서 DataAsset으로 생성.
 
@@ -592,12 +677,14 @@ AEPGameMode::AEPGameMode()
 
 ### Step 5: PlayerState 복제
 1. GetLifetimeReplicatedProps 구현
-2. Money/KillCount/bIsExtracted/bIsDead 복제 등록
+2. KillCount, bIsExtracted를 **COND_OwnerOnly**로 복제 등록
 3. Setter 함수 구현 (Authority 체크)
-4. OnRep_Money 구현 (로그 출력)
+4. OnRep 함수 구현 (로그 출력)
 5. **빌드 확인**
 
-**테스트**: 콘솔 명령으로 서버에서 Money 변경 → 클라에서 반영 확인
+**테스트**: 2인 접속 → 서버에서 PlayerA의 KillCount 변경 → PlayerA만 반영, PlayerB는 모름
+
+**주의**: bIsDead는 PlayerState에 없음 → Corpse 액터로 처리
 
 ### Step 6: 스폰 시스템
 1. EPGameMode::ChoosePlayerStart_Implementation: 사용되지 않은 PlayerStart 랜덤 선택
@@ -646,7 +733,8 @@ UE5Editor.exe ProjectName 127.0.0.1 -game -log
 - [ ] 제한 시간 만료 시 매치 종료 (WaitingPostMatch 전환)
 - [ ] 2인 접속 시 각각 다른 위치에 스폰
 - [ ] 클라이언트에서 RemainingTime이 실시간 감소 (복제 확인)
-- [ ] 클라이언트에서 PlayerState 변수(KillCount, bIsExtracted 등) 복제 확인
+- [ ] 클라이언트에서 본인의 PlayerState 변수(KillCount, bIsExtracted) 복제 확인 (COND_OwnerOnly)
+- [ ] 타 플레이어의 KillCount, bIsExtracted는 알 수 없음 (0으로 유지)
 - [ ] 클라이언트에서 AlivePlayerCount는 알 수 없음 (GameMode에만 존재, 복제 안 됨)
 - [ ] DataAsset으로 Pistol, Rifle 에셋 생성 가능
 - [ ] 모든 핵심 변수에 UPROPERTY 매크로 적용
@@ -663,13 +751,22 @@ void AEPGameState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLife
 {
     Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 
-    DOREPLIFETIME(AEPGameState, RemainingTime);
-    DOREPLIFETIME(AEPGameState, MatchPhase);
-    // AlivePlayerCount는 GameState에 없음 - GameMode(서버 전용)에서 관리
+    DOREPLIFETIME(AEPGameState, RemainingTime);    // 모두에게 복제
+    DOREPLIFETIME(AEPGameState, MatchPhase);       // 모두에게 복제
+}
+
+void AEPPlayerState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+    Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+
+    // 본인에게만 복제 (타인은 모름)
+    DOREPLIFETIME_CONDITION(AEPPlayerState, KillCount, COND_OwnerOnly);
+    DOREPLIFETIME_CONDITION(AEPPlayerState, bIsExtracted, COND_OwnerOnly);
 }
 ```
 - `#include "Net/UnrealNetwork.h"` 필수
 - `Super::` 호출 빠뜨리지 말 것
+- `COND_OwnerOnly`: 소유 클라이언트에게만 복제 (정보 은폐)
 
 ### Authority 체크
 서버 전용 함수에서는 반드시 확인:

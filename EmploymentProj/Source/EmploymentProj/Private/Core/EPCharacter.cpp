@@ -86,6 +86,8 @@ void AEPCharacter::Input_Move(const FInputActionValue& Value)
 {
 	const FVector2D Input = Value.Get<FVector2D>();
 	
+	if (Controller == nullptr) return;
+	
 	const FRotator YawRotation(0.0, Controller->GetControlRotation().Yaw, 0.0);
 	const FVector ForwardDir = FRotationMatrix(YawRotation).GetUnitAxis(EAxis::X);
 	const FVector RightDir = FRotationMatrix(YawRotation).GetUnitAxis(EAxis::Y);

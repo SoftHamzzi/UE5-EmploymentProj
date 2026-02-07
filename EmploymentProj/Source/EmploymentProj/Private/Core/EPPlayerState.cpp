@@ -8,31 +8,34 @@ AEPPlayerState::AEPPlayerState()
 	
 }
 
-// --- OnRep 콜백 ---
-	
-// 킬 카운트 증가
+// --- 서버 전용 함수
 void AEPPlayerState::AddKill()
 {
-	
+	KillCount++;
 }
-	
-// 탈출 처리
+
 void AEPPlayerState::SetExtracted(bool bExtracted)
 {
-	
+	bIsExtracted = bExtracted;
 }
-	
-// 사망 처리
-void AEPPlayerState::SetDead(bool bDead)
+
+// --- OnRep 콜백 ---
+void AEPPlayerState::OnRep_KillCount()
 {
 	
 }
+
+void AEPPlayerState::OnRep_IsExtracted()
+{
 	
+}
+
 void AEPPlayerState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
-	DOREPLIFETIME(AEPPlayerState, KillCount);
-	DOREPLIFETIME(AEPPlayerState, bIsExtracted);
-	DOREPLIFETIME(AEPPlayerState, bIsDead);
+	
+	// 본인에게만 복제
+	DOREPLIFETIME_CONDITION(AEPPlayerState, KillCount, COND_OwnerOnly);
+	DOREPLIFETIME_CONDITION(AEPPlayerState, bIsExtracted, COND_OwnerOnly);
 	
 }

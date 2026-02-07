@@ -7,6 +7,7 @@
 #include "EPGameMode.generated.h"
 
 class APlayerStart;
+class AEPGameState;
 
 UCLASS()
 class EMPLOYMENTPROJ_API AEPGameMode : public AGameMode
@@ -25,6 +26,9 @@ protected:
 	
 	FTimerHandle MatchTimerHandle;
 
+	UPROPERTY()
+	TObjectPtr<AEPGameState> EPGameState;
+	
 	// 생존 플레이어 수 (서버 전용, 복제 안 함)
 	int32 AlivePlayerCount = 0;
 	
@@ -46,6 +50,7 @@ protected:
 	// MatchState 변경 시 호출
 	virtual void HandleMatchHasStarted() override;
 	virtual void HandleMatchHasEnded() override;
+	virtual void HandleMatchIsWaitingToStart() override;
 	
 	// 매치 시작 가능 여부
 	virtual bool ReadyToStartMatch_Implementation() override;

@@ -56,10 +56,40 @@ AActor* AEPGameMode::ChoosePlayerStart_Implementation(AController* Player)
 void AEPGameMode::HandleMatchHasStarted()
 {
 	Super::HandleMatchHasStarted();
+	
+	if (EPGameState == nullptr) return;
+	
+	EPGameState->SetMatchPhase(EEPMatchPhase::Playing);
+	EPGameState->SetRemainingTime(MatchDuration);
+	
+	GetWorldTimerManager().SetTimer(MatchTimerHandle, this, &AEPGameMode::TickMatchTimer, 1.0f, true);
+	
+	UE_LOG(LogTemp, Warning, TEXT("MatchState: Playing"));
 }
+
+void AEPGameMode::HandleMatchIsWaitingToStart()
+{
+	Super::HandleMatchIsWaitingToStart();
+	
+	EPGameState = GetGameState<AEPGameState>();
+	if (EPGameState == nullptr) return;
+	
+	EPGameState->SetMatchPhase(EEPMatchPhase::Waiting);
+	
+	UE_LOG(LogTemp, Warning, TEXT("MatchState: Waiting"));
+}
+
 void AEPGameMode::HandleMatchHasEnded()
 {
 	Super::HandleMatchHasEnded();
+	// 타이머 정리, GameState 업데이트
+	
+	if (EPGameState == nullptr) return;
+	
+	GetWorldTimerManager().ClearTimer(MatchTimerHandle);
+	EPGameState->SetMatchPhase(EEPMatchPhase::Ended);
+	
+	UE_LOG(LogTemp, Warning, TEXT("MatchState: Ended"));
 }
 	
 // 매치 시작 가능 여부
@@ -74,13 +104,18 @@ bool AEPGameMode::ReadyToStartMatch_Implementation()
 // 매치 타이머 틱 (1초마다)
 void AEPGameMode::TickMatchTimer()
 {
+	// GameState.RemainingTime 갱신
+	EPGameState->SetRemainingTime(EPGameState->GetRemainingTime() - 1.0f);
+	
+	if (EPGameState->GetRemainingTime() <= 0.0f)
+		EndmatchByTimeout();
 	
 }
 
 // 매치 종료 처리 (시간 초과)
 void AEPGameMode::EndmatchByTimeout()
 {
-	
+	EndMatch();
 }
 	
 // 생존 플레이어 확인 -> 전원 탈출/사망 시 매치 종료

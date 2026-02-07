@@ -8,6 +8,7 @@
 
 class UInputMappingContext;
 class UInputAction;
+class AEPCharacter;
 
 UCLASS()
 class EMPLOYMENTPROJ_API AEPPlayerController : public APlayerController
@@ -46,4 +47,10 @@ protected:
 	
 	// Input Mapping Context 등록
 	virtual void OnPossess(APawn* InPawn) override;
+	
+public:
+	// --- Client RPC ---
+	// 킬 피드백 (서버 -> 킬러 클라)
+	UFUNCTION(Client, Reliable)
+	void Client_OnKill(AEPCharacter* Victim);
 };
