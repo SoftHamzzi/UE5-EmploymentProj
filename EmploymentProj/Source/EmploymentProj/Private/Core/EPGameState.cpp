@@ -11,12 +11,12 @@ AEPGameState::AEPGameState()
 // --- OnRep 콜백 ---
 void AEPGameState::OnRep_RemainingTime()
 {
-	
+	UE_LOG(LogTemp, Log, TEXT("Remain: %fs"), RemainingTime);
 }
 
 void AEPGameState::OnRep_MatchPhase()
 {
-	
+	UE_LOG(LogTemp, Log, TEXT("MatchPhase: %d"), MatchPhase);
 }
 	
 // --- 서버 전용 함수 ---
