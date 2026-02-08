@@ -4,14 +4,22 @@
 #include "Core/EPCharacter.h"
 #include "Camera/CameraComponent.h"
 #include "Core/EPPlayerController.h"
+#include "Movement/EPCharacterMovement.h"
 #include "Net/UnrealNetwork.h"
 
 #include "InputAction.h"
 #include "InputActionValue.h"
 #include "EnhancedInputComponent.h"
-#include "GameFramework/CharacterMovementComponent.h"
+#include "Components/SkeletalMeshComponent.h"
 
 AEPCharacter::AEPCharacter()
+{
+	// 빈 상태
+}
+
+AEPCharacter::AEPCharacter(const FObjectInitializer& ObjectInitializer)
+	: Super(ObjectInitializer.SetDefaultSubobjectClass<UEPCharacterMovement>(
+		ACharacter::CharacterMovementComponentName))
 {
 	// PrimaryActorTick.bCanEverTick = true;
 	GetMesh()->FirstPersonPrimitiveType = EFirstPersonPrimitiveType::WorldSpaceRepresentation;
@@ -22,14 +30,14 @@ AEPCharacter::AEPCharacter()
 	FirstPersonCamera->SetRelativeLocationAndRotation(FirstPersonCameraOffset, FRotator(0.0f, 90.0f, -90.0f));
 	bUseControllerRotationYaw = true;
 	
-	UCharacterMovementComponent* Movement = GetCharacterMovement();
+	UEPCharacterMovement* Movement = Cast<UEPCharacterMovement>(GetCharacterMovement());
 	Movement->JumpZVelocity = 420.f;
 	Movement->AirControl = 0.5f;
 	
 	Movement->BrakingDecelerationFalling = 700.f;
 	// Movement->FallingLateralFriction = 0f; // 공중 마찰력
 	
-	Movement->MaxWalkSpeed = WalkSpeed;
+	// Movement->MaxWalkSpeed = WalkSpeed;
 }
 
 void AEPCharacter::BeginPlay()
@@ -80,6 +88,16 @@ void AEPCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCompone
 		ETriggerEvent::Completed, this,
 		&AEPCharacter::Input_StopSprint
 	);
+	EnhancedInput->BindAction(
+		PC->GetADSAction(),
+		ETriggerEvent::Started, this,
+		&AEPCharacter::Input_StartADS
+	);
+	EnhancedInput->BindAction(
+		PC->GetADSAction(),
+		ETriggerEvent::Completed, this,
+		&AEPCharacter::Input_StopADS
+	);
 
 }
 
@@ -121,29 +139,63 @@ void AEPCharacter::Input_StopJumping(const FInputActionValue& Value)
 
 void AEPCharacter::Input_StartSprint(const FInputActionValue& Value)
 {
-	Server_SetSprinting(true);
+	if (UEPCharacterMovement* CMC = Cast<UEPCharacterMovement>(GetCharacterMovement()))
+	{
+		CMC->bWantsToSprint = true;
+	}
 }
 
 void AEPCharacter::Input_StopSprint(const FInputActionValue& Value)
 {
-	Server_SetSprinting(false);
+	if (UEPCharacterMovement* CMC = Cast<UEPCharacterMovement>(GetCharacterMovement()))
+	{
+		CMC->bWantsToSprint = false;
+	}
 }
 
-void AEPCharacter::OnRep_IsSprinting()
+// Getter
+bool AEPCharacter::GetIsSprinting() const
 {
-	GetCharacterMovement()->MaxWalkSpeed = bIsSprinting ? SprintSpeed : WalkSpeed;
+	if (UEPCharacterMovement* CMC = Cast<UEPCharacterMovement>(GetCharacterMovement()))
+	{
+		return CMC->bWantsToSprint;
+	}
+	return false;
 }
 
-void AEPCharacter::Server_SetSprinting_Implementation(bool bNewSprinting)
+bool AEPCharacter::GetIsAiming() const
 {
-	bIsSprinting = bNewSprinting;
-	
-	GetCharacterMovement()->MaxWalkSpeed = bIsSprinting ? SprintSpeed : WalkSpeed;
+	if (UEPCharacterMovement* CMC = Cast<UEPCharacterMovement>(GetCharacterMovement()))
+	{
+		return CMC->bWantsToAim;
+	}
+	return false;
+}
+
+void AEPCharacter::Input_StartADS(const FInputActionValue& Value)
+{
+	if (UEPCharacterMovement* CMC = Cast<UEPCharacterMovement>(GetCharacterMovement()))
+	{
+		CMC->bWantsToAim = true;
+		CMC->bWantsToSprint = false;
+	}
+	// FOV 변경 (로컬만)
+	if (IsLocallyControlled())
+		FirstPersonCamera->SetFieldOfView(60.f);
+}
+
+void AEPCharacter::Input_StopADS(const FInputActionValue& Value)
+{
+	if (UEPCharacterMovement* CMC = Cast<UEPCharacterMovement>(GetCharacterMovement()))
+	{
+		CMC->bWantsToAim = false;
+	}
+	// FOV 변경 (로컬만)
+	if (IsLocallyControlled())
+		FirstPersonCamera->SetFieldOfView(90.f);
 }
 
 void AEPCharacter::GetLifetimeReplicatedProps(TArray<class FLifetimeProperty>& OutLifetimeProps) const
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
-	
-	DOREPLIFETIME(AEPCharacter, bIsSprinting);
 }

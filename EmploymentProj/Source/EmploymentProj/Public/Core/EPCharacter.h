@@ -17,6 +17,8 @@ class EMPLOYMENTPROJ_API AEPCharacter : public ACharacter
 
 public:
 	AEPCharacter();
+	// 기본 CMC 대신 커스텀 CMC 사용
+	AEPCharacter(const FObjectInitializer& ObjectInitializer);
 
 protected:
 	// --- 컴포넌트 ---
@@ -29,21 +31,12 @@ protected:
 	UPROPERTY(EditAnywhere, Category = Camera)
 	FVector FirstPersonCameraOffset = FVector(2.8f, 5.9f, 0.0f);
 	
-	UPROPERTY(ReplicatedUsing=OnRep_IsSprinting)
-	bool bIsSprinting;
-	
-	UPROPERTY(EditDefaultsOnly, Category = "Movement")
-	float WalkSpeed = 350.f;
-	
-	UPROPERTY(EditDefaultsOnly, Category = "Movement")
-	float SprintSpeed = 650.f;
-	
 	// --- 오버라이드 ---
 	virtual void BeginPlay() override;
 	
 	// Enhanced Input 바인딩
 	virtual void SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent) override;
-
+	
 	// --- 입력 핸들러 ---
 	// 이동 (WASD)
 	void Input_Move(const FInputActionValue& Value);
@@ -59,11 +52,13 @@ protected:
 	void Input_StartSprint(const FInputActionValue& Value);
 	void Input_StopSprint(const FInputActionValue& Value);
 	
-	UFUNCTION()
-	void OnRep_IsSprinting();
+	// ADS
+	void Input_StartADS(const FInputActionValue& Value);
+	void Input_StopADS(const FInputActionValue& Value);
 	
-	UFUNCTION(Server, Reliable)
-	void Server_SetSprinting(bool bNewSprinting);
+	// --- Getter (CMC에서 읽기) ---
+	bool GetIsSprinting() const;
+	bool GetIsAiming() const;
 	
 	virtual void GetLifetimeReplicatedProps(TArray<class FLifetimeProperty>& OutLifetimeProps) const override;
 };

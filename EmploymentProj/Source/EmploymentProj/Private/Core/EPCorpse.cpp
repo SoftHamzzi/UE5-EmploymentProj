@@ -12,7 +12,6 @@ AEPCorpse::AEPCorpse()
 {
 	bReplicates = true;
 	// bAlwaysRelevant = false; (기본 값)
-	
 	CorpseMesh = CreateDefaultSubobject<USkeletalMeshComponent>("CorpseMesh");
 	RootComponent = CorpseMesh;
 }
