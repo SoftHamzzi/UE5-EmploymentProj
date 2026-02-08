@@ -77,3 +77,7 @@ This is a **job portfolio project**. Code must be structurally complete, not jus
 - Source layout: `Public/` for headers, `Private/` for .cpp, organized by feature (Core/, Data/, Types/)
 - Git branching: `main` (always builds), `feature/*` per system (e.g., `feature/net-fire`, `feature/gas`)
 - Platform: Windows (win32)
+
+## Agent Rules
+
+- **No sub-agents**: Do NOT use the Task tool to spawn sub-agents unless the user explicitly permits it

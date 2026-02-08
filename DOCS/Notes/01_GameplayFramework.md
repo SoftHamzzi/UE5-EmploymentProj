@@ -74,8 +74,8 @@ EnteringMap → WaitingToStart → InProgress → WaitingPostMatch → LeavingMa
 
 **EmploymentProj 적용:**
 - RemainingTime (매치 남은 시간)
-- 현재 MatchState
-- 생존 플레이어 수
+- MatchPhase (현재 매치 단계)
+- 생존 플레이어 수는 GameState에 두지 않음 → GameMode(서버 전용)에서 관리. 타르코프처럼 클라이언트가 인원수를 모르게 하기 위함.
 
 **핵심 멤버:**
 ```cpp
@@ -121,10 +121,11 @@ void Server_RequestUseVendingMachine(AVendingMachine* Machine);
 - PlayerController가 사라져도(맵 전환 등) 유지될 수 있음
 
 **EmploymentProj 적용:**
-- Money (소지금)
-- KillCount
-- bIsExtracted (탈출 여부)
+- KillCount (COND_OwnerOnly — 본인만 앎)
+- bIsExtracted (COND_OwnerOnly — 본인만 앎)
 - 퀘스트 진행도
+- Money는 PlayerState에 두지 않음 → 인벤토리 아이템으로 처리 (타르코프 방식)
+- bIsDead는 PlayerState에 두지 않음 → Corpse 액터로 처리 (Relevancy 적용)
 
 **핵심 멤버:**
 ```cpp
@@ -337,7 +338,7 @@ AMyActor* Actor = GetWorld()->SpawnActor<AMyActor>(ActorClass, SpawnLocation, Sp
 - [ ] 커스텀 PlayerController 생성 (AEPPlayerController)
   - [ ] Enhanced Input 설정
 - [ ] 커스텀 PlayerState 생성 (AEPPlayerState)
-  - [ ] Money, KillCount, bIsExtracted 복제
+  - [ ] KillCount, bIsExtracted 복제 (COND_OwnerOnly)
 - [ ] 커스텀 Character 생성 (AEPCharacter)
   - [ ] 기본 이동 (CharacterMovementComponent)
   - [ ] 1인칭 카메라

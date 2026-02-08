@@ -34,13 +34,20 @@
 | UE C++ | UCLASS/UPROPERTY/UFUNCTION, Reflection, UObject 라이프사이클, 메모리 관리(GC vs New) |
 | GAS | Ability, Attribute, Effect, Tag - 스킬/버프/디버프/쿨타임/상태이상 구현 |
 
-### 부가 (후순위)
+### 부가 (구현 예정)
 
 | 영역 | 비고 |
 |------|------|
-| Slate/UMG | UI - 클라 필수 아님, 최소만 |
-| Asset & Data Driven | 있으면 플러스 |
-| Inventory + Economy | 게임 기능, 엔진 이해와 직결되진 않음 |
+| Animation | AnimBP, 스테이트 머신, 몽타주 (이동/사격/재장전/사망), 네트워크 동기화 |
+| Map/Level Design | 맵 제작 (창고/컨테이너 구역, 파밍 포인트, 탈출 지점, 자판기 배치) |
+| UI/HUD | 체력바, 탄약, 타이머, 킬 피드, 인벤토리 UI (UMG, 최소한으로) |
+| Inventory + Economy | 슬롯 기반 인벤토리, 아이템 판매, 자판기 비용 |
+| Asset & Data Driven | UPrimaryDataAsset 기반 무기/아이템/자판기 테이블 |
+
+### 후순위
+
+| 영역 | 비고 |
+|------|------|
 | Effective Modern C++ | 엔진 코드 읽기용, 취업 직결은 아님 |
 | DX12 / 그래픽스 | 게임플레이 클라 포지션에서는 불필요 |
 
@@ -52,7 +59,7 @@
 - GameMode에서 MatchState 관리 (Waiting -> Playing -> Ended)
 - GameState에 RemainingTime 복제
 - PlayerController에서 스폰/리스폰 요청
-- PlayerState에 Money, Kills, Extracted 복제
+- PlayerState에 Kills, Extracted 복제 (COND_OwnerOnly). Money는 인벤토리 아이템으로 처리.
 - 모든 핵심 변수 UPROPERTY로 노출/복제
 - 핵심 함수 UFUNCTION(Server, Reliable) / BlueprintCallable 등 적절히 표시
 - Data-driven: UDataAsset / UPrimaryDataAsset으로 무기/아이템 정의
@@ -89,6 +96,12 @@
 - GameplayAbility: Dash, Heal, ShieldOn (3개면 충분)
 - 면접에서 보는 것: Ability 발동 흐름, Attribute 변화, Effect 적용/태그 처리, 네트워크 동작 방식
 
+### 5단계: Persistence (영속 데이터)
+- 4단계까지 완료 후 진행
+- 1차: USaveGame으로 로컬 저장 구조 구현 (스태시 인벤토리, 플레이어 진행도, 재화)
+- 2차: 외부 DB 연동 (데디서버 ↔ REST API ↔ DB). 치트 방지를 위해 서버에서만 DB 접근
+- 대상 데이터: 인벤토리/스태시, 계정(레벨/재화), 퀘스트 진행도, 상점/거래 기록
+
 ---
 
 ## 4. 포트폴리오 프로젝트 설계
@@ -105,9 +118,9 @@
 | 클래스 | 역할 | 권한 |
 |--------|------|------|
 | GameMode | 라운드 규칙, 스폰 규칙, 승패/탈출 판정, 매치 상태 전환, 자판기 결과 판정 | 서버 전용 |
-| GameState | 라운드 시간, 남은 플레이어 수, 매치 상태 | 복제됨 |
+| GameState | 라운드 시간, 매치 상태 (플레이어 수는 비공개 → GameMode 전용) | 복제됨 |
 | PlayerController | 입력 처리, UI, 서버에 명령 요청(RPC), 자판기 상호작용 요청 | 소유자 전용 |
-| PlayerState | 점수/돈/탈출 여부/퀘스트 진행도 | 복제됨 |
+| PlayerState | 킬 수(COND_OwnerOnly)/탈출 여부(COND_OwnerOnly)/퀘스트 진행도. 돈은 인벤토리 아이템. | 복제됨 |
 | Pawn/Character | 이동, 애니, 무기, 피격, 능력(GAS) | 복제됨 |
 | HUD/UMG | UI 표시 | 클라 전용(최소만) |
 
@@ -123,6 +136,9 @@
 | Economy | 아이템 판매, 자판기 비용, 킬/탈출 보상 |
 | Quest | 퀘스트 아이템 수집 진행도 관리, 완료 조건 판정 |
 | Data Driven | UPrimaryDataAsset으로 무기/아이템/자판기 테이블 정의 |
+| Animation | AnimBP 스테이트 머신, 몽타주 (사격/재장전/사망), 네트워크 복제 (SimulatedProxy 동기화) |
+| Map | 레벨 디자인, 파밍 포인트/자판기/탈출 지점 배치, 라이팅, 내비메시 (AI 이동용) |
+| UI/HUD | UMG 위젯 (체력바, 탄약, 타이머, 킬 피드, 인벤토리 화면) |
 
 ### Git 전략
 - `main` (항상 빌드됨)
@@ -135,11 +151,16 @@
 
 1. 싱글에서 매치 흐름 (GameMode/GameState)
 2. 멀티 접속/랜덤 스폰/이동 (기본 Replication)
-3. 사격 RPC + 서버 히트 판정
-4. HP 복제 + 피격 처리
-5. Lag Compensation (히스토리/리와인드)
-6. 자판기 시스템 (서버 판정 + 상태 복제 + Multicast 사운드)
-7. AI 적 (Behavior Tree + 서버 권한 로직)
-8. GAS로 대시/힐/실드
-9. 인벤토리 + 장비 + 판매
-10. Extraction + 퀘스트 수집
+3. 캐릭터 애니메이션 (AnimBP, 스테이트 머신, 이동/점프 블렌드)
+4. 사격 RPC + 서버 히트 판정 + 사격 몽타주
+5. HP 복제 + 피격 처리 + 사망 애니메이션
+6. Lag Compensation (히스토리/리와인드)
+7. 자판기 시스템 (서버 판정 + 상태 복제 + Multicast 사운드)
+8. AI 적 (Behavior Tree + 서버 권한 로직)
+9. GAS로 대시/힐/실드
+10. 인벤토리 + 장비 + 판매
+11. Extraction + 퀘스트 수집
+12. UI/HUD (체력바, 탄약, 타이머, 킬 피드, 인벤토리 화면)
+13. 맵 제작 (레벨 디자인, 파밍 포인트, 자판기/탈출 지점 배치, 내비메시)
+14. USaveGame으로 영속 데이터 구조 (스태시, 진행도)
+15. 외부 DB 연동 (REST API + DB, 서버 권한 접근)
