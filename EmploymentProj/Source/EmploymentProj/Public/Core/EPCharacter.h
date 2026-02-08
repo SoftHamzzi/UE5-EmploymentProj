@@ -16,7 +16,6 @@ class EMPLOYMENTPROJ_API AEPCharacter : public ACharacter
 	GENERATED_BODY()
 
 public:
-	AEPCharacter();
 	// 기본 CMC 대신 커스텀 CMC 사용
 	AEPCharacter(const FObjectInitializer& ObjectInitializer);
 
@@ -24,11 +23,11 @@ protected:
 	// --- 컴포넌트 ---
 	
 	// 1인칭 카메라
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Camera")
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Camera")
 	UCameraComponent* FirstPersonCamera;
 	
 	// Offset for the first-person camera
-	UPROPERTY(EditAnywhere, Category = Camera)
+	UPROPERTY(EditAnywhere, Category = "Camera")
 	FVector FirstPersonCameraOffset = FVector(2.8f, 5.9f, 0.0f);
 	
 	// --- 오버라이드 ---
@@ -55,6 +54,10 @@ protected:
 	// ADS
 	void Input_StartADS(const FInputActionValue& Value);
 	void Input_StopADS(const FInputActionValue& Value);
+	
+	// 앉기
+	void Input_Crouch(const FInputActionValue& Value);
+	void Input_UnCrouch(const FInputActionValue& Value);
 	
 	// --- Getter (CMC에서 읽기) ---
 	bool GetIsSprinting() const;

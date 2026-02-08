@@ -12,11 +12,6 @@
 #include "EnhancedInputComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 
-AEPCharacter::AEPCharacter()
-{
-	// 빈 상태
-}
-
 AEPCharacter::AEPCharacter(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer.SetDefaultSubobjectClass<UEPCharacterMovement>(
 		ACharacter::CharacterMovementComponentName))
@@ -37,7 +32,7 @@ AEPCharacter::AEPCharacter(const FObjectInitializer& ObjectInitializer)
 	Movement->BrakingDecelerationFalling = 700.f;
 	// Movement->FallingLateralFriction = 0f; // 공중 마찰력
 	
-	// Movement->MaxWalkSpeed = WalkSpeed;
+	Movement->NavAgentProps.bCanCrouch = true;
 }
 
 void AEPCharacter::BeginPlay()
@@ -88,6 +83,7 @@ void AEPCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCompone
 		ETriggerEvent::Completed, this,
 		&AEPCharacter::Input_StopSprint
 	);
+	
 	EnhancedInput->BindAction(
 		PC->GetADSAction(),
 		ETriggerEvent::Started, this,
@@ -99,6 +95,16 @@ void AEPCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCompone
 		&AEPCharacter::Input_StopADS
 	);
 
+	EnhancedInput->BindAction(
+		PC->GetCrouchAction(),
+		ETriggerEvent::Started, this,
+		&AEPCharacter::Input_Crouch
+	);
+	EnhancedInput->BindAction(
+		PC->GetCrouchAction(),
+		ETriggerEvent::Completed, this,
+		&AEPCharacter::Input_UnCrouch
+	);
 }
 
 // --- 입력 핸들러 ---
@@ -180,7 +186,7 @@ void AEPCharacter::Input_StartADS(const FInputActionValue& Value)
 		CMC->bWantsToSprint = false;
 	}
 	// FOV 변경 (로컬만)
-	if (IsLocallyControlled())
+	if (IsLocallyControlled() && FirstPersonCamera)
 		FirstPersonCamera->SetFieldOfView(60.f);
 }
 
@@ -191,8 +197,18 @@ void AEPCharacter::Input_StopADS(const FInputActionValue& Value)
 		CMC->bWantsToAim = false;
 	}
 	// FOV 변경 (로컬만)
-	if (IsLocallyControlled())
+	if (IsLocallyControlled() && FirstPersonCamera)
 		FirstPersonCamera->SetFieldOfView(90.f);
+}
+
+void AEPCharacter::Input_Crouch(const FInputActionValue& Value)
+{
+	Crouch();
+}
+
+void AEPCharacter::Input_UnCrouch(const FInputActionValue& Value)
+{
+	UnCrouch();
 }
 
 void AEPCharacter::GetLifetimeReplicatedProps(TArray<class FLifetimeProperty>& OutLifetimeProps) const
