@@ -38,5 +38,14 @@ UENUM(BlueprintType)
 enum class EEPFireMode : uint8
 {
 	Single,
+	Burst,
 	Auto
+};
+
+UENUM(BlueprintType)
+enum class EEPWeaponState : uint8
+{
+	Idle,
+	Reloading,
+	Firing
 };

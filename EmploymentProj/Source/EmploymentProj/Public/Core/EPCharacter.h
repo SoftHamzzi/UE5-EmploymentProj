@@ -9,6 +9,7 @@
 class UCameraComponent;
 class UInputAction;
 struct FInputActionValue;
+class AEPWeapon;
 
 UCLASS()
 class EMPLOYMENTPROJ_API AEPCharacter : public ACharacter
@@ -18,6 +19,12 @@ class EMPLOYMENTPROJ_API AEPCharacter : public ACharacter
 public:
 	// 기본 CMC 대신 커스텀 CMC 사용
 	AEPCharacter(const FObjectInitializer& ObjectInitializer);
+	
+	void SetEquippedWeapon(AEPWeapon* Weapon);
+	
+	// --- Getter (CMC에서 읽기) ---
+	bool GetIsSprinting() const;
+	bool GetIsAiming() const;
 
 protected:
 	// --- 컴포넌트 ---
@@ -29,6 +36,11 @@ protected:
 	// Offset for the first-person camera
 	UPROPERTY(EditAnywhere, Category = "Camera")
 	FVector FirstPersonCameraOffset = FVector(2.8f, 5.9f, 0.0f);
+	
+	UPROPERTY(ReplicatedUsing = OnRep_EquippedWeapon, BlueprintReadOnly, Category = "Combat")
+	TObjectPtr<AEPWeapon> EquippedWeapon;
+	
+	float LocalLastFireTime = 0.f;
 	
 	// --- 오버라이드 ---
 	virtual void BeginPlay() override;
@@ -59,9 +71,22 @@ protected:
 	void Input_Crouch(const FInputActionValue& Value);
 	void Input_UnCrouch(const FInputActionValue& Value);
 	
-	// --- Getter (CMC에서 읽기) ---
-	bool GetIsSprinting() const;
-	bool GetIsAiming() const;
+	// 발사
+	void Input_Fire(const FInputActionValue& Value);
+	
+	// --- 동기화 ---
+	UFUNCTION()
+	void OnRep_EquippedWeapon();
+	
+	// RPC
+	UFUNCTION(Server, Reliable)
+	void Server_Fire(const FVector& Origin, const FVector& Direction);
+	
+	UFUNCTION(Server, Reliable)
+	void Server_Reload();
+	
+	UFUNCTION(NetMulticast, Reliable)
+	void Multicast_PlayFireEffect(const FVector& Origin);
 	
 	virtual void GetLifetimeReplicatedProps(TArray<class FLifetimeProperty>& OutLifetimeProps) const override;
 };

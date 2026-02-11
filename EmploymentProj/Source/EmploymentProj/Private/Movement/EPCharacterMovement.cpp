@@ -19,7 +19,6 @@ void UEPCharacterMovement::UpdateFromCompressedFlags(uint8 Flags)
 }
 
 // FSavedMove_EPCharacter 클래스
-
 class FSavedMove_EPCharacter : public FSavedMove_Character
 {
 public:
@@ -73,8 +72,8 @@ void FSavedMove_EPCharacter::PrepMoveFor(ACharacter* C)
 	FSavedMove_Character::PrepMoveFor(C);
 	
 	UEPCharacterMovement* CMC = Cast<UEPCharacterMovement>(C->GetCharacterMovement());
-	CMC->bWantsToSprint = CMC->bWantsToSprint;
-	CMC->bWantsToAim = CMC->bWantsToAim;
+	CMC->bWantsToSprint = bSavedWantsToSprint;
+	CMC->bWantsToAim = bSavedWantsToAim;
 }
 
 // CanCombineWith - Sprint/ADS 상태가 다르면 합치지 않음

@@ -12,6 +12,8 @@
 #include "Engine/World.h"
 #include "Kismet/GameplayStatics.h"
 
+#include "Combat/EPWeapon.h"
+
 // FTimerHandle MatchTimerHandle 변수 있음
 
 AEPGameMode::AEPGameMode()
@@ -54,7 +56,6 @@ void AEPGameMode::BeginPlay()
 // 플레이어 로그인 완료 시
 void AEPGameMode::PostLogin(APlayerController* NewPlayer) {
 	Super::PostLogin(NewPlayer);
-	
 	UE_LOG(LogTemp, Warning, TEXT("Player %d Join."), NewPlayer->GetUniqueID());
 }
 	
@@ -63,7 +64,25 @@ void AEPGameMode::Logout(AController* Exiting)
 {
 	Super::Logout(Exiting);
 }
+
+// 새로운 플레이어가 등장
+void AEPGameMode::HandleStartingNewPlayer_Implementation(APlayerController* NewPlayer)
+{
+	Super::HandleStartingNewPlayer_Implementation(NewPlayer);
 	
+	AEPCharacter* Char = Cast<AEPCharacter>(NewPlayer->GetPawn());
+	if (!Char || !DefaultWeaponClass) return;
+	
+	FActorSpawnParameters Params;
+	Params.Owner = Char; Params.Instigator = Char;
+	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	AEPWeapon* Weapon = GetWorld()->SpawnActor<AEPWeapon>(
+		DefaultWeaponClass, FVector::ZeroVector, FRotator::ZeroRotator, Params);
+	if (!Weapon) return;
+	
+	Char->SetEquippedWeapon(Weapon);
+}
+
 // 스폰 위치 결정(랜덤 배정)
 AActor* AEPGameMode::ChoosePlayerStart_Implementation(AController* Player)
 {

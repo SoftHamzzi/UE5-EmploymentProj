@@ -24,6 +24,7 @@ public:
 	FORCEINLINE UInputAction* GetSprintAction() const { return SprintAction; }
 	FORCEINLINE UInputAction* GetADSAction() const { return ADSAction; }
 	FORCEINLINE UInputAction* GetCrouchAction() const { return CrouchAction; }
+	FORCEINLINE UInputAction* GetFireAction() const { return FireAction; }
 	
 protected:
 	// --- Enhanced Input ---
@@ -49,6 +50,9 @@ protected:
 	
 	UPROPERTY(EditDefaultsOnly, Category = "Input")
 	TObjectPtr<UInputAction> CrouchAction;
+	
+	UPROPERTY(EditDefaultsOnly, Category = "Input")
+	TObjectPtr<UInputAction> FireAction;
 	
 	// --- 오버라이드 ---
 	virtual void BeginPlay() override;

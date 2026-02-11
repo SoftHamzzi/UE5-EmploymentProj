@@ -10,7 +10,9 @@
 #include "InputAction.h"
 #include "InputActionValue.h"
 #include "EnhancedInputComponent.h"
+#include "Combat/EPWeapon.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Kismet/GameplayStatics.h"
 
 AEPCharacter::AEPCharacter(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer.SetDefaultSubobjectClass<UEPCharacterMovement>(
@@ -33,6 +35,7 @@ AEPCharacter::AEPCharacter(const FObjectInitializer& ObjectInitializer)
 	// Movement->FallingLateralFriction = 0f; // 공중 마찰력
 	
 	Movement->NavAgentProps.bCanCrouch = true;
+	Movement->GetNavAgentPropertiesRef().bCanCrouch = true;
 }
 
 void AEPCharacter::BeginPlay()
@@ -104,6 +107,12 @@ void AEPCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCompone
 		PC->GetCrouchAction(),
 		ETriggerEvent::Completed, this,
 		&AEPCharacter::Input_UnCrouch
+	);
+	
+	EnhancedInput->BindAction(
+		PC->GetFireAction(),
+		ETriggerEvent::Triggered, this,
+		&AEPCharacter::Input_Fire
 	);
 }
 
@@ -211,7 +220,90 @@ void AEPCharacter::Input_UnCrouch(const FInputActionValue& Value)
 	UnCrouch();
 }
 
+void AEPCharacter::Input_Fire(const FInputActionValue& Value)
+{
+	if (!EquippedWeapon || !EquippedWeapon->WeaponData) return;
+	
+	// --- 클라이언트 사전 검증 ---
+	if (EquippedWeapon->CurrentAmmo <= 0) return;
+	
+	// 연사속도 체크
+	float FireInterval = 1.f / EquippedWeapon->WeaponData->FireRate;
+	float CurrentTime = GetWorld()->GetTimeSeconds();
+	if (CurrentTime - LocalLastFireTime < FireInterval) return;
+	LocalLastFireTime = CurrentTime;
+	
+	// --- 발사 요청 ---
+	FVector Origin = FirstPersonCamera->GetComponentLocation();
+	FVector Direction = FirstPersonCamera->GetForwardVector();
+	Server_Fire(Origin, Direction);
+	
+	if (IsLocallyControlled())
+	{
+		float Pitch = EquippedWeapon->GetRecoilPitch();
+		float Yaw = FMath::RandRange(
+			-EquippedWeapon->GetRecoilYaw(),
+			EquippedWeapon->GetRecoilYaw());
+		AddControllerPitchInput(-Pitch);
+		AddControllerYawInput(Yaw);
+	}
+}
+
+void AEPCharacter::OnRep_EquippedWeapon()
+{
+	if (!EquippedWeapon) return;
+	
+	EquippedWeapon->AttachToComponent(
+		GetMesh(),
+		FAttachmentTransformRules::SnapToTargetNotIncludingScale,
+		TEXT("WeaponSocket")
+	);
+}
+
+void AEPCharacter::SetEquippedWeapon(AEPWeapon* Weapon) { EquippedWeapon = Weapon; }
+
+void AEPCharacter::Server_Fire_Implementation(const FVector& Origin, const FVector& Direction)
+{
+	// 연사 속도, 탄약 검증
+	// 서버 레이캐스트
+	// 히트 시 ApplyDamage
+	// Multicast_PlayFireEffect
+	if (!EquippedWeapon || !EquippedWeapon->CanFire()) return;
+	
+	FVector SpreadDir = Direction;
+	EquippedWeapon->Fire(SpreadDir);
+	
+	// 서버 레이캐스트
+	FHitResult Hit;
+	FCollisionQueryParams Params;
+	Params.AddIgnoredActor(this);
+	Params.AddIgnoredActor(EquippedWeapon);
+	
+	if (GetWorld()->LineTraceSingleByChannel(
+		Hit, Origin, Origin + SpreadDir * 10000.f, ECC_Visibility, Params))
+	{
+		UGameplayStatics::ApplyDamage(
+			Hit.GetActor(), EquippedWeapon->GetDamage(),
+			GetController(), this, nullptr);
+	}
+	
+	Multicast_PlayFireEffect(Origin);
+}
+
+void AEPCharacter::Server_Reload_Implementation()
+{
+	if (!EquippedWeapon) return;
+	EquippedWeapon->StartReload();
+}
+
+void AEPCharacter::Multicast_PlayFireEffect_Implementation(const FVector& Origin)
+{
+	UE_LOG(LogTemp, Warning, TEXT("Multicast_PlayFireEffect called"));
+}
+
 void AEPCharacter::GetLifetimeReplicatedProps(TArray<class FLifetimeProperty>& OutLifetimeProps) const
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+	
+	DOREPLIFETIME(AEPCharacter, EquippedWeapon);
 }

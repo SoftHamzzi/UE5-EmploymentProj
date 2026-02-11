@@ -8,6 +8,7 @@
 
 class APlayerStart;
 class AEPGameState;
+class AEPWeapon;
 
 UCLASS()
 class EMPLOYMENTPROJ_API AEPGameMode : public AGameMode
@@ -28,6 +29,10 @@ protected:
 	
 	UPROPERTY(EditDefaultsOnly, Category = "Match")
 	int32 MinPlayersToStart = 1;
+	
+	// 초반에 총을 테스트로 쥐어주기 위한 변수
+	UPROPERTY(EditDefaultsOnly, Category = "Combat")
+	TSubclassOf<AEPWeapon> DefaultWeaponClass;
 	
 	FTimerHandle MatchTimerHandle;
 
@@ -59,6 +64,7 @@ protected:
 	
 	// 매치 시작 가능 여부
 	virtual bool ReadyToStartMatch_Implementation() override;
+	virtual void HandleStartingNewPlayer_Implementation(APlayerController* NewPlayer) override;
 	
 	TSet<TWeakObjectPtr<AActor>> UsedPlayerStarts;
 	
