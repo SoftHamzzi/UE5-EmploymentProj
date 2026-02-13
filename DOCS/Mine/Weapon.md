@@ -1,7 +1,41 @@
 # Weapon 시스템 설계
 
 > AEPWeapon을 중심으로 한 서버 권한 무기 시스템.
-> 확장성(부착물, 새 무기 타입)을 고려한 구조.
+> 다만 현재 코드는 "총기 전용 책임이 Character에 과도하게 집중"되어 있어,
+> 타르코프형(무기=아이템의 한 종류) 확장을 위해 구조 보완이 필요하다.
+
+적용 시점:
+- 기본 구현 트랙(main 01→04) 완료 이후,
+- 리팩터링 트랙에서 `EquippedItemInstance` 구조로 이관할 때 본 문서를 기준으로 적용한다.
+
+---
+
+## 0. 현재 구조 문제점 (반영 사항)
+
+### 0-1. Character 책임 과다
+
+- 현재 `AEPCharacter`에 `Input_Fire`, `Server_Fire`, `Server_Reload`, `EquippedWeapon`이 직접 들어가 있음.
+- 이 구조는 총기 외 아이템(근접, 투척, 소모품, 장비)을 추가할수록 Character가 비대해진다.
+- **결론**: Character는 "입력 전달 + 이동 + 기본 신체 상태"에 집중하고, 전투/장비 책임은 분리해야 한다.
+
+### 0-2. WeaponData와 ItemData 단절
+
+- 현재 `UEPWeaponData`와 `UEPItemData`가 독립적이다.
+- 게임 목표는 "무기도 인벤토리 아이템"인데, 현재 구조는 무기만 예외 경로를 타기 쉽다.
+- **결론**: `UEPItemData`를 베이스로 두고 `UEPWeaponData : UEPItemData` 계층으로 재구성한다.
+
+### 0-3. 런타임 상태 위치
+
+- 탄약/장전/퍼짐 상태가 `AEPWeapon` Actor에 집중되어 있다.
+- 이 방식은 "인벤토리 보관 중 상태 유지(탄약, 내구도, 부착물)"에 불리하다.
+- **결론**: 장기적으로는 `ItemInstance`(UObject/Struct)로 상태를 보관하고, 월드 Actor는 표현/발사 실행체로 축소한다.
+
+### 0-4. 즉시 보완해야 할 구현 리스크
+
+- `MaxAmmo`가 `Replicated`인데 `GetLifetimeReplicatedProps` 등록이 누락되면 동기화가 깨질 수 있다.
+- `WeaponData` 널 체크 없이 Tick/Getter에서 접근하면 크래시 위험이 있다.
+- 사격 RPC 파라미터는 `FVector_NetQuantize`, `FVector_NetQuantizeNormal`로 양자화하는 편이 적절하다.
+- 발사 이펙트 Multicast는 로직 필수가 아니므로 `Unreliable`가 더 적합하다.
 
 ---
 
@@ -593,3 +627,32 @@ DataAsset을 바꾸는 것만으로 새 무기 생성 가능. C++ 코드 수정 
 8. DataAsset에 Spread/Recoil 필드 추가
 9. (선택) Burst 모드
 10. (선택) 부착물 시스템
+
+---
+
+## 12. 리팩터링 로드맵 (타르코프형 대응)
+
+### Step A (단기 안정화)
+
+- `MaxAmmo` 복제 등록
+- `WeaponData` 널 가드 추가
+- `Server_Fire` RPC 파라미터 양자화
+- `Multicast_PlayFireEffect`를 `Unreliable`로 조정
+
+### Step B (책임 분리)
+
+- `AEPCharacter`의 전투/장비 함수를 `UEPCombatComponent`로 이동
+- Character는 `Input -> Component` 전달만 수행
+- `Equip/Fire/Reload/Use` 흐름을 컴포넌트 중심으로 통일
+
+### Step C (데이터 통합)
+
+- `UEPItemData` 공통 필드: ItemType, SlotSize, Stack, SellPrice, QuestFlag
+- `UEPWeaponData : UEPItemData` 상속
+- 향후 `UEPConsumableData`, `UEPThrowableData`로 확장
+
+### Step D (상태 인스턴스 도입)
+
+- 인벤토리 엔트리 단위의 `ItemInstance` 도입
+- 탄약/내구도/부착물/랜덤옵션은 Instance에 저장
+- 월드의 무기 Actor는 장착/발사/시각화 중심으로 단순화

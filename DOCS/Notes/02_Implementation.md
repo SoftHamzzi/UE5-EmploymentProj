@@ -13,7 +13,7 @@
 - PlayerState: KillCount, bIsExtracted (COND_OwnerOnly)
 - PlayerController: Enhanced Input (Move, Look, Jump, Sprint)
 - Character: 1인칭 카메라, WASD 이동, 점프
-- DataAsset: UEPWeaponData, UEPItemData
+- 프로토타입 데이터: UEPWeaponData, UEPItemData (최종은 `Row + ItemDefinition + ItemInstance`로 전환)
 
 **Sprint 리팩토링 필요:**
 현재 Sprint는 Server RPC + ReplicatedUsing 패턴으로 구현되어 있으나,
@@ -24,6 +24,16 @@ CMC 확장은 Sprint 상태를 이동 입력 패킷에 포함해, 예측/보정�
 
 **ADS도 동일 패턴 적용:**
 ADS(에임)도 이동속도를 변경하는 상태이므로 CMC 확장으로 처리한다. (FLAG_Custom_1)
+
+**장비 구조 리팩터링 방향 (중요):**
+현재 문서의 예시에는 `EquippedWeapon` 표현이 남아 있지만,
+타르코프형 설계를 위해 최종 목표는 아래와 같다.
+
+- Character: `EquippedPrimaryItemInstance` / `EquippedSecondaryItemInstance` 참조
+- Weapon Actor: 장착 아이템의 월드 표현체(시각/발사 실행체)
+- 아이템 사용 입력: 장기적으로 GAS Ability(`PrimaryUse/SecondaryUse/Reload/Interact`)로 이관
+
+즉, "Character가 총을 소유"가 아니라 "Character가 장착 ItemInstance를 소유"가 기준이다.
 
 ---
 
@@ -239,12 +249,21 @@ float MaxHP = 100.f;
 UFUNCTION()
 void OnRep_HP(float OldHP);
 
-// --- 무기 ---
-UPROPERTY(ReplicatedUsing = OnRep_EquippedWeapon, BlueprintReadOnly, Category = "Combat")
-TObjectPtr<AEPWeapon> EquippedWeapon;
+// --- 장착 아이템 (타르코프형) ---
+// 장기적으로는 ItemInstance 참조를 복제하고,
+// Weapon Actor는 표현체로만 사용한다.
+UPROPERTY(ReplicatedUsing = OnRep_EquippedPrimaryItem, BlueprintReadOnly, Category = "Equipment")
+FGuid EquippedPrimaryItemInstanceId;
 
 UFUNCTION()
-void OnRep_EquippedWeapon();
+void OnRep_EquippedPrimaryItem();
+
+// 월드 표현체(무기 메쉬/발사 연출)
+UPROPERTY(ReplicatedUsing = OnRep_EquippedWeaponActor, BlueprintReadOnly, Category = "Equipment")
+TObjectPtr<AEPWeapon> EquippedWeaponActor;
+
+UFUNCTION()
+void OnRep_EquippedWeaponActor();
 
 // --- 전투 ---
 UFUNCTION(Server, Reliable)
@@ -337,7 +356,11 @@ bool AEPCharacter::GetIsAiming() const
 
 ### 2-3. AEPWeapon (← AActor 상속)
 
-**역할**: 장착/발사 가능한 무기. 캐릭터 손에 부착.
+**역할**: 장착 아이템의 월드 표현체(총기 예시). 캐릭터 손에 부착.
+
+주의:
+- 최종 소스 오브 트루스는 ItemInstance 상태(탄약/내구도/부착물)이다.
+- AEPWeapon은 시각 표현 + 서버 발사 실행 경로를 담당한다.
 
 ```cpp
 // EPWeapon.h
@@ -598,14 +621,14 @@ ACharacter의 Crouch()는 CMC가 네트워크를 자동 처리한다.
 
 ---
 
-### Step 3: 무기 시스템 (기초)
+### Step 3: 장비/아이템 시스템 (1차)
 
 1. `Combat/EPWeapon.h/.cpp` 생성
    - Constructor: `bReplicates = true`, WeaponMesh 생성
    - `GetLifetimeReplicatedProps`: CurrentAmmo (COND_OwnerOnly)
-2. EPCharacter에 `EquippedWeapon` 추가 (ReplicatedUsing)
-3. 무기 장착: 캐릭터 메시 소켓에 AttachToComponent
-4. OnRep_EquippedWeapon: 클라이언트에서 무기 시각 업데이트
+2. EPCharacter에 장착 아이템 참조(Instance ID) 추가
+3. 월드 표현체(`AEPWeapon`)를 캐릭터 메시 소켓에 AttachToComponent
+4. OnRep에서 장착 아이템 상태와 표현체 동기화
 5. EPWeaponData에 MaxAmmo 필드 추가
 6. **빌드 확인**
 
@@ -622,7 +645,7 @@ ACharacter의 Crouch()는 CMC가 네트워크를 자동 처리한다.
    ```cpp
    void AEPCharacter::Input_Fire(const FInputActionValue& Value)
    {
-       if (!EquippedWeapon) return;
+       if (!GetEquippedPrimaryItemInstance()) return;
        FVector Origin = FirstPersonCamera->GetComponentLocation();
        FVector Direction = FirstPersonCamera->GetForwardVector();
        Server_Fire(Origin, Direction);
@@ -751,7 +774,8 @@ CMC 확장으로 이미 FLAG_Custom_1에 ADS가 포함됨. 입력 바인딩 + FO
 | ADS 상태 | **CMC CompressedFlags** (FLAG_Custom_1) | 이동 패킷에 포함 | 속도 변경 + 예측 일치 |
 | Crouch 상태 | **CMC 내장** (bIsCrouched) | 자동 복제 | 캡슐 높이 + 속도 |
 | HP | UPROPERTY ReplicatedUsing | COND_None | 모두에게 (체력바) |
-| EquippedWeapon | UPROPERTY ReplicatedUsing | COND_None | 무기 시각 동기화 |
+| EquippedPrimaryItemInstanceId | UPROPERTY ReplicatedUsing | COND_None | 장착 아이템 상태 동기화 |
+| EquippedWeaponActor | UPROPERTY ReplicatedUsing | COND_None | 장착 무기 시각 동기화 |
 
 ### AEPWeapon
 
@@ -842,8 +866,9 @@ Sprint + ADS로 2개 사용. 나머지 2개는 향후 확장용으로 예약.
 Crouch는 CMC에 이미 내장되어 있다. `bCanCrouch = true` 설정 후 `Crouch()/UnCrouch()` 호출만 하면
 서버 동기화, 예측, 캡슐 높이 조정이 자동으로 처리된다.
 
-### Server_Fire는 유지
-사격은 이동과 무관한 이벤트이므로 Server RPC가 적절하다.
+### Server_Fire는 "중간 단계"에서 유지
+사격은 이동과 무관한 이벤트이므로 2단계에서는 Server RPC가 적절하다.
+다만 4단계(GAS) 이후에는 `GA_Item_PrimaryUse` 경로로 점진 이관한다.
 CMC 확장은 **이동속도에 영향을 주는 상태**에만 사용.
 
 ### FVector_NetQuantize

@@ -42,7 +42,7 @@
 | Map/Level Design | 맵 제작 (창고/컨테이너 구역, 파밍 포인트, 탈출 지점, 자판기 배치) |
 | UI/HUD | 체력바, 탄약, 타이머, 킬 피드, 인벤토리 UI (UMG, 최소한으로) |
 | Inventory + Economy | 슬롯 기반 인벤토리, 아이템 판매, 자판기 비용 |
-| Asset & Data Driven | UPrimaryDataAsset 기반 무기/아이템/자판기 테이블 |
+| Asset & Data Driven | `FTableRowBase` + `UItemDefinition(UPrimaryDataAsset)` + `ItemInstance` |
 
 ### 후순위
 
@@ -62,7 +62,7 @@
 - PlayerState에 Kills, Extracted 복제 (COND_OwnerOnly). Money는 인벤토리 아이템으로 처리.
 - 모든 핵심 변수 UPROPERTY로 노출/복제
 - 핵심 함수 UFUNCTION(Server, Reliable) / BlueprintCallable 등 적절히 표시
-- Data-driven: UDataAsset / UPrimaryDataAsset으로 무기/아이템 정의
+- Data-driven: `DataTable Row + ItemDefinition + ItemInstance` 구조로 무기/아이템 정의
 
 ### 2단계: Replication + Movement Component
 - 기본 이동/점프는 CharacterMovement가 네트워크 처리
@@ -70,7 +70,7 @@
 - 복제 원칙: 서버가 Authority, 클라 입력은 "요청", 서버가 "결정"
 - 필수 구현:
   - `bIsSprinting` : ReplicatedUsing=OnRep_IsSprinting
-  - `EquippedWeapon` : Replicate
+  - `EquippedPrimaryItemState` : Replicate (무기 포함 장착 아이템 상태)
   - `HP` : Replicate + OnRep으로 UI 갱신
 
 ### 3단계: Client Prediction / Reconciliation / Lag Compensation
@@ -95,12 +95,39 @@
 - GameplayEffect: 데미지, 힐, 버프
 - GameplayAbility: Dash, Heal, ShieldOn (3개면 충분)
 - 면접에서 보는 것: Ability 발동 흐름, Attribute 변화, Effect 적용/태그 처리, 네트워크 동작 방식
+- 구현 가이드: `DOCS/Notes/04_GAS.md`, `DOCS/Notes/04_Implementation.md`
 
 ### 5단계: Persistence (영속 데이터)
 - 4단계까지 완료 후 진행
 - 1차: USaveGame으로 로컬 저장 구조 구현 (스태시 인벤토리, 플레이어 진행도, 재화)
 - 2차: 외부 DB 연동 (데디서버 ↔ REST API ↔ DB). 치트 방지를 위해 서버에서만 DB 접근
 - 대상 데이터: 인벤토리/스태시, 계정(레벨/재화), 퀘스트 진행도, 상점/거래 기록
+- 데이터 원칙: DB는 플레이어 상태만 저장, 게임 규칙 데이터(아이템 정의/확률/가격표)는 DataAsset/DataTable을 서버 기준으로 사용
+
+---
+
+## 3-1. 개발 운영 전략 (중요)
+
+아키텍처 리팩터링(ItemInstance + GAS)과 기본 구현(01→04)을 분리해서 운영한다.
+
+### Track A: main 안정화 트랙
+- 목적: 기존 로드맵 순서(01→04)대로 "동작하는 게임"을 먼저 완성
+- 규칙: 현재 기능 개발/버그 수정/블로그 기본편(01~04)은 `main` 기준으로 작성
+
+### Track B: 리팩터링 트랙
+- 목적: 타르코프형 아키텍처(`EquippedItemInstance`, GAS 공용 액션, DB 친화 구조)로 전환
+- 브랜치 예시: `feature/item-gas-architecture`
+- 규칙: 기존 시스템과 병행 가능한 형태로 점진 이관 (한 번에 전면 교체 금지)
+
+### 병합 원칙
+1. Track A에서 기능 완료 + 검증
+2. Track B에서 동일 기능 parity 달성
+3. 멀티 테스트 통과 후 `main`으로 병합
+
+### 블로그 운영 원칙
+- 기본 구현 글(01~04)은 유지
+- 구조 전환은 별도 시리즈(`R1`, `R2` ...)로 기록
+- 기존 글을 대규모로 뒤엎지 않고 "왜 바꿨는지"를 추가로 설명
 
 ---
 
@@ -128,21 +155,24 @@
 
 | 시스템 | 기술 증명 포인트 |
 |--------|-----------------|
-| 자판기(뽑기) | 서버 권한 확률 판정, 상태 복제(사용중/대기), 사운드 Multicast RPC, DataAsset 기반 아이템 테이블 |
+| 자판기(뽑기) | 서버 권한 확률 판정, 상태 복제(사용중/대기), 사운드 Multicast RPC, DataTable 기반 확률/가격 테이블 |
 | AI 적 | Behavior Tree, 감지/추적/사격, 서버 권한 AI 로직 |
 | 사격/히트 | 서버 권한 레이캐스트, Lag Compensation, Hit Validation |
 | Extraction | Zone 진입 판정(서버), 탈출 상태 복제(PlayerState), 타이머 |
 | Inventory | 슬롯 기반 아이템 관리, 장비 장착/해제 |
 | Economy | 아이템 판매, 자판기 비용, 킬/탈출 보상 |
 | Quest | 퀘스트 아이템 수집 진행도 관리, 완료 조건 판정 |
-| Data Driven | UPrimaryDataAsset으로 무기/아이템/자판기 테이블 정의 |
+| Data Driven | DataTable(Row) + ItemDefinition(DataAsset) + ItemInstance 분리 |
 | Animation | AnimBP 스테이트 머신, 몽타주 (사격/재장전/사망), 네트워크 복제 (SimulatedProxy 동기화) |
 | Map | 레벨 디자인, 파밍 포인트/자판기/탈출 지점 배치, 라이팅, 내비메시 (AI 이동용) |
 | UI/HUD | UMG 위젯 (체력바, 탄약, 타이머, 킬 피드, 인벤토리 화면) |
 
+아이템 아키텍처 참고: `DOCS/Mine/Item.md`
+
 ### Git 전략
 - `main` (항상 빌드됨)
 - `feature/net-fire`, `feature/gas`, `feature/extraction` 등 기능별 브랜치
+- 구조 전환 전용 브랜치: `feature/item-gas-architecture`
 - PR 템플릿: 변경 요약 / 테스트 방법
 
 ---

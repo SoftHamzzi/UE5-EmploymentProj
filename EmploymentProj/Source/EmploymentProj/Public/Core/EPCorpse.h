@@ -29,6 +29,9 @@ protected:
 	UPROPERTY(VisibleAnywhere)
 	TObjectPtr<USkeletalMeshComponent> CorpseMesh;
 	
+	UPROPERTY(ReplicatedUsing = OnRep_CorpseMeshAsset)
+	TObjectPtr<USkeletalMesh> CorpseMeshAsset;
+	
 	// 인벤토리 (복제됨 - Relevancy 범위 내)
 	UPROPERTY(Replicated)
 	TArray<FItemData> Inventory;
@@ -36,6 +39,10 @@ protected:
 	// 플레이어 이름
 	UPROPERTY(Replicated)
 	FString PlayerName;
+	
+	UFUNCTION()
+	void OnRep_CorpseMeshAsset();
+	void ApplyCorpseMesh();
 	
 	virtual void GetLifetimeReplicatedProps(TArray<class FLifetimeProperty>& OutLifetimeProps) const override;
 };

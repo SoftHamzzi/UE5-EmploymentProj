@@ -603,3 +603,120 @@ GA_Shield:
 - "UE5 AttributeSet damage pipeline meta attribute"
 - "UE5 GAS prediction LocalPredicted"
 - "tranek GASDocumentation"
+
+---
+
+## 11. 실무 적용 패턴 (EmploymentProj 기준)
+
+### 11-1. 입력은 "키"가 아니라 "의도(Action)"로 매핑
+
+키를 아이템에 직접 넘기지 않는다. 먼저 의도로 변환한다.
+
+```
+LMB -> Input.Action.PrimaryUse
+RMB -> Input.Action.SecondaryUse
+R   -> Input.Action.Reload
+F   -> Input.Action.Interact
+```
+
+이 의도는 GAS의 InputTag 혹은 AbilityTag로 연결한다.
+
+```
+Input.Action.PrimaryUse -> Ability.Item.PrimaryUse
+Input.Action.SecondaryUse -> Ability.Item.SecondaryUse
+Input.Action.Reload -> Ability.Item.Reload
+Input.Action.Interact -> Ability.World.Interact
+```
+
+핵심은 "LMB=발사"가 아니라 "LMB=PrimaryUse 요청"이다.
+그래야 무기/회복템/투척/도구 모두 동일한 입력 파이프라인을 쓸 수 있다.
+
+### 11-2. ItemInstance + Ability 조합
+
+권장 책임 분리:
+
+| 레이어 | 역할 |
+|--------|------|
+| ItemDefinition | 정적 데이터 (에셋/클래스 참조, GE/GA 클래스 참조) |
+| ItemInstance | 런타임 상태 (탄약, 내구도, 장전 상태, 부착물) |
+| GameplayAbility | 실제 사용 로직 (발사/재장전/회복/투척) |
+
+장착 시:
+1. ItemInstance가 자신에게 필요한 Ability를 ASC에 Grant
+2. 입력이 들어오면 ASC가 해당 Ability를 Activate
+3. 해제 시 GrantedAbility를 Remove
+
+이 구조로 가면 Character는 "입력 전달 + 이동"에 집중하고, 아이템 행위는 GAS에 모인다.
+
+### 11-3. 상속보다 조합 우선
+
+`WeaponInstance -> RifleInstance -> ...` 식 상속 트리는 초기에 편하지만, 아이템이 늘면 관리가 어려워진다.
+실무에서는 보통 아래처럼 조합형으로 분해한다.
+
+| 조각 | 책임 |
+|------|------|
+| FireableFragment | 발사 가능 여부, 연사/퍼짐 파라미터 |
+| ReloadableFragment | 탄창/재장전 규칙 |
+| ConsumableFragment | 1회 사용/스택 감소 |
+| ThrowableFragment | 투척 파라미터 |
+
+Ability는 이 조각들을 조회해 동작한다.
+
+### 11-4. 권장 Ability 클래스 분리
+
+| 클래스 | 용도 |
+|--------|------|
+| `UGA_Item_PrimaryUse` | 장착 아이템의 주행동 |
+| `UGA_Item_SecondaryUse` | 부행동 (ADS, 특수 동작) |
+| `UGA_Item_Reload` | 재장전 |
+| `UGA_World_Interact` | 월드 오브젝트 상호작용(F) |
+
+각 Ability는 내부에서 "현재 장착 ItemInstance"를 조회하고,
+타입별 분기 대신 인터페이스(예: `CanPrimaryUse`, `ExecutePrimaryUse`)를 호출한다.
+
+### 11-5. 태그 정책 (최소 세트)
+
+```
+State.Dead
+State.Reloading
+State.UsingItem
+State.ADS
+
+Ability.Item.PrimaryUse
+Ability.Item.SecondaryUse
+Ability.Item.Reload
+Ability.World.Interact
+
+Cooldown.Item.PrimaryUse
+Cooldown.Item.Reload
+```
+
+예시:
+- `GA_Item_PrimaryUse` ActivationBlockedTags: `State.Dead`, `State.Reloading`
+- `GA_Item_Reload` ActivationBlockedTags: `State.Dead`, `State.UsingItem`
+
+---
+
+## 12. 현재 코드에서 GAS로 이전할 때 주의점
+
+### 12-1. 현재 구조와의 충돌 지점
+
+- `AEPCharacter`에 사격/재장전 RPC가 직접 존재
+- `AEPWeapon` 내부에 탄약/장전 상태가 집중
+- `Row + ItemDefinition + ItemInstance`가 분리되지 않으면 무기=아이템 모델이 약해짐
+
+GAS 이전 시 이 세 지점을 먼저 정리해야 한다.
+
+### 12-2. 단계적 이전 원칙
+
+1. 기존 RPC를 한 번에 지우지 않는다.
+2. Ability를 먼저 붙이고, 동작이 안정되면 기존 RPC 경로를 제거한다.
+3. "외형/이펙트"보다 "서버 권한 + 상태 태그 + 비용/쿨다운"을 먼저 맞춘다.
+
+### 12-3. 실무에서 많이 터지는 실수
+
+- `InitAbilityActorInfo`를 서버/클라 양쪽에서 초기화하지 않음
+- LocalPredicted Ability에서 서버 거부 시 롤백 고려 누락
+- 태그 네이밍 규칙 없이 난발
+- Item 해제 시 GrantedAbility 정리 누락
+- Attribute/GE를 BP/C++ 혼합으로 관리하다 소스 오브 트루스가 흔들림

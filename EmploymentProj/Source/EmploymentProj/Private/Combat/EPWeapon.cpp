@@ -127,6 +127,7 @@ void AEPWeapon::StartReload()
 {
 	if (!HasAuthority()) return;
 	if (WeaponState == EEPWeaponState::Reloading) return;
+	
 	if (CurrentAmmo >= MaxAmmo) return;
 	
 	WeaponState = EEPWeaponState::Reloading;

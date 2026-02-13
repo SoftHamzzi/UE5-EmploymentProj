@@ -3,6 +3,7 @@
 
 #include "Core/EPGameMode.h"
 
+#include "Combat/EPCombatComponent.h"
 #include "Core/EPCharacter.h"
 #include "Core/EPPlayerController.h"
 #include "Core/EPGameState.h"
@@ -79,8 +80,7 @@ void AEPGameMode::HandleStartingNewPlayer_Implementation(APlayerController* NewP
 	AEPWeapon* Weapon = GetWorld()->SpawnActor<AEPWeapon>(
 		DefaultWeaponClass, FVector::ZeroVector, FRotator::ZeroRotator, Params);
 	if (!Weapon) return;
-	
-	Char->SetEquippedWeapon(Weapon);
+	Char->GetCombatComponent()->SetEquippedWeapon(Weapon);
 }
 
 // 스폰 위치 결정(랜덤 배정)
@@ -105,7 +105,34 @@ AActor* AEPGameMode::ChoosePlayerStart_Implementation(AController* Player)
 	UsedPlayerStarts.Reset();
 	return Super::ChoosePlayerStart_Implementation(Player);
 }
+
+void AEPGameMode::OnPlayerKilled(AController* Killer, AController* Victim)
+{
+	// if (!Killer || !Victim) return;
+	//
+	// if (Killer != Victim)
+	// {
+	// 	if (AEPPlayerState* KillerPS = Killer->GetPlayerState<AEPPlayerState>())
+	// 		KillerPS->AddKill();
+	// 	if (AEPPlayerController* KillerPC = Cast<AEPPlayerController>(Killer))
+	// 		KillerPC->Client_OnKill(nullptr);
+	// }
+	AEPPlayerController* KillerPC = Cast<AEPPlayerController>(Killer);
+	AEPPlayerState* VictimPS = Victim ? Victim->GetPlayerState<AEPPlayerState>() : nullptr;
+	if (!KillerPC) return;
 	
+	// 킬 카운트
+	if (AEPPlayerState* KillerPS = KillerPC->GetPlayerState<AEPPlayerState>())
+		KillerPS->AddKill();
+
+	// 킬 피드백 — PlayerState에서 이름을 가져옴 (Pawn 의존 없음)
+	FString VictimName = VictimPS ? VictimPS->GetPlayerName() : TEXT("Unknown");
+	KillerPC->Client_OnKill(VictimName);
+	
+	AlivePlayerCount--;
+	CheckMatchEndConditions();
+}
+
 // MatchState 변경 시 호출
 void AEPGameMode::HandleMatchHasStarted()
 {

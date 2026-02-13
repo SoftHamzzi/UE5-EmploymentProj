@@ -64,5 +64,5 @@ public:
 	// --- Client RPC ---
 	// 킬 피드백 (서버 -> 킬러 클라)
 	UFUNCTION(Client, Reliable)
-	void Client_OnKill(AEPCharacter* Victim);
+	void Client_OnKill(const FString& VictimName);
 };

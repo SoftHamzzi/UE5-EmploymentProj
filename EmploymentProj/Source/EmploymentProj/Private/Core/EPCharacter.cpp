@@ -5,14 +5,17 @@
 #include "Camera/CameraComponent.h"
 #include "Core/EPPlayerController.h"
 #include "Movement/EPCharacterMovement.h"
-#include "Net/UnrealNetwork.h"
 
 #include "InputAction.h"
 #include "InputActionValue.h"
 #include "EnhancedInputComponent.h"
-#include "Combat/EPWeapon.h"
 #include "Components/SkeletalMeshComponent.h"
-#include "Kismet/GameplayStatics.h"
+
+#include "Combat/EPWeapon.h"
+#include "Combat/EPCombatComponent.h"
+#include "Core/EPCorpse.h"
+#include "Core/EPGameMode.h"
+#include "Net/UnrealNetwork.h"
 
 AEPCharacter::AEPCharacter(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer.SetDefaultSubobjectClass<UEPCharacterMovement>(
@@ -20,6 +23,8 @@ AEPCharacter::AEPCharacter(const FObjectInitializer& ObjectInitializer)
 {
 	// PrimaryActorTick.bCanEverTick = true;
 	GetMesh()->FirstPersonPrimitiveType = EFirstPersonPrimitiveType::WorldSpaceRepresentation;
+	
+	CombatComponent = CreateDefaultSubobject<UEPCombatComponent>(TEXT("CombatComponent"));
 	
 	FirstPersonCamera = CreateDefaultSubobject<UCameraComponent>("Camera");
 	FirstPersonCamera->bUsePawnControlRotation = true;
@@ -114,6 +119,59 @@ void AEPCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCompone
 		ETriggerEvent::Triggered, this,
 		&AEPCharacter::Input_Fire
 	);
+}
+
+UCameraComponent* AEPCharacter::GetCameraComponent() const { return FirstPersonCamera; }
+
+UEPCombatComponent* AEPCharacter::GetCombatComponent() const
+{
+	return CombatComponent;
+}
+
+float AEPCharacter::TakeDamage(
+	float DamageAmount, struct FDamageEvent const& DamageEvent,
+	class AController* EventInstigator, AActor* DamageCause)
+{
+	if(!HasAuthority()) return 0.f;
+	float ActualDamage = Super::TakeDamage(DamageAmount, DamageEvent,
+		EventInstigator, DamageCause);
+	
+	HP = FMath::Clamp(HP - ActualDamage, 0.f, MaxHP);
+	if (HP <= 0.f) Die(EventInstigator);
+	
+	return ActualDamage;
+}
+
+void AEPCharacter::Die(AController* Killer)
+{
+	if (!HasAuthority()) return;
+	
+	AController* VictimController = GetController();
+	
+	// 무기 처리                                                                                                                                                                                                                                                                                                  
+	if (CombatComponent && CombatComponent->GetEquippedWeapon())
+	{
+		CombatComponent->GetEquippedWeapon()->SetActorHiddenInGame(true);
+		CombatComponent->GetEquippedWeapon()->SetActorEnableCollision(false);
+	}
+	
+	SetActorHiddenInGame(true);
+	SetActorEnableCollision(false);
+	
+	FActorSpawnParameters Params;
+	Params.SpawnCollisionHandlingOverride =
+		ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	AEPCorpse* Corpse = GetWorld()->SpawnActor<AEPCorpse>(
+		AEPCorpse::StaticClass(), GetActorTransform(), Params);
+	if (Corpse)
+		Corpse->InitializeFromCharacter(this);
+	
+	if (AEPGameMode* GM = GetWorld()->GetAuthGameMode<AEPGameMode>())
+		GM->OnPlayerKilled(Killer, GetController());
+	
+	if (VictimController)
+		VictimController->UnPossess();
+	
 }
 
 // --- 입력 핸들러 ---
@@ -222,88 +280,21 @@ void AEPCharacter::Input_UnCrouch(const FInputActionValue& Value)
 
 void AEPCharacter::Input_Fire(const FInputActionValue& Value)
 {
-	if (!EquippedWeapon || !EquippedWeapon->WeaponData) return;
-	
-	// --- 클라이언트 사전 검증 ---
-	if (EquippedWeapon->CurrentAmmo <= 0) return;
-	
-	// 연사속도 체크
-	float FireInterval = 1.f / EquippedWeapon->WeaponData->FireRate;
-	float CurrentTime = GetWorld()->GetTimeSeconds();
-	if (CurrentTime - LocalLastFireTime < FireInterval) return;
-	LocalLastFireTime = CurrentTime;
-	
-	// --- 발사 요청 ---
-	FVector Origin = FirstPersonCamera->GetComponentLocation();
-	FVector Direction = FirstPersonCamera->GetForwardVector();
-	Server_Fire(Origin, Direction);
-	
-	if (IsLocallyControlled())
-	{
-		float Pitch = EquippedWeapon->GetRecoilPitch();
-		float Yaw = FMath::RandRange(
-			-EquippedWeapon->GetRecoilYaw(),
-			EquippedWeapon->GetRecoilYaw());
-		AddControllerPitchInput(-Pitch);
-		AddControllerYawInput(Yaw);
-	}
-}
-
-void AEPCharacter::OnRep_EquippedWeapon()
-{
-	if (!EquippedWeapon) return;
-	
-	EquippedWeapon->AttachToComponent(
-		GetMesh(),
-		FAttachmentTransformRules::SnapToTargetNotIncludingScale,
-		TEXT("WeaponSocket")
+	if (!CombatComponent) return;
+	CombatComponent->RequestFire(
+		FirstPersonCamera->GetComponentLocation(),
+		FirstPersonCamera->GetForwardVector()
 	);
 }
 
-void AEPCharacter::SetEquippedWeapon(AEPWeapon* Weapon) { EquippedWeapon = Weapon; }
-
-void AEPCharacter::Server_Fire_Implementation(const FVector& Origin, const FVector& Direction)
+void AEPCharacter::OnRep_HP()
 {
-	// 연사 속도, 탄약 검증
-	// 서버 레이캐스트
-	// 히트 시 ApplyDamage
-	// Multicast_PlayFireEffect
-	if (!EquippedWeapon || !EquippedWeapon->CanFire()) return;
-	
-	FVector SpreadDir = Direction;
-	EquippedWeapon->Fire(SpreadDir);
-	
-	// 서버 레이캐스트
-	FHitResult Hit;
-	FCollisionQueryParams Params;
-	Params.AddIgnoredActor(this);
-	Params.AddIgnoredActor(EquippedWeapon);
-	
-	if (GetWorld()->LineTraceSingleByChannel(
-		Hit, Origin, Origin + SpreadDir * 10000.f, ECC_Visibility, Params))
-	{
-		UGameplayStatics::ApplyDamage(
-			Hit.GetActor(), EquippedWeapon->GetDamage(),
-			GetController(), this, nullptr);
-	}
-	
-	Multicast_PlayFireEffect(Origin);
-}
-
-void AEPCharacter::Server_Reload_Implementation()
-{
-	if (!EquippedWeapon) return;
-	EquippedWeapon->StartReload();
-}
-
-void AEPCharacter::Multicast_PlayFireEffect_Implementation(const FVector& Origin)
-{
-	UE_LOG(LogTemp, Warning, TEXT("Multicast_PlayFireEffect called"));
+	UE_LOG(LogTemp, Warning, TEXT("Current HP: %d"), HP);
 }
 
 void AEPCharacter::GetLifetimeReplicatedProps(TArray<class FLifetimeProperty>& OutLifetimeProps) const
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 	
-	DOREPLIFETIME(AEPCharacter, EquippedWeapon);
+	DOREPLIFETIME_CONDITION(AEPCharacter, HP, COND_OwnerOnly);
 }
