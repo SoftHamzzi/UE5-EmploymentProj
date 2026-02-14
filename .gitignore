@@ -88,11 +88,18 @@ EmploymentProj/Backup/
 UpgradeLog.htm
 
 # ============================================================
-# External Assets (Large files - use Git LFS if needed)
+# External Assets (Large files)
 # ============================================================
 
 EmploymentProj/Content/Megascans/
 EmploymentProj/Content/MSPresets/
+
+# MetaHuman (대용량 - 메시/텍스처/애니메이션)
+EmploymentProj/Content/MetaHumans/
+EmploymentProj/Content/Characters/MH_*.uasset
+
+# Mannequin 애니메이션 에셋 (Lyra/샘플에서 가져온 대용량)
+EmploymentProj/Content/Characters/Heroes/
 
 # ============================================================
 # Misc

@@ -25,12 +25,26 @@ public:
 	void Interact(AEPCharacter* Looter);
 
 protected:
-	// 시체 메시
+	// Body 메시
 	UPROPERTY(VisibleAnywhere)
 	TObjectPtr<USkeletalMeshComponent> CorpseMesh;
 	
+	// Face 메시
+	UPROPERTY(VisibleAnywhere)
+	TObjectPtr<USkeletalMeshComponent> FaceMesh;
+	
+	// Outfit 메시
+	UPROPERTY(VisibleAnywhere)
+	TObjectPtr<USkeletalMeshComponent> OutfitMesh;
+	
 	UPROPERTY(ReplicatedUsing = OnRep_CorpseMeshAsset)
 	TObjectPtr<USkeletalMesh> CorpseMeshAsset;
+	
+	UPROPERTY(ReplicatedUsing = OnRep_CorpseFaceAsset)
+	TObjectPtr<USkeletalMesh> CorpseFaceAsset;
+	
+	UPROPERTY(ReplicatedUsing = OnRep_CorpseOutfitAsset)
+	TObjectPtr<USkeletalMesh> CorpseOutfitAsset;
 	
 	// 인벤토리 (복제됨 - Relevancy 범위 내)
 	UPROPERTY(Replicated)
@@ -42,6 +56,11 @@ protected:
 	
 	UFUNCTION()
 	void OnRep_CorpseMeshAsset();
+	UFUNCTION()
+	void OnRep_CorpseFaceAsset();
+	UFUNCTION()
+	void OnRep_CorpseOutfitAsset();
+	
 	void ApplyCorpseMesh();
 	
 	virtual void GetLifetimeReplicatedProps(TArray<class FLifetimeProperty>& OutLifetimeProps) const override;

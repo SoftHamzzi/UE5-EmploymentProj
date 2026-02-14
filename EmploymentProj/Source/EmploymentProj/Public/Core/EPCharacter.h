@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "DataWrappers/ChaosVDParticleDataWrapper.h"
 #include "GameFramework/Character.h"
 #include "EPCharacter.generated.h"
 
@@ -26,11 +27,13 @@ public:
 	// 기본 CMC 대신 커스텀 CMC 사용
 	AEPCharacter(const FObjectInitializer& ObjectInitializer);
 	
-	// --- Getter/Setter (CMC에서 읽기) ---
+	// --- Getter/Setter ---
 	bool GetIsSprinting() const;
 	bool GetIsAiming() const;
 	UCameraComponent* GetCameraComponent() const;
 	UEPCombatComponent* GetCombatComponent() const;
+	FORCEINLINE USkeletalMeshComponent* GetFaceMesh() const { return FaceMesh; }
+	FORCEINLINE USkeletalMeshComponent* GetOutfitMesh() const { return OutfitMesh; }
 
 protected:
 	// === 변수 ===
@@ -40,8 +43,10 @@ protected:
 	UEPCombatComponent* CombatComponent;
 	
 	// // --- 메타 휴먼 ---
-	// UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "MetaHuman")
-	// TObjectPtr<USkeletalMeshComponent> FaceMesh;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "MetaHuman")
+	TObjectPtr<USkeletalMeshComponent> FaceMesh;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "MetaHuman")
+	TObjectPtr<USkeletalMeshComponent> OutfitMesh;
 	
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Camera")
 	FVector FirstPersonCameraOffset = FVector(2.8f, 5.9f, 0.0f);
@@ -94,6 +99,9 @@ protected:
 	// OnRep
 	UFUNCTION()
 	void OnRep_HP();
+	
+	UFUNCTION(NetMulticast, Reliable)
+	void Multicast_Die();
 	
 	// 동기화
 	virtual void GetLifetimeReplicatedProps(TArray<class FLifetimeProperty>& OutLifetimeProps) const override;

@@ -739,28 +739,57 @@ CMC 확장으로 이미 FLAG_Custom_1에 ADS가 포함됨. 입력 바인딩 + FO
 
 ---
 
-### Step 8: 애니메이션
+### Step 8: 애니메이션 (Lyra 스타일 Linked Anim Layer)
 
+Lyra의 Animation Layer Interface 패턴을 적용한다.
+메인 AnimBP가 이동만 담당하고, 무기별 애니메이션은 레이어로 분리하여 런타임 교체.
+상세 설계: `DOCS/Mine/Animation.md` 참조.
+
+**C++ 구현:**
 1. `Animation/EPAnimInstance.h/.cpp` 생성
-   - NativeUpdateAnimation: CMC에서 Sprint/ADS 읽기
-2. 에디터에서 AnimBP 생성 (ABP_EPCharacter):
-   - Parent: UEPAnimInstance
-   - **Locomotion**: 블렌드스페이스 (Speed, Direction)
-   - **Sprint**: bIsSprinting 조건
-   - **Jump/Fall**: bIsInAir
-   - **Crouch**: bIsCrouching
-   - **Aim Offset**: AimPitch
-   - **Fire 몽타주**: 상체 반동
-3. EPCharacter Mesh에 AnimBP 할당
-4. 사격 시 몽타주:
+   - NativeUpdateAnimation: CMC에서 Sprint/ADS/Crouch/Falling 읽기
+   - AimPitch/AimYaw: GetBaseAimRotation에서 추출
+2. `Animation/EPWeaponAnimInstance.h/.cpp` 생성
+   - 무기별 AnimBP의 C++ 베이스
+   - 무기 상태 변수 (bIsFiring, bIsReloading 등)
+3. EPWeaponData에 `WeaponAnimLayer` 추가:
    ```cpp
-   // Multicast_PlayFireEffect에서
-   if (UAnimInstance* Anim = GetMesh()->GetAnimInstance())
-       Anim->Montage_Play(FireMontage);
+   UPROPERTY(EditDefaultsOnly, Category = "Animation")
+   TSubclassOf<UAnimInstance> WeaponAnimLayer;
    ```
-5. **빌드 확인**
+4. CombatComponent::EquipWeapon에서 AnimLayer 링크:
+   ```cpp
+   Owner->GetMesh()->LinkAnimClassLayers(WeaponData->WeaponAnimLayer);
+   ```
 
-**테스트**: 이동/점프/앉기/달리기 애니메이션 전환. 2인에서 상대 애니메이션 동기화.
+**Blueprint 구현:**
+1. `ALI_EPWeapon` (Animation Layer Interface) 생성
+   - FullBody_IdleWalkRun: 무기 들고 대기/이동
+   - UpperBody_AimFire: 조준/사격
+   - FullBody_Jump: 점프/낙하
+2. `ABP_EPCharacter` (메인 AnimBP, UEPAnimInstance 기반) 생성
+   - Locomotion StateMachine: Speed/Direction 블렌드스페이스
+   - 각 State에서 Linked Anim Layer 노드로 ALI 호출
+   - Aim Offset: AimPitch
+3. `ABP_Rifle` (무기 AnimBP, UEPWeaponAnimInstance 기반) 생성
+   - ALI_EPWeapon 구현
+   - 라이플 전용 애니메이션 할당
+4. BP_EPCharacter의 Mesh에 ABP_EPCharacter 할당
+5. DA_Rifle (WeaponData)에 ABP_Rifle 지정
+6. **빌드 확인**
+
+**사격 몽타주:**
+```cpp
+// CombatComponent의 Multicast에서
+AEPCharacter* Owner = GetOwnerCharacter();
+if (Owner && Owner->GetMesh())
+{
+    if (UAnimInstance* Anim = Owner->GetMesh()->GetAnimInstance())
+        Anim->Montage_Play(FireMontage);
+}
+```
+
+**테스트**: 이동/점프/앉기/달리기 애니메이션 전환. 무기 장착 시 AnimLayer 교체. 2인에서 상대 애니메이션 동기화.
 
 ---
 
@@ -835,6 +864,9 @@ CMC 확장으로 이미 FLAG_Custom_1에 ADS가 포함됨. 입력 바인딩 + FO
 - [ ] 사망: HP 0 → Corpse 스폰, 캐릭터 숨김
 - [ ] KillCount: 킬러에게만 증가 (COND_OwnerOnly)
 - [ ] ADS: CMC 기반 속도 감소 + FOV 변경
+- [ ] Animation Layer Interface: ALI_EPWeapon 정의, 레이어 함수 작동
+- [ ] 메인 AnimBP: UEPAnimInstance 기반, Locomotion + 레이어 슬롯
+- [ ] 무기 AnimBP: ABP_Rifle이 ALI 구현, 무기 장착 시 LinkAnimClassLayers로 교체
 - [ ] AnimBP: 이동/점프/앉기/달리기/ADS 애니메이션 전환
 - [ ] 사격 몽타주: 발사 시 반동 애니메이션
 

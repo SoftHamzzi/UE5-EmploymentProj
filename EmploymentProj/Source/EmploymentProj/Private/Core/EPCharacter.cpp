@@ -13,6 +13,7 @@
 
 #include "Combat/EPWeapon.h"
 #include "Combat/EPCombatComponent.h"
+#include "Components/CapsuleComponent.h"
 #include "Core/EPCorpse.h"
 #include "Core/EPGameMode.h"
 #include "Net/UnrealNetwork.h"
@@ -21,27 +22,34 @@ AEPCharacter::AEPCharacter(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer.SetDefaultSubobjectClass<UEPCharacterMovement>(
 		ACharacter::CharacterMovementComponentName))
 {
+	// --- Body Mesh 설정 ---
+	GetMesh()->SetRelativeLocation(FVector(0.f, 0.f, -90.f));
+	GetMesh()->SetRelativeRotation(FRotator(0.f, -90.f, 0.f));
 	
-	// === 컴포넌트 ===
-	// 컴뱃 컴포넌트
-	CombatComponent = CreateDefaultSubobject<UEPCombatComponent>(TEXT("CombatComponent"));
+	// 메타휴먼
+	FaceMesh = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("Face"));
+	FaceMesh->SetupAttachment(GetMesh());
+	FaceMesh->SetLeaderPoseComponent(GetMesh());
 	
+	OutfitMesh = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("Outfit"));
+	OutfitMesh->SetupAttachment(GetMesh());
+	OutfitMesh->SetLeaderPoseComponent(GetMesh());
 	
-	// 카메라
+	// --- Camera ---
 	FirstPersonCamera = CreateDefaultSubobject<UCameraComponent>("Camera");
 	FirstPersonCamera->bUsePawnControlRotation = true;
 	FirstPersonCamera->SetupAttachment(GetMesh(), FName("head"));
 	FirstPersonCamera->SetRelativeLocationAndRotation(FirstPersonCameraOffset, FRotator(0.0f, 90.0f, -90.0f));
 	bUseControllerRotationYaw = true;
 	
-	// 이동
+	// --- Combat ---
+	CombatComponent = CreateDefaultSubobject<UEPCombatComponent>(TEXT("CombatComponent"));
+	
+	// --- Movement ---
 	UEPCharacterMovement* Movement = Cast<UEPCharacterMovement>(GetCharacterMovement());
 	Movement->JumpZVelocity = 420.f;
 	Movement->AirControl = 0.5f;
-	
 	Movement->BrakingDecelerationFalling = 700.f;
-	// Movement->FallingLateralFriction = 0f; // 공중 마찰력
-	
 	Movement->NavAgentProps.bCanCrouch = true;
 	Movement->GetNavAgentPropertiesRef().bCanCrouch = true;
 	
@@ -159,23 +167,13 @@ void AEPCharacter::Die(AController* Killer)
 		CombatComponent->GetEquippedWeapon()->SetActorEnableCollision(false);
 	}
 	
-	SetActorHiddenInGame(true);
-	SetActorEnableCollision(false);
-	
-	FActorSpawnParameters Params;
-	Params.SpawnCollisionHandlingOverride =
-		ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-	AEPCorpse* Corpse = GetWorld()->SpawnActor<AEPCorpse>(
-		AEPCorpse::StaticClass(), GetActorTransform(), Params);
-	if (Corpse)
-		Corpse->InitializeFromCharacter(this);
-	
 	if (AEPGameMode* GM = GetWorld()->GetAuthGameMode<AEPGameMode>())
 		GM->OnPlayerKilled(Killer, GetController());
 	
+	Multicast_Die();
+	
 	if (VictimController)
 		VictimController->UnPossess();
-	
 }
 
 // --- 입력 핸들러 ---
@@ -296,6 +294,13 @@ void AEPCharacter::Input_Fire(const FInputActionValue& Value)
 void AEPCharacter::OnRep_HP()
 {
 	UE_LOG(LogTemp, Warning, TEXT("Current HP: %d"), HP);
+}
+
+void AEPCharacter::Multicast_Die_Implementation()
+{
+	GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	GetMesh()->SetCollisionProfileName(TEXT("Ragdoll"));
+	GetMesh()->SetSimulatePhysics(true);
 }
 
 void AEPCharacter::GetLifetimeReplicatedProps(TArray<class FLifetimeProperty>& OutLifetimeProps) const
