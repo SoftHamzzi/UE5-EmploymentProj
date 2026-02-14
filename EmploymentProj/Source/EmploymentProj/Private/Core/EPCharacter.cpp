@@ -21,17 +21,20 @@ AEPCharacter::AEPCharacter(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer.SetDefaultSubobjectClass<UEPCharacterMovement>(
 		ACharacter::CharacterMovementComponentName))
 {
-	// PrimaryActorTick.bCanEverTick = true;
-	GetMesh()->FirstPersonPrimitiveType = EFirstPersonPrimitiveType::WorldSpaceRepresentation;
 	
+	// === 컴포넌트 ===
+	// 컴뱃 컴포넌트
 	CombatComponent = CreateDefaultSubobject<UEPCombatComponent>(TEXT("CombatComponent"));
 	
+	
+	// 카메라
 	FirstPersonCamera = CreateDefaultSubobject<UCameraComponent>("Camera");
 	FirstPersonCamera->bUsePawnControlRotation = true;
 	FirstPersonCamera->SetupAttachment(GetMesh(), FName("head"));
 	FirstPersonCamera->SetRelativeLocationAndRotation(FirstPersonCameraOffset, FRotator(0.0f, 90.0f, -90.0f));
 	bUseControllerRotationYaw = true;
 	
+	// 이동
 	UEPCharacterMovement* Movement = Cast<UEPCharacterMovement>(GetCharacterMovement());
 	Movement->JumpZVelocity = 420.f;
 	Movement->AirControl = 0.5f;
@@ -41,6 +44,7 @@ AEPCharacter::AEPCharacter(const FObjectInitializer& ObjectInitializer)
 	
 	Movement->NavAgentProps.bCanCrouch = true;
 	Movement->GetNavAgentPropertiesRef().bCanCrouch = true;
+	
 }
 
 void AEPCharacter::BeginPlay()
@@ -214,6 +218,7 @@ void AEPCharacter::Input_StartSprint(const FInputActionValue& Value)
 {
 	if (UEPCharacterMovement* CMC = Cast<UEPCharacterMovement>(GetCharacterMovement()))
 	{
+		if (CMC->bWantsToAim) return;
 		CMC->bWantsToSprint = true;
 	}
 }
@@ -252,6 +257,7 @@ void AEPCharacter::Input_StartADS(const FInputActionValue& Value)
 		CMC->bWantsToAim = true;
 		CMC->bWantsToSprint = false;
 	}
+	
 	// FOV 변경 (로컬만)
 	if (IsLocallyControlled() && FirstPersonCamera)
 		FirstPersonCamera->SetFieldOfView(60.f);

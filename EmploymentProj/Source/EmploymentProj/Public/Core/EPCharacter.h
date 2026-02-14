@@ -14,6 +14,9 @@ class UEPCombatComponent;
 class UInputAction;
 struct FInputActionValue;
 
+// --- 메타 휴먼 ---
+class UGroomComponent;
+
 UCLASS()
 class EMPLOYMENTPROJ_API AEPCharacter : public ACharacter
 {
@@ -35,6 +38,11 @@ protected:
 	UCameraComponent* FirstPersonCamera;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat")
 	UEPCombatComponent* CombatComponent;
+	
+	// // --- 메타 휴먼 ---
+	// UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "MetaHuman")
+	// TObjectPtr<USkeletalMeshComponent> FaceMesh;
+	
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Camera")
 	FVector FirstPersonCameraOffset = FVector(2.8f, 5.9f, 0.0f);
 	UPROPERTY(ReplicatedUsing = OnRep_HP, BlueprintReadOnly, Category = "Stat")
