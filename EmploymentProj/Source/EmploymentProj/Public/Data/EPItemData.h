@@ -3,40 +3,51 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Engine/DataAsset.h"
+#include "Engine/DataTable.h"
 #include "Types/EPTypes.h"
 #include "EPItemData.generated.h"
 
-UCLASS(BlueprintType)
-class EMPLOYMENTPROJ_API UEPItemData : public UPrimaryDataAsset
+class UEPItemDefinition;
+
+USTRUCT(BlueprintType)
+struct FEPItemData : public FTableRowBase
 {
 	GENERATED_BODY()
 	
-public:
-	// 아이템 이름
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Item")
-	FName ItemName;
+	// 아이템 고유 ID (Row Name과 동일하게 유지)
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Item")
+	FName ItemId;
 	
-	// 아이템 설명
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Item")
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Item")
+	EEPItemType ItemType = EEPItemType::Misc;
+	
+	// 표시 정보
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Item")
+	FText DisplayName;
+	
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Item")
 	FText Description;
 	
-	// 등급
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Item")
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Item")
 	EEPItemRarity Rarity = EEPItemRarity::Common;
 	
-	// 판매 가격
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Item")
-	int32 SellPrice = 100;
+	// 인벤토리
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Item")
+	int32 MaxStack = 1;
 	
-	// 퀘스트 아이템 여부
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Item")
-	bool bIsQuestItem = false;
-	
-	// 인벤토리 슬롯 차지 수 (기본 1)
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Item")
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Item")
 	int32 SlotSize = 1;
 	
-	virtual FPrimaryAssetId GetPrimaryAssetId() const override;
+	// 경제
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Item")
+	int32 SellPrice = 100;
+	
+	// 플래그
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Item")
+	bool bIsQuestItem = false;
+	
+	// 이 Row에 대응하는 Definition 에셋 참조
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Item")
+	TSoftObjectPtr<UEPItemDefinition> ItemDefinition;
 	
 };

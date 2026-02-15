@@ -5,18 +5,6 @@
 #include "CoreMinimal.h"
 #include "EPTypes.generated.h"
 
-USTRUCT(BlueprintType)
-struct FItemData
-{
-	GENERATED_BODY()
-	
-	UPROPERTY(EditAnywhere)
-	FName ItemName;
-	
-	UPROPERTY(EditAnywhere)
-	int32 Value;
-};
-
 UENUM(BlueprintType)
 enum class EEPMatchPhase : uint8
 {
@@ -48,4 +36,14 @@ enum class EEPWeaponState : uint8
 	Idle,
 	Reloading,
 	Firing
+};
+
+UENUM(BlueprintType)
+enum class EEPItemType : uint8
+{
+	Weapon,
+	Ammo,
+	Consumable,
+	QuestItem,
+	Misc
 };

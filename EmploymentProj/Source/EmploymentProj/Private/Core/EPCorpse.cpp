@@ -88,9 +88,9 @@ void AEPCorpse::Interact(AEPCharacter* Looter)
 
 void AEPCorpse::GetLifetimeReplicatedProps(TArray<class FLifetimeProperty>& OutLifetimeProps) const
 {
+	
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 	
-	DOREPLIFETIME(AEPCorpse, Inventory);
 	DOREPLIFETIME(AEPCorpse, PlayerName);
 	
 	// 메시

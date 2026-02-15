@@ -7,7 +7,6 @@
 #include "EPCorpse.generated.h"
 
 class AEPCharacter;
-struct FItemData;
 
 UCLASS()
 class EMPLOYMENTPROJ_API AEPCorpse : public AActor
@@ -45,10 +44,6 @@ protected:
 	
 	UPROPERTY(ReplicatedUsing = OnRep_CorpseOutfitAsset)
 	TObjectPtr<USkeletalMesh> CorpseOutfitAsset;
-	
-	// 인벤토리 (복제됨 - Relevancy 범위 내)
-	UPROPERTY(Replicated)
-	TArray<FItemData> Inventory;
 	
 	// 플레이어 이름
 	UPROPERTY(Replicated)

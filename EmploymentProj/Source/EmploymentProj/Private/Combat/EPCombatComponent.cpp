@@ -43,7 +43,7 @@ AEPWeapon* UEPCombatComponent::GetEquippedWeapon() const
 
 void UEPCombatComponent::RequestFire(const FVector& Origin, const FVector& Direction)
 {
-	if (!EquippedWeapon || !EquippedWeapon->WeaponData) return;
+	if (!EquippedWeapon || !EquippedWeapon->WeaponDef) return;
 	
 	// --- 클라이언트 사전 검증 ---
 	if (EquippedWeapon->CurrentAmmo <= 0) return;
@@ -51,7 +51,7 @@ void UEPCombatComponent::RequestFire(const FVector& Origin, const FVector& Direc
 	AEPCharacter* Owner = GetOwnerCharacter();
 	
 	// 연사속도 체크
-	float FireInterval = 1.f / EquippedWeapon->WeaponData->FireRate;
+	float FireInterval = 1.f / EquippedWeapon->WeaponDef->FireRate;
 	float CurrentTime = GetWorld()->GetTimeSeconds();
 	if (CurrentTime - LocalLastFireTime < FireInterval) return;
 	LocalLastFireTime = CurrentTime;

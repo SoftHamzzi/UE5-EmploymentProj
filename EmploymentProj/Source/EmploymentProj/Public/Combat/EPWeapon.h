@@ -4,7 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
-#include "Data/EPWeaponData.h"
+#include "Data/EPWeaponDefinition.h"
 #include "EPWeapon.generated.h"
 
 UCLASS()
@@ -17,7 +17,7 @@ public:
 	
 	// --- 스펙 ---
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon")
-	TObjectPtr<UEPWeaponData> WeaponData;
+	TObjectPtr<UEPWeaponDefinition> WeaponDef;
 	
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Weapon")
 	TObjectPtr<USkeletalMeshComponent> WeaponMesh;
@@ -38,8 +38,8 @@ public:
 	void FinishReload();
 	
 	float GetDamage() const;
-	FORCEINLINE float GetRecoilPitch() const { return WeaponData->RecoilPitch; }
-	FORCEINLINE float GetRecoilYaw() const { return WeaponData->RecoilYaw; }
+	FORCEINLINE float GetRecoilPitch() const { return WeaponDef->RecoilPitch; }
+	FORCEINLINE float GetRecoilYaw() const { return WeaponDef->RecoilYaw; }
 	FORCEINLINE float GetCurrentSpread() const { return CurrentSpread; }
 	
 protected:

@@ -26,9 +26,9 @@ void AEPWeapon::BeginPlay()
 {
 	Super::BeginPlay();
 	
-	if (HasAuthority() && WeaponData)
+	if (HasAuthority() && WeaponDef)
 	{
-		MaxAmmo = WeaponData->MaxAmmo;
+		MaxAmmo = WeaponDef->MaxAmmo;
 		CurrentAmmo = MaxAmmo;
 	}
 }
@@ -43,11 +43,11 @@ void AEPWeapon::Tick(float DeltaTime)
 	{
 		CurrentSpread = FMath::Max(
 			0.f,
-			CurrentSpread - WeaponData->SpreadRecoveryRate * DeltaTime
+			CurrentSpread - WeaponDef->SpreadRecoveryRate * DeltaTime
 		);
 	}
 	
-	float FireInterval = 1.f / WeaponData->FireRate;
+	float FireInterval = 1.f / WeaponDef->FireRate;
 	if (WeaponState == EEPWeaponState::Firing &&
 		GetWorld()->GetTimeSeconds() - LastFireTime > FireInterval * 2.f)
 	{
@@ -62,10 +62,10 @@ bool AEPWeapon::CanFire() const
 
 	WeaponState != EEPWeaponState::Firing) return false;
 	if (CurrentAmmo <= 0) return false;
-	if (!WeaponData) return false;
+	if (!WeaponDef) return false;
 	
 	// 연사 속도 체크
-	float FireInterval = 1.f / WeaponData->FireRate;
+	float FireInterval = 1.f / WeaponDef->FireRate;
 	float CurrentTime = GetWorld()->GetTimeSeconds();
 	if (CurrentTime - LastFireTime < FireInterval) return false;
 	
@@ -74,7 +74,7 @@ bool AEPWeapon::CanFire() const
 
 float AEPWeapon::GetDamage() const
 {
-	return WeaponData ? WeaponData->Damage : 0.f;
+	return WeaponDef ? WeaponDef->Damage : 0.f;
 }
 
 void AEPWeapon::Fire(FVector& OutDirection)
@@ -86,8 +86,8 @@ void AEPWeapon::Fire(FVector& OutDirection)
 	
 	// 퍼짐 누적
 	CurrentSpread = FMath::Min(
-		CurrentSpread + WeaponData-> SpreadPerShot,
-		WeaponData->MaxSpread
+		CurrentSpread + WeaponDef-> SpreadPerShot,
+		WeaponDef->MaxSpread
 	);
 	ConsecutiveShots++;
 	
@@ -110,17 +110,17 @@ FVector AEPWeapon::ApplySpread(const FVector& Direction) const
 
 float AEPWeapon::CalculateSpread() const
 {
-	float Spread = WeaponData->BaseSpread + CurrentSpread;
+	float Spread = WeaponDef->BaseSpread + CurrentSpread;
 	
 	if (AEPCharacter* EPOwner = Cast<AEPCharacter>(GetOwner()))
 	{
 		if (EPOwner->GetIsAiming())
-			Spread *= WeaponData->ADSSpreadMultiplier;
+			Spread *= WeaponDef->ADSSpreadMultiplier;
 		if (EPOwner->GetVelocity().Size2D() > 10.f)
-			Spread *= WeaponData->MovingSpreadMultiplier;
+			Spread *= WeaponDef->MovingSpreadMultiplier;
 	}
 	
-	return FMath::Clamp(Spread, 0.f, WeaponData->MaxSpread);
+	return FMath::Clamp(Spread, 0.f, WeaponDef->MaxSpread);
 }
 
 void AEPWeapon::StartReload()
@@ -135,7 +135,7 @@ void AEPWeapon::StartReload()
 	GetWorldTimerManager().SetTimer(
 		ReloadTimerHandle,
 		this, &AEPWeapon::FinishReload,
-		WeaponData->ReloadTime,
+		WeaponDef->ReloadTime,
 		false
 	);
 }
