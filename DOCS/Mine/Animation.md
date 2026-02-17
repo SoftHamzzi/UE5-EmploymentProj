@@ -205,11 +205,13 @@ void UEPWeaponAnimInstance::NativeUpdateAnimation(float DeltaSeconds)
 > C++에서 복사하는 것보다 BP에서 Property Access가 더 실무적이다.
 > C++에는 최소 구조만 두고, 변수 접근은 BP Property Access로 처리.
 
-### 2-3. EPWeaponData — AnimLayer 추가
+### 2-3. EPWeaponDefinition — AnimLayer 필드
+
+`WeaponAnimLayer`는 `UEPWeaponDefinition`에 이미 포함되어 있다. (Item.md 참조)
 
 ```cpp
-// EPWeaponData.h에 추가
-UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Animation")
+// EPWeaponDefinition.h (이미 존재)
+UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Animation")
 TSubclassOf<UAnimInstance> WeaponAnimLayer;
 ```
 
@@ -223,9 +225,9 @@ void UEPCombatComponent::SetEquippedWeapon(AEPWeapon* Weapon)
 
     // AnimLayer 링크
     AEPCharacter* Owner = GetOwnerCharacter();
-    if (Owner && Weapon && Weapon->WeaponData)
+    if (Owner && Weapon && Weapon->WeaponDef)
     {
-        if (TSubclassOf<UAnimInstance> AnimLayer = Weapon->WeaponData->WeaponAnimLayer)
+        if (TSubclassOf<UAnimInstance> AnimLayer = Weapon->WeaponDef->WeaponAnimLayer)
         {
             Owner->GetMesh()->LinkAnimClassLayers(AnimLayer);
         }
@@ -238,9 +240,9 @@ void UEPCombatComponent::SetEquippedWeapon(AEPWeapon* Weapon)
 void UEPCombatComponent::UnequipWeapon()
 {
     AEPCharacter* Owner = GetOwnerCharacter();
-    if (Owner && EquippedWeapon && EquippedWeapon->WeaponData)
+    if (Owner && EquippedWeapon && EquippedWeapon->WeaponDef)
     {
-        if (TSubclassOf<UAnimInstance> AnimLayer = EquippedWeapon->WeaponData->WeaponAnimLayer)
+        if (TSubclassOf<UAnimInstance> AnimLayer = EquippedWeapon->WeaponDef->WeaponAnimLayer)
         {
             Owner->GetMesh()->UnlinkAnimClassLayers(AnimLayer);
         }
@@ -345,14 +347,14 @@ C++로 복사하는 대신, **AnimBP 에디터에서 Property Access 노드** �
 ## 6. 구현 순서
 
 1. **C++ 클래스 생성** — EPAnimInstance, EPWeaponAnimInstance
-2. **EPWeaponData에 WeaponAnimLayer 추가**
+2. **EPWeaponDefinition에 WeaponAnimLayer 이미 존재** (Item.md 참조)
 3. **CombatComponent에 LinkAnimClassLayers 추가**
 4. **에디터**: ALI_EPWeapon 생성
 5. **에디터**: ABP_EPCharacter 생성 (Locomotion StateMachine + Layer 슬롯)
 6. **에디터**: ABP_Rifle 생성 (ALI 구현)
 7. **에디터**: BlendSpace 생성 (Speed, Direction)
 8. **BP_EPCharacter**: Mesh에 ABP_EPCharacter 할당
-9. **DA_Rifle**: WeaponAnimLayer에 ABP_Rifle 지정
+9. **DA_AK74** (WeaponDefinition): WeaponAnimLayer에 ABP_Rifle 지정
 10. **테스트**: 이동/무기 장착/사격 애니메이션 확인
 
 ## 7. 주의사항

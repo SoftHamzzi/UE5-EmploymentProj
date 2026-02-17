@@ -24,7 +24,7 @@
 
 | 계층 | 역할 |
 |------|------|
-| `FEPItemRow` | 운영 수치 (가격/스택/슬롯/드랍 그룹/확률 등) |
+| `FEPItemData` | 운영 수치 (가격/스택/슬롯/드랍 그룹/확률 등) |
 | `UEPItemDefinition` | 정적 참조 (메시/아이콘/FX/SFX/Ability 클래스) |
 | `UEPItemInstance` | 런타임 상태 (수량/탄약/내구도/부착물) |
 

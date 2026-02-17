@@ -127,133 +127,22 @@ AEPCharacter::AEPCharacter(const FObjectInitializer& ObjectInitializer)
 7. `FirstPersonCameraOffset` 조정 (메타휴먼 머리 크기에 맞게)
 8. CapsuleComponent 반지름/높이 → 메타휴먼 체형에 맞게 조정
 
-### 4-4. EPCorpse — Face/Outfit 메시 복사 추가
+### 4-4. 사망 처리 — 캐릭터 셀프 래그돌
 
-**EPCorpse.h:**
+EPCorpse 별도 스폰 대신, 캐릭터 자체를 래그돌 처리한다.
+Face/Outfit은 LeaderPose로 Body를 따라가므로 Body에만 래그돌 적용하면 된다.
+
 ```cpp
-protected:
-    // Body 메시
-    UPROPERTY(VisibleAnywhere)
-    TObjectPtr<USkeletalMeshComponent> CorpseMesh;
-
-    // Face 메시
-    UPROPERTY(VisibleAnywhere)
-    TObjectPtr<USkeletalMeshComponent> FaceMesh;
-
-    // Outfit 메시
-    UPROPERTY(VisibleAnywhere)
-    TObjectPtr<USkeletalMeshComponent> OutfitMesh;
-
-    // 복제용 에셋 참조
-    UPROPERTY(ReplicatedUsing = OnRep_CorpseMeshAsset)
-    TObjectPtr<USkeletalMesh> CorpseMeshAsset;
-
-    UPROPERTY(ReplicatedUsing = OnRep_CorpseFaceAsset)
-    TObjectPtr<USkeletalMesh> CorpseFaceAsset;
-
-    UPROPERTY(ReplicatedUsing = OnRep_CorpseOutfitAsset)
-    TObjectPtr<USkeletalMesh> CorpseOutfitAsset;
-
-    UFUNCTION()
-    void OnRep_CorpseMeshAsset();
-    UFUNCTION()
-    void OnRep_CorpseFaceAsset();
-    UFUNCTION()
-    void OnRep_CorpseOutfitAsset();
-    void ApplyCorpseMesh();
-```
-
-**EPCorpse.cpp 생성자:**
-```cpp
-AEPCorpse::AEPCorpse()
+// EPCharacter.cpp — Multicast_Die_Implementation
+void AEPCharacter::Multicast_Die_Implementation()
 {
-    bReplicates = true;
-    CorpseMesh = CreateDefaultSubobject<USkeletalMeshComponent>("CorpseMesh");
-    RootComponent = CorpseMesh;
-
-    FaceMesh = CreateDefaultSubobject<USkeletalMeshComponent>("FaceMesh");
-    FaceMesh->SetupAttachment(CorpseMesh);
-    FaceMesh->SetLeaderPoseComponent(CorpseMesh);
-
-    OutfitMesh = CreateDefaultSubobject<USkeletalMeshComponent>("OutfitMesh");
-    OutfitMesh->SetupAttachment(CorpseMesh);
-    OutfitMesh->SetLeaderPoseComponent(CorpseMesh);
+    GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+    GetMesh()->SetCollisionProfileName(TEXT("Ragdoll"));
+    GetMesh()->SetSimulatePhysics(true);
 }
 ```
 
-**InitializeFromCharacter:**
-```cpp
-void AEPCorpse::InitializeFromCharacter(AEPCharacter* DeadCharacter)
-{
-    if (!HasAuthority() || !DeadCharacter) return;
-
-    // Body
-    USkeletalMeshComponent* SrcBody = DeadCharacter->GetMesh();
-    if (SrcBody && SrcBody->GetSkeletalMeshAsset())
-        CorpseMeshAsset = SrcBody->GetSkeletalMeshAsset();
-
-    // Face
-    USkeletalMeshComponent* SrcFace = DeadCharacter->GetFaceMesh();
-    if (SrcFace && SrcFace->GetSkeletalMeshAsset())
-        CorpseFaceAsset = SrcFace->GetSkeletalMeshAsset();
-
-    // Outfit
-    USkeletalMeshComponent* SrcOutfit = DeadCharacter->GetOutfitMesh();
-    if (SrcOutfit && SrcOutfit->GetSkeletalMeshAsset())
-        CorpseOutfitAsset = SrcOutfit->GetSkeletalMeshAsset();
-
-    ApplyCorpseMesh();
-}
-```
-
-**ApplyCorpseMesh:**
-```cpp
-void AEPCorpse::ApplyCorpseMesh()
-{
-    if (CorpseMeshAsset)
-    {
-        CorpseMesh->SetSkeletalMeshAsset(CorpseMeshAsset);
-        CorpseMesh->SetCollisionProfileName(TEXT("Ragdoll"));
-
-        // 1프레임 지연 후 물리 활성화 (바닥 관통 방지)
-        GetWorld()->GetTimerManager().SetTimerForNextTick([this]()
-        {
-            CorpseMesh->SetSimulatePhysics(true);
-        });
-    }
-
-    if (CorpseFaceAsset)
-    {
-        FaceMesh->SetSkeletalMeshAsset(CorpseFaceAsset);
-        // LeaderPose로 Body 래그돌 따라감 — 별도 물리 불필요
-    }
-
-    if (CorpseOutfitAsset)
-    {
-        OutfitMesh->SetSkeletalMeshAsset(CorpseOutfitAsset);
-        // LeaderPose로 Body 래그돌 따라감 — 별도 물리 불필요
-    }
-}
-
-void AEPCorpse::OnRep_CorpseMeshAsset() { ApplyCorpseMesh(); }
-void AEPCorpse::OnRep_CorpseFaceAsset() { ApplyCorpseMesh(); }
-void AEPCorpse::OnRep_CorpseOutfitAsset() { ApplyCorpseMesh(); }
-```
-
-**GetLifetimeReplicatedProps:**
-```cpp
-DOREPLIFETIME(AEPCorpse, CorpseMeshAsset);
-DOREPLIFETIME(AEPCorpse, CorpseFaceAsset);
-DOREPLIFETIME(AEPCorpse, CorpseOutfitAsset);
-```
-
-## 5. Groom은 Corpse에 필요 없는 이유
-
-- Groom(Hair 등)은 순수 비주얼. 시체에서 머리카락이 없어도 게임플레이에 영향 없음
-- Groom 복제는 비용 대비 효과가 낮음
-- 필요하면 나중에 추가 가능
-
-## 6. 주의사항
+## 5. 주의사항
 
 - **카메라 소켓**: 메타휴먼의 head 본 이름이 기존 TutorialTPP와 다를 수 있음. 스켈레톤 에디터에서 확인
 - **캡슐 크기**: 메타휴먼 체형에 맞게 CapsuleComponent 반지름/높이 조정 필요

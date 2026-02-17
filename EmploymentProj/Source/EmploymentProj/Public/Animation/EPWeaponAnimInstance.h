@@ -4,18 +4,17 @@
 
 #include "CoreMinimal.h"
 #include "Animation/AnimInstance.h"
-#include "EPAnimInstance.generated.h"
+#include "EPWeaponAnimInstance.generated.h"
 
 UCLASS()
-class EMPLOYMENTPROJ_API UEPAnimInstance : public UAnimInstance
+class EMPLOYMENTPROJ_API UEPWeaponAnimInstance : public UAnimInstance
 {
 	GENERATED_BODY()
 	
 protected:
-	virtual void NativeInitializeAnimation() override;
 	virtual void NativeUpdateAnimation(float DeltaSeconds) override;
 	
-	// --- Locomotion ---
+	// 메인 AnimBP에서 복사해올 변수 (레이어 내에서 사용)
 	UPROPERTY(BlueprintReadOnly, Category = "Movement")
 	float Speed = 0.f;
 	
@@ -31,18 +30,6 @@ protected:
 	UPROPERTY(BlueprintReadOnly, Category = "Movement")
 	bool bIsCrouching = false;
 	
-	// --- Combat ---
 	UPROPERTY(BlueprintReadOnly, Category = "Combat")
 	bool bIsAiming = false;
-	
-	// --- Aim Offset ---
-	UPROPERTY(BlueprintReadOnly, Category = "AimOffset")
-	float AimPitch = 0.f;
-	
-	UPROPERTY(BlueprintReadOnly, Category = "AimOffset")
-	float AimYaw = 0.f;
-	
-private:
-	TWeakObjectPtr<class AEPCharacter> CachedCharacter;
-	
 };

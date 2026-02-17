@@ -3,6 +3,13 @@
 > 이 문서는 02_Replication.md의 학습 내용을 기반으로,
 > 1단계에서 구현한 Gameplay Framework 위에 전투/이동/애니메이션을 구현하는 설계서이다.
 
+> **[업데이트 노트]**
+> - `UEPWeaponData` → `UEPWeaponDefinition` (Item.md 3계층 구조로 전환 완료)
+> - `WeaponData` 변수 → `WeaponDef`로 변경됨
+> - Step 6 사망: EPCorpse 스폰 → **캐릭터 셀프 래그돌 (Multicast_Die)** 로 변경
+> - Step 8 애니메이션: `EPWeaponData` → `EPWeaponDefinition`의 `WeaponAnimLayer` 사용
+> - 상세: `DOCS/Mine/Item.md`, `DOCS/Mine/Animation.md` 참조
+
 ---
 
 ## 0. 현재 상태 (1단계 완료 기준)
