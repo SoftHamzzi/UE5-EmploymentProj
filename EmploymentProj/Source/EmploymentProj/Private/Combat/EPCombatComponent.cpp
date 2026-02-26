@@ -71,22 +71,61 @@ void UEPCombatComponent::RequestFire(const FVector& Origin, const FVector& Direc
 
 void UEPCombatComponent::OnRep_EquippedWeapon()
 {
-	if (!EquippedWeapon) return;
+	AEPCharacter* Owner = GetOwnerCharacter();
+	if (!Owner || !EquippedWeapon) return;
 	
 	EquippedWeapon->AttachToComponent(
-		GetOwnerCharacter()->GetMesh(),
+		Owner->GetMesh(),
 		FAttachmentTransformRules::SnapToTargetNotIncludingScale,
 		TEXT("WeaponSocket")
 	);
+	
+	if (EquippedWeapon->WeaponDef && EquippedWeapon->WeaponDef->WeaponAnimLayer)
+	{
+		Owner->GetMesh()->LinkAnimClassLayers(EquippedWeapon->WeaponDef->WeaponAnimLayer);
+	}
 }
 
-void UEPCombatComponent::SetEquippedWeapon(AEPWeapon* Weapon) { EquippedWeapon = Weapon; }
+// 서버 전용
+void UEPCombatComponent::EquipWeapon(AEPWeapon* NewWeapon)
+{
+	if (!GetOwner()->HasAuthority() || !NewWeapon) return;
+	
+	if (EquippedWeapon)
+		UnequipWeapon();
+	
+	EquippedWeapon = NewWeapon;
+	
+	AEPCharacter* Owner = GetOwnerCharacter();
+	NewWeapon->AttachToComponent(
+		Owner->GetMesh(),
+		FAttachmentTransformRules::SnapToTargetNotIncludingScale,
+		TEXT("WeaponSocket"));
+	
+	if (NewWeapon->WeaponDef && NewWeapon->WeaponDef->WeaponAnimLayer)
+	{
+		Owner->GetMesh()->LinkAnimClassLayers(NewWeapon->WeaponDef->WeaponAnimLayer);
+	}
+}
+
+// 서버 전용
+void UEPCombatComponent::UnequipWeapon()
+{
+	if (!GetOwner()->HasAuthority() || !EquippedWeapon) return;
+	
+	AEPCharacter* Owner = GetOwnerCharacter();
+	if (EquippedWeapon->WeaponDef && EquippedWeapon->WeaponDef->WeaponAnimLayer)
+		Owner->GetMesh()->UnlinkAnimClassLayers(EquippedWeapon->WeaponDef->WeaponAnimLayer);
+	
+	EquippedWeapon->DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
+	EquippedWeapon = nullptr;
+}
 
 void UEPCombatComponent::Server_Fire_Implementation(const FVector& Origin, const FVector& Direction)
 {
 	// 연사 속도, 탄약 검증
 	// 서버 레이캐스트
-	// 히트 시 ApplyDamage
+	// 히트 시 ApplyDamage 
 	// Multicast_PlayFireEffect
 	if (!EquippedWeapon || !EquippedWeapon->CanFire()) return;
 	

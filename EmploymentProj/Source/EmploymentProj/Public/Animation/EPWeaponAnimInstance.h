@@ -12,24 +12,12 @@ class EMPLOYMENTPROJ_API UEPWeaponAnimInstance : public UAnimInstance
 	GENERATED_BODY()
 	
 protected:
-	virtual void NativeUpdateAnimation(float DeltaSeconds) override;
+	virtual void NativeInitializeAnimation() override;
 	
-	// 메인 AnimBP에서 복사해올 변수 (레이어 내에서 사용)
-	UPROPERTY(BlueprintReadOnly, Category = "Movement")
-	float Speed = 0.f;
+	UPROPERTY(Transient)
+	TObjectPtr<UEPAnimInstance> CachedMainAnimBP;
 	
-	UPROPERTY(BlueprintReadOnly, Category = "Movement")
-	float Direction = 0.f;
-	
-	UPROPERTY(BlueprintReadOnly, Category = "Movement")
-	bool bIsSprinting = false;
-	
-	UPROPERTY(BlueprintReadOnly, Category = "Movement")
-	bool bIsFalling = false;
-	
-	UPROPERTY(BlueprintReadOnly, Category = "Movement")
-	bool bIsCrouching = false;
-	
-	UPROPERTY(BlueprintReadOnly, Category = "Combat")
-	bool bIsAiming = false;
+public:
+	UFUNCTION(BlueprintPure, meta=(BlueprintThreadSafe), Category = "Animation")
+	UEPAnimInstance* GetMainBPThreadSafe() const { return CachedMainAnimBP; }
 };

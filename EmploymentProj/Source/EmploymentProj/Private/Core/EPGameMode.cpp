@@ -80,7 +80,7 @@ void AEPGameMode::HandleStartingNewPlayer_Implementation(APlayerController* NewP
 	AEPWeapon* Weapon = GetWorld()->SpawnActor<AEPWeapon>(
 		DefaultWeaponClass, FVector::ZeroVector, FRotator::ZeroRotator, Params);
 	if (!Weapon) return;
-	Char->GetCombatComponent()->SetEquippedWeapon(Weapon);
+	Char->GetCombatComponent()->EquipWeapon(Weapon);
 }
 
 // 스폰 위치 결정(랜덤 배정)

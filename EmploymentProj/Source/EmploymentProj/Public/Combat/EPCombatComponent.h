@@ -22,7 +22,8 @@ public:
 	
 	// === 함수 ===
 	// --- Getter/Setter ---
-	void SetEquippedWeapon(AEPWeapon* Weapon);
+	void EquipWeapon(AEPWeapon* NewWeapon);
+	void UnequipWeapon();
 	
 	AEPCharacter* GetOwnerCharacter() const;
 	AEPWeapon* GetEquippedWeapon() const;

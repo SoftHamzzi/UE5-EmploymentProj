@@ -105,4 +105,17 @@ protected:
 	
 	// 동기화
 	virtual void GetLifetimeReplicatedProps(TArray<class FLifetimeProperty>& OutLifetimeProps) const override;
+	
+private:
+	UFUNCTION(NetMulticast, Unreliable)
+	void Multicast_PlayHitReact();
+	
+	UFUNCTION(NetMulticast, Unreliable)
+	void Multicast_PlayPainSound();
+	
+	UPROPERTY(EditDefaultsOnly, Category = "Combat")
+	TObjectPtr<UAnimMontage> HitReactMontage;
+	
+	UPROPERTY(EditDefaultsOnly, Category = "Combat")
+	TObjectPtr<USoundBase> PainSound;
 };

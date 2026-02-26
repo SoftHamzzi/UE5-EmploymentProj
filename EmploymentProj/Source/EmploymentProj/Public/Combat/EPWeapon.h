@@ -11,7 +11,7 @@ UCLASS()
 class EMPLOYMENTPROJ_API AEPWeapon : public AActor
 {
 	GENERATED_BODY()
-	
+
 public:
 	AEPWeapon();
 	

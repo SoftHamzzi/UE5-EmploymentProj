@@ -16,6 +16,7 @@
 #include "Components/CapsuleComponent.h"
 #include "Core/EPCorpse.h"
 #include "Core/EPGameMode.h"
+#include "Kismet/GameplayStatics.h"
 #include "Net/UnrealNetwork.h"
 
 AEPCharacter::AEPCharacter(const FObjectInitializer& ObjectInitializer)
@@ -30,10 +31,12 @@ AEPCharacter::AEPCharacter(const FObjectInitializer& ObjectInitializer)
 	FaceMesh = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("Face"));
 	FaceMesh->SetupAttachment(GetMesh());
 	FaceMesh->SetLeaderPoseComponent(GetMesh());
+	FaceMesh->bOwnerNoSee = true;
 	
 	OutfitMesh = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("Outfit"));
 	OutfitMesh->SetupAttachment(GetMesh());
 	OutfitMesh->SetLeaderPoseComponent(GetMesh());
+	//OutfitMesh->bOwnerNoSee = true;
 	
 	// --- Camera ---
 	FirstPersonCamera = CreateDefaultSubobject<UCameraComponent>("Camera");
@@ -58,6 +61,19 @@ AEPCharacter::AEPCharacter(const FObjectInitializer& ObjectInitializer)
 void AEPCharacter::BeginPlay()
 {
 	Super::BeginPlay();
+	
+	if (IsLocallyControlled())
+	{
+		// GetMesh() 제외한 모든 스켈레탈 메시 컴포넌트 숨김
+		TArray<USkeletalMeshComponent*> MeshComponents;
+		GetComponents<USkeletalMeshComponent>(MeshComponents);
+
+		for (USkeletalMeshComponent* Comp : MeshComponents)
+		{
+			if (Comp != GetMesh())
+				Comp->bOwnerNoSee = true;
+		}
+	}
 }
 
 // Enhanced Input 바인딩
@@ -150,6 +166,12 @@ float AEPCharacter::TakeDamage(
 	
 	HP = FMath::Clamp(HP - ActualDamage, 0.f, MaxHP);
 	if (HP <= 0.f) Die(EventInstigator);
+	
+	Multicast_PlayHitReact();
+	Multicast_PlayPainSound();
+	
+	if (AEPPlayerController* InstigatorPC = Cast<AEPPlayerController>(EventInstigator))
+		InstigatorPC->Client_PlayHitConfirmSound();
 	
 	return ActualDamage;
 }
@@ -301,6 +323,18 @@ void AEPCharacter::Multicast_Die_Implementation()
 	GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	GetMesh()->SetCollisionProfileName(TEXT("Ragdoll"));
 	GetMesh()->SetSimulatePhysics(true);
+}
+
+void AEPCharacter::Multicast_PlayHitReact_Implementation()
+{
+	if (HitReactMontage)
+		PlayAnimMontage(HitReactMontage);
+}
+
+void AEPCharacter::Multicast_PlayPainSound_Implementation()
+{
+	if (PainSound)
+		UGameplayStatics::PlaySoundAtLocation(this, PainSound, GetActorLocation());
 }
 
 void AEPCharacter::GetLifetimeReplicatedProps(TArray<class FLifetimeProperty>& OutLifetimeProps) const
