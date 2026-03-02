@@ -264,6 +264,16 @@ void AMyCharacter::Server_Fire_Implementation(
     FVector_NetQuantizeNormal Direction,
     float ClientFireTime)
 {
+    // 0. 리와인드 윈도우 제한 (200ms 초과 요청 거부)
+    const float MaxLagCompWindow = 0.2f;
+    const float ServerNow = GetWorld()->GetTimeSeconds();
+    if (ServerNow - ClientFireTime > MaxLagCompWindow)
+    {
+        // 너무 오래된 요청: 현재 시점 기준으로 강제 설정
+        // 거부 대신 현재 위치 기준 판정 → 핵 유저에게 불리하게 작동
+        ClientFireTime = ServerNow;
+    }
+
     // 1. 모든 다른 캐릭터의 히트박스를 ClientFireTime 시점으로 리와인드
     TArray<TPair<AMyCharacter*, FTransform>> OriginalTransforms;
 
@@ -302,6 +312,11 @@ void AMyCharacter::Server_Fire_Implementation(
     }
 }
 ```
+
+**왜 200ms인가:**
+- 일반적인 게임에서 허용하는 최대 핑 = 150~200ms
+- 200ms를 초과하는 ClientFireTime은 지연이 아닌 조작으로 간주
+- 이 값은 게임 특성에 따라 조정 (배틀로얄은 더 관대, 경쟁전은 더 엄격)
 
 #### 5) 스냅샷 보간
 

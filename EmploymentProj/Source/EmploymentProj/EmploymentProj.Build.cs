@@ -8,7 +8,7 @@ public class EmploymentProj : ModuleRules
 	{
 		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 	
-		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput", "Niagara", "AnimGraphRuntime" });
+		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput", "Niagara", "AnimGraphRuntime", "AIModule" });
 
 		PrivateDependencyModuleNames.AddRange(new string[] {  });
 

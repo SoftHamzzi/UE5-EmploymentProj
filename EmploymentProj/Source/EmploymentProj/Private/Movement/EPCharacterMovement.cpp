@@ -5,7 +5,7 @@
 #include "GameFramework/Character.h"
 
 // --- CMC 오버라이드 ---
-float UEPCharacterMovement:: GetMaxSpeed() const {
+float UEPCharacterMovement::GetMaxSpeed() const {
 	if (bWantsToSprint && IsMovingOnGround()) return SprintSpeed;
 	if (bWantsToAim) return AimSpeed;
 	return Super::GetMaxSpeed();

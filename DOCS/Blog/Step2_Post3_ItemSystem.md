@@ -21,23 +21,67 @@
 
 ## 구현 전 상태 (Before)
 
-기존 방식:
+실제로 존재했던 코드:
+
 ```cpp
-// 단순 UObject 기반 WeaponData — 모든 것이 한 곳에
-UCLASS()
-class UEPWeaponData : public UObject
+// UEPItemData — 아이템 공통 데이터 (UPrimaryDataAsset)
+class UEPItemData : public UPrimaryDataAsset
 {
-    float Damage;
-    float FireRate;
-    USkeletalMesh* WeaponMesh;  // 에셋 참조도 같이
-    // 런타임 상태(탄약)는 AEPWeapon::CurrentAmmo에 별도 존재
+    FName ItemName;
+    FText Description;
+    EEPItemRarity Rarity;
+    int32 SellPrice = 100;
+    bool bIsQuestItem = false;
+    int32 SlotSize = 1;
+    // 에셋 참조(메시, 아이콘) 없음
+};
+
+// UEPWeaponData — 무기 스탯 (UPrimaryDataAsset, UEPItemData와 무관)
+class UEPWeaponData : public UPrimaryDataAsset  // UEPItemData 상속 아님
+{
+    FName WeaponName;
+    EEPFireMode FireMode;
+    float Damage = 20.f;
+    float FireRate = 5.f;
+    uint8 MaxAmmo = 30;
+    float ReloadTime = 2.0f;
+    float BaseSpread, SpreadPerShot, MaxSpread ...
+    float RecoilPitch, RecoilYaw ...
+    TArray<FVector2D> RecoilPattern;
+    // 메시/아이콘 에셋 참조 없음
+};
+
+// FItemData — 미연결 구조체 잔재
+struct FItemData
+{
+    FName ItemName;
+    int32 Value;
+    // UEPItemData와 아무 연결 없음
+};
+
+// AEPWeapon — 런타임 상태를 Actor에 직접 보유
+class AEPWeapon : public AActor
+{
+    TObjectPtr<UEPWeaponData> WeaponData;  // 스탯 참조
+    TObjectPtr<USkeletalMeshComponent> WeaponMesh;  // 표현체
+
+    UPROPERTY(ReplicatedUsing = OnRep_CurrentAmmo)
+    uint8 CurrentAmmo = 0;  // 런타임 상태가 Actor에 직접
+
+    UPROPERTY(Replicated)
+    uint8 MaxAmmo = 30;
 };
 ```
 
-**문제점:**
-1. 밸런스 수치와 에셋 참조가 한 클래스에 혼재
-2. 런타임 상태(`CurrentAmmo`)가 Weapon Actor에 분산
-3. "AK74를 30발짜리와 15발짜리로 동시에 인벤토리에 넣기"가 구조적으로 불가능
+**문제점 4가지:**
+
+1. **`UEPWeaponData`와 `UEPItemData`가 완전히 단절** — 무기는 아이템인데 상속 관계가 없어서 "아이템 슬롯에 무기 넣기" 같은 공통 처리가 불가능.
+
+2. **`FItemData` 구조체가 미사용 잔재** — `UEPItemData`와 아무 연결 없이 떠있음. 어디서 쓰는지도 불분명.
+
+3. **에셋 참조(메시, 아이콘)가 어디에도 없음** — `UEPItemData`와 `UEPWeaponData` 어디에도 WorldMesh, Icon 같은 에셋 참조 필드가 없음. UI에 아이템 아이콘을 표시하거나, 맵에 드랍된 아이템 메시를 보여줄 방법이 없음.
+
+4. **런타임 상태(`CurrentAmmo`)가 Actor에 직접 존재** — `AEPWeapon`이 상태 원본. 인벤토리에 "탄약 17발짜리 AK74"와 "탄약 30발짜리 AK74"를 동시에 가지려면 Actor를 두 개 스폰해야 함. 타르코프처럼 줍고/버리는 과정에서 상태를 유지하는 게 구조적으로 불가능.
 
 ---
 

@@ -18,6 +18,7 @@
 #include "Core/EPGameMode.h"
 #include "Kismet/GameplayStatics.h"
 #include "Net/UnrealNetwork.h"
+#include "Runtime/AIModule/Classes/AITypes.h"
 
 AEPCharacter::AEPCharacter(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer.SetDefaultSubobjectClass<UEPCharacterMovement>(

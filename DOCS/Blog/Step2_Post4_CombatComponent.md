@@ -62,82 +62,126 @@ class AEPCharacter : public ACharacter
 ### 2. UEPCombatComponent 핵심 구조
 
 ```cpp
-// EPCombatComponent.h
 UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent))
 class UEPCombatComponent : public UActorComponent
 {
-    GENERATED_BODY()
-
 public:
-    // 장착 무기 (서버 스폰, 클라에 복제)
-    UPROPERTY(ReplicatedUsing = OnRep_EquippedWeapon)
+    void EquipWeapon(AEPWeapon* NewWeapon);
+    void UnequipWeapon();
+    void RequestFire(const FVector& Origin, const FVector& Direction);  // Input_Fire에서 호출
+
+    UPROPERTY(ReplicatedUsing = OnRep_EquippedWeapon, BlueprintReadOnly)
     TObjectPtr<AEPWeapon> EquippedWeapon;
 
-    void EquipWeapon(AEPWeapon* NewWeapon);
-    void HandleFire();  // Input_Fire에서 호출
+protected:
+    float LocalLastFireTime = 0.f;
+
+    // VFX/SFX — 임시 배치 (향후 WeaponDefinition으로 이관 예정)
+    UPROPERTY(EditDefaultsOnly, Category = "VFX|Fire") TObjectPtr<UNiagaraSystem> MuzzleFX;
+    UPROPERTY(EditDefaultsOnly, Category = "VFX|Fire") TObjectPtr<UNiagaraSystem> ImpactFX;
+    UPROPERTY(EditDefaultsOnly, Category = "SFX|Fire") TObjectPtr<USoundBase> FireSFX;
+    UPROPERTY(EditDefaultsOnly, Category = "SFX|Fire") TObjectPtr<USoundBase> ImpactSFX;
 
     UFUNCTION(Server, Reliable)
-    void Server_Fire(FVector_NetQuantize Origin, FVector_NetQuantizeNormal Direction);
+    void Server_Fire(const FVector& Origin, const FVector& Direction);
+    UFUNCTION(Server, Reliable)
+    void Server_Reload();
 
+    // 이펙트를 총구와 탄착으로 분리 (좌표가 다름)
     UFUNCTION(NetMulticast, Unreliable)
-    void Multicast_PlayFireEffect(FVector MuzzleLocation);
-
-    UFUNCTION()
-    void OnRep_EquippedWeapon();
+    void Multicast_PlayMuzzleEffect(const FVector_NetQuantize& MuzzleLocation);
+    UFUNCTION(NetMulticast, Unreliable)
+    void Multicast_PlayImpactEffect(const FVector_NetQuantize& ImpactPoint,
+                                    const FVector_NetQuantize& ImpactNormal);
 };
 ```
 
+**VFX/SFX가 CombatComponent에 임시 배치된 이유:**
+- 원칙상 MuzzleFX, ImpactFX는 `UEPWeaponDefinition`에 있어야 함
+- 현재는 빠른 구현을 위해 Component에 직접 배치
+- GAS 이관 시 Definition → Fragment → Gameplay Cue 경로로 교체 예정
+
 ### 3. 서버 권한 사격 흐름
 
-흐름도로 보여줄 것:
+```mermaid
+sequenceDiagram
+    participant C as 클라이언트
+    participant S as 서버
+    participant W as AEPWeapon
+    participant All as 모든 클라이언트
 
+    C->>C: 마우스 클릭 → Input_Fire()
+    C->>C: CombatComponent->RequestFire(카메라 위치, 카메라 방향)
+    C->>S: Server_Fire RPC
+
+    S->>W: CanFire() 검증
+    Note over W: 탄약 / 연사속도 / WeaponState 확인
+
+    alt 발사 가능
+        S->>W: Fire(OutDirection)
+        Note over W: Spread 적용, 탄약 차감
+        S->>S: LineTraceSingleByChannel
+
+        alt 히트
+            S->>S: ApplyDamage
+        end
+
+        S->>All: Multicast_PlayMuzzleEffect(총구 위치)
+        S-->>All: Multicast_PlayImpactEffect(탄착 위치, 노말)
+    end
 ```
-[클라이언트] 마우스 클릭
-    → Input_Fire() (Character)
-    → CombatComponent->HandleFire()
-    → Server_Fire(카메라 위치, 카메라 방향) ─── RPC ───→ [서버]
-                                                            Server_Fire_Implementation()
-                                                            ├─ 연사속도 검증
-                                                            ├─ 탄약 검증
-                                                            ├─ LineTraceSingleByChannel
-                                                            ├─ ApplyDamage (히트 시)
-                                                            └─ Multicast_PlayFireEffect() ─→ [모든 클라이언트]
-                                                                                              총구/탄착 이펙트
+
+**총구와 탄착을 별도 Multicast로 분리한 이유:**
+```
+총구 이펙트: WeaponMesh MuzzleSocket 위치 (항상 발생)
+탄착 이펙트: Hit.ImpactPoint 위치 (히트 시에만, 노말 방향 필요)
+→ 좌표와 발생 조건이 달라 하나로 합치면 불필요한 데이터 전송 발생
 ```
 
-**핵심 포인트:**
-- 발사 판정은 오직 서버에서만 (치팅 방지)
-- 이펙트는 Unreliable Multicast (패킷 손실 허용, 중요도 낮음)
-- `FVector_NetQuantize` 사용으로 네트워크 트래픽 절감
-
-### 4. AEPWeapon 설계
+### 4. AEPWeapon 설계 — 게임 로직이 Actor에 있는 현재 구조
 
 ```cpp
 UCLASS()
 class AEPWeapon : public AActor
 {
-    GENERATED_BODY()
-
 public:
-    AEPWeapon() { bReplicates = true; }  // 반드시 복제
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
+    TObjectPtr<UEPWeaponDefinition> WeaponDef;   // 정적 스탯
 
-    // Definition 참조 (WeaponData 역할 통합)
-    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon")
-    TObjectPtr<UEPWeaponDefinition> WeaponDef;
-
-    // 월드 표현체 메시
-    UPROPERTY(VisibleAnywhere)
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly)
     TObjectPtr<USkeletalMeshComponent> WeaponMesh;
 
-    // 소유자만 보이는 탄약 (COND_OwnerOnly)
+    // 런타임 상태 (복제)
     UPROPERTY(ReplicatedUsing = OnRep_CurrentAmmo)
-    int32 CurrentAmmo;
+    uint8 CurrentAmmo = 0;
+    UPROPERTY(Replicated)
+    uint8 MaxAmmo = 30;
+
+    // 발사 인터페이스
+    bool CanFire() const;       // 탄약/연사속도/WeaponState 검증
+    void Fire(FVector& OutDirection);  // Spread 적용 후 방향 반환
+    FVector ApplySpread(const FVector& Direction) const;
+
+    void StartReload();
+    void FinishReload();
+
+protected:
+    // 서버 런타임 상태 (복제 X — 서버만 알면 됨)
+    EEPWeaponState WeaponState = EEPWeaponState::Idle;
+    float LastFireTime = 0.f;
+    float CurrentSpread = 0.f;    // 연사 시 누적 퍼짐
+    uint8 ConsecutiveShots = 0;
 };
 ```
 
-**표현체 원칙:**
-- AEPWeapon은 시각/소켓(MuzzleSocket, WeaponSocket) 담당
-- 상태 원본은 WeaponInstance → 나중에 GAS로 이관 시 Weapon Actor 수정 최소화
+**현재 AEPWeapon의 역할이 많다:**
+- 시각 표현 (WeaponMesh, 소켓)
+- 발사 가능 여부 판단 (CanFire)
+- Spread 계산 및 적용 (ApplySpread)
+- WeaponState 머신 (Idle/Firing/Reloading)
+- 탄약 상태 복제 (CurrentAmmo)
+
+→ "표현체"라고 했지만 실제로는 게임 로직도 상당수 담당. GAS 이관 시 로직은 Ability로, 상태는 Instance로 단계적으로 이동 예정.
 
 ### 5. 무기 장착 — WeaponSocket + LinkAnimClassLayers
 
@@ -188,9 +232,81 @@ void UEPCombatComponent::OnRep_EquippedWeapon()
 - OnRep_EquippedWeapon으로 클라이언트에도 무기 보임
 
 **한계 및 향후 개선:**
-- 현재는 Server_Fire가 Character → CombatComponent 위임 구조
-- GAS 4단계: `GA_Item_PrimaryUse`가 CombatComponent를 호출하는 구조로 교체 예정
 - HandleFire → Server_Fire 사이에 Lag Compensation 삽입 예정 (3단계)
+
+### CombatComponent의 구조적 한계 (포스팅에서 솔직하게 쓸 것)
+
+현재 CombatComponent가 하는 일:
+
+```
+UEPCombatComponent
+  ├── 장착 무기 관리    ← Equipment 역할
+  ├── 발사 실행 (RPC)  ← Ability 역할
+  └── 이펙트 재생      ← Effect 역할
+→ 하나가 너무 많은 책임
+```
+
+**Lyra/실무 기준 이상적 구조:**
+
+```
+AEPCharacter
+  ├── UEPInventoryComponent     "무엇을 갖고 있나"
+  │     TArray<UEPItemInstance*>
+  │
+  ├── UEPEquipmentComponent     "무엇을 장착했나"  ← CombatComponent 대체
+  │     PrimarySlot: UEPItemInstance*
+  │     SecondarySlot: UEPItemInstance*
+  │     GetActiveWeaponDef()
+  │
+  └── UAbilitySystemComponent (GAS)
+        ├── GA_Fire     "어떻게 쏘나"  ← Server_Fire 대체
+        ├── GA_Reload   "어떻게 재장전하나"
+        └── GA_ADS      "어떻게 조준하나"
+```
+
+**발사 흐름 비교:**
+
+```
+[현재]
+Input → CombatComponent->HandleFire() → Server_Fire RPC → LineTrace → ApplyDamage
+
+[이상적 (GAS 이후)]
+Input → GA_Fire 활성화
+          → EquipmentComponent->GetActiveInstance() 조회
+          → Instance->GetDefinition()->Damage
+          → LineTrace (서버)
+          → GameplayEffect_Damage 적용
+          → GameplayEffect_ConsumeAmmo 적용
+```
+
+**현재 → 이상적 매핑:**
+
+| 현재 | 이상적 | 역할 |
+|------|--------|------|
+| CombatComponent::EquippedWeapon | EquipmentComponent::PrimarySlot | 장착 상태 |
+| CombatComponent::Server_Fire | GA_Fire (GAS Ability) | 발사 실행 |
+| CombatComponent::Multicast_PlayFireEffect | GA_Fire 내부 Cue | 이펙트 |
+| AEPWeapon::CurrentAmmo | UEPWeaponInstance::CurrentAmmo | 탄약 상태 |
+| (없음) | InventoryComponent | 인벤토리 |
+
+**단계별 전환 계획:**
+
+```
+Stage 2 (현재): CombatComponent 유지
+  → 구조 이해 + 동작 확인이 목표
+
+Stage 3 (Lag Compensation): HandleFire에 보정 삽입
+  → CombatComponent 구조는 그대로
+
+Stage 4 (GAS): GA_Fire, GA_Reload로 발사 이관
+  → CombatComponent → EquipmentComponent로 리팩터링
+  → 진입점은 같고 내부만 GA 호출로 교체
+
+Stage 5+ (인벤토리): InventoryComponent 추가
+  → 슬롯 시스템 완성, 루팅 가능
+```
+
+> 포스팅에서: "CombatComponent는 GAS 전환을 위한 과도기 구조다. 발사 진입점을 단일화해두면 나중에 내부를 GA 호출로 교체하는 것만으로 충분하다."
 
 ---
 
