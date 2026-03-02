@@ -1,465 +1,148 @@
-# 3단계 외전: 본 단위 히트박스 구현 가이드
+# 3단계 외전: BoneHitBox 구현 (Pre-GAS, GAS 전환 대비)
 
-> **전제**: 03_BoneHitbox.md (개념), 03_NetPrediction.md (Lag Compensation 구조)
-> **수정 대상 파일**:
-> - `Types/EPTypes.h` — 구조체 추가
-> - `Core/EPCharacter.h / .cpp` — 히스토리 버퍼, TakeDamage
-> - `Combat/EPCombatComponent.h / .cpp` — Server_Fire 파라미터 + 리와인드 로직
-
----
-
-## 현재 코드 상태 확인
-
-```cpp
-// EPCombatComponent.cpp — Server_Fire_Implementation (현재)
-void UEPCombatComponent::Server_Fire_Implementation(
-    const FVector& Origin, const FVector& Direction)  // ClientFireTime 없음
-{
-    // ...
-    // ECC_GameTraceChannel1 이미 사용 중 ← 히트박스 채널 이미 설정됨
-    const bool bHit = GetWorld()->LineTraceSingleByChannel(
-        Hit, Origin, End, ECC_GameTraceChannel1, Params);
-
-    // ApplyDamage 사용 중 ← ApplyPointDamage로 교체 필요
-    UGameplayStatics::ApplyDamage(Hit.GetActor(), ...);
-}
-
-// EPCharacter.cpp — TakeDamage (현재)
-float AEPCharacter::TakeDamage(...)
-{
-    // FDamageEvent 그대로 사용 — 부위 정보 없음
-    HP = FMath::Clamp(HP - ActualDamage, 0.f, MaxHP);
-}
-```
-
-**이미 된 것:** `ECC_GameTraceChannel1` 채널 분리
-**추가 필요:** `ClientFireTime`, 히스토리 버퍼, 리와인드, `ApplyPointDamage`
+## 목적
+- 지금은 `ApplyPointDamage` 기반으로 동작시킨다.
+- 나중에 GAS로 전환할 때, `히트 정보 수집 로직`을 그대로 재사용한다.
+- Lyra 방식처럼 `Physical Material + Gameplay Tag + 무기별 배율` 구조를 미리 깔아둔다.
 
 ---
 
-## Step 1. EPTypes.h — 구조체 추가
+## 핵심 설계 (실무 기준)
+1. 판정 책임 분리
+- `EPCombatComponent`: 트레이스/히트 수집/최종 데미지 계산 입력값 조합
+- `EPWeapon(혹은 WeaponDefinition)`: 무기 고유 배율 데이터 보관
+- `EPCharacter`: 받은 최종 데미지 반영(HP, 사망 처리)
 
-```cpp
-// Public/Types/EPTypes.h
+2. 배율 분리
+- 본 배율: `Hit.BoneName` 기반
+- 재질 배율: `Hit.PhysMaterial`에 달린 태그 기반
+- 최종 공식: `FinalDamage = BaseDamage * BoneMultiplier * MaterialMultiplier`
 
-// --- 기존 ENUM 아래에 추가 ---
-
-// 본 단위 히트박스: 단일 본의 월드 Transform 스냅샷
-USTRUCT()
-struct FEPBoneSnapshot
-{
-    GENERATED_BODY()
-
-    FName BoneName;
-    FTransform WorldTransform;
-};
-
-// 본 단위 히트박스: 특정 서버 시각의 전체 스냅샷
-USTRUCT()
-struct FEPHitboxSnapshot
-{
-    GENERATED_BODY()
-
-    float ServerTime = 0.f;
-    TArray<FEPBoneSnapshot> Bones;
-};
-
-// 히트 판정에 사용할 본 목록 (전역 상수)
-// 전체 본 대신 판정에 필요한 본만 기록해 스냅샷 크기 최소화
-inline const TArray<FName> GEPHitBones =
-{
-    "head",
-    "spine_03", "spine_01",
-    "upperarm_l", "upperarm_r",
-    "lowerarm_l", "lowerarm_r",
-    "thigh_l",   "thigh_r",
-    "calf_l",    "calf_r"
-};
-```
+3. GAS 전환성
+- 지금은 `ApplyPointDamage(FinalDamage)` 호출
+- 나중엔 동일 계산 입력을 `GameplayEffectSpec`의 `SetByCaller`로 넘기면 된다.
 
 ---
 
-## Step 2. EPCharacter.h — 히스토리 버퍼 선언
+## 권장 데이터 구조
 
+### A. Physical Material 태그
+- 일반 피직스 머티리얼: 예) `PM_Default`
+- 약점 피직스 머티리얼: 예) `PM_WeakSpot`
+- 약점 쪽에 태그 부여: `Gameplay.Zone.WeakSpot`
+
+Lyra처럼 쓰려면 커스텀 PhysicalMaterial 클래스에 태그 컨테이너를 두는 방식이 가장 깔끔하다.
+- 예시 클래스: `UEPPhysicalMaterialWithTags : UPhysicalMaterial`
+- 예시 멤버: `FGameplayTagContainer MaterialTags`
+
+### B. 무기 배율 맵
+- 무기 데이터(권장: `UEPWeaponDefinition`)에 아래 멤버 추가:
 ```cpp
-// Public/Core/EPCharacter.h
-
-// 전방 선언 추가
-struct FEPHitboxSnapshot;
-
-// private 섹션에 추가
-private:
-    // --- Lag Compensation 히스토리 버퍼 (서버 전용) ---
-    static constexpr int32 MaxHitboxHistory = 20;  // 100ms × 20 = 2초치
-
-    TArray<FEPHitboxSnapshot> HitboxHistory;
-    int32 HistoryIndex = 0;
-    float HistoryTimer = 0.f;
-
-    void SaveHitboxSnapshot();
-
-public:
-    // CombatComponent에서 호출
-    FEPHitboxSnapshot GetSnapshotAtTime(float TargetTime) const;
+UPROPERTY(EditAnywhere, Category = "Weapon Config")
+TMap<FGameplayTag, float> MaterialDamageMultiplier;
 ```
+- 예시 세팅:
+  - `Gameplay.Zone.WeakSpot -> 2.0`
+
+참고:
+- 지금 프로젝트에서 실제 발사 주체가 `AEPWeapon + WeaponDef`라면, 우선 `WeaponDefinition`에 두는 게 자연스럽다.
+- 이후 인챈트/모드/탄종 시스템이 커지면 `WeaponInstance`에서 최종 배율을 오버라이드하는 계층을 추가한다.
 
 ---
 
-## Step 3. EPCharacter.cpp — 히스토리 기록
+## 구현 순서
 
-### include 추가
+## Step 1) 트레이스 히트 정보 품질 올리기
+- `LineTraceSingleByChannel`의 `FCollisionQueryParams`에 `bReturnPhysicalMaterial = true`를 켠다.
+- 반드시 `FHitResult`에서 다음을 확보한다.
+  - `Hit.BoneName`
+  - `Hit.PhysMaterial`
+  - `Hit.ImpactPoint`, `Hit.ImpactNormal`
 
-```cpp
-// Private/Core/EPCharacter.cpp 상단
-#include "Types/EPTypes.h"
-#include "Components/CapsuleComponent.h"
-```
+목적:
+- 지금 당장 데미지 처리뿐 아니라, 나중에 GAS Execution에서 같은 데이터를 재사용하기 위함.
 
-### Tick — 주기적 기록
+## Step 2) 본 배율 함수 만들기
+- `BoneName -> Multiplier` 매핑 함수를 한 곳에 둔다.
+- 최소 추천:
+  - Head: `2.0`
+  - Spine/Torso: `1.0`
+  - Limb: `0.75`
 
-```cpp
-void AEPCharacter::Tick(float DeltaTime)
-{
-    Super::Tick(DeltaTime);
+주의:
+- 이 함수는 `Character::TakeDamage`보다 `CombatComponent` 또는 별도 `DamageHelper`에 두는 쪽이 전환이 쉽다.
 
-    // 서버에서만 히스토리 기록
-    if (HasAuthority())
-    {
-        HistoryTimer += DeltaTime;
-        if (HistoryTimer >= 0.1f)  // 100ms 간격
-        {
-            HistoryTimer = 0.f;
-            SaveHitboxSnapshot();
-        }
-    }
-}
-```
+## Step 3) 재질 태그 배율 함수 만들기
+- 히트한 `PhysMaterial`에서 태그를 읽는다.
+- 무기의 `MaterialDamageMultiplier` 맵에서 매칭되는 태그 배율을 찾는다.
+- 태그가 여러 개인 경우:
+  - 기본은 `최대값` 선택을 권장(보수적이고 디버깅 쉬움).
 
-### SaveHitboxSnapshot
+기본값:
+- 태그 없음/매칭 실패 시 `1.0`.
 
-```cpp
-void AEPCharacter::SaveHitboxSnapshot()
-{
-    FEPHitboxSnapshot Snapshot;
-    Snapshot.ServerTime = GetWorld()->GetTimeSeconds();
+## Step 4) 최종 데미지 계산 위치 고정
+- `Server_Fire` 내부에서 `FinalDamage`를 계산한 뒤 `ApplyPointDamage` 호출.
+- `ApplyDamage` 대신 `ApplyPointDamage`를 쓰는 이유:
+  - `FPointDamageEvent`로 Bone/Impact 정보를 유지할 수 있음.
 
-    for (const FName& BoneName : GEPHitBones)
-    {
-        const int32 BoneIndex = GetMesh()->GetBoneIndex(BoneName);
-        if (BoneIndex == INDEX_NONE) continue;
+즉시 전환 포인트:
+- 이후 GAS 도입 시 이 구간을 `ApplyGameplayEffectSpecToTarget`로 교체하면 된다.
 
-        FEPBoneSnapshot Bone;
-        Bone.BoneName       = BoneName;
-        Bone.WorldTransform = GetMesh()->GetBoneTransform(BoneIndex);
-        Snapshot.Bones.Add(Bone);
-    }
+## Step 5) 캐릭터는 결과만 반영
+- `AEPCharacter::TakeDamage`는 가능하면 단순화:
+  - HP 감소
+  - 사망/피격 리액션
+- 본/재질 배율 재계산은 여기서 하지 않는다.
 
-    if (HitboxHistory.Num() < MaxHitboxHistory)
-        HitboxHistory.Add(Snapshot);
-    else
-    {
-        HitboxHistory[HistoryIndex] = Snapshot;
-        HistoryIndex = (HistoryIndex + 1) % MaxHitboxHistory;
-    }
-}
-```
-
-### GetSnapshotAtTime — 보간
-
-```cpp
-FEPHitboxSnapshot AEPCharacter::GetSnapshotAtTime(float TargetTime) const
-{
-    const FEPHitboxSnapshot* Before = nullptr;
-    const FEPHitboxSnapshot* After  = nullptr;
-
-    for (const FEPHitboxSnapshot& Snap : HitboxHistory)
-    {
-        if (Snap.ServerTime <= TargetTime)
-        {
-            if (!Before || Snap.ServerTime > Before->ServerTime)
-                Before = &Snap;
-        }
-        if (Snap.ServerTime >= TargetTime)
-        {
-            if (!After || Snap.ServerTime < After->ServerTime)
-                After = &Snap;
-        }
-    }
-
-    // 엣지 케이스
-    if (!Before && !After)
-    {
-        // 히스토리 없음 — 현재 본 위치로 스냅샷 생성
-        FEPHitboxSnapshot Current;
-        Current.ServerTime = TargetTime;
-        for (const FName& BoneName : GEPHitBones)
-        {
-            const int32 BoneIndex = GetMesh()->GetBoneIndex(BoneName);
-            if (BoneIndex == INDEX_NONE) continue;
-            FEPBoneSnapshot Bone;
-            Bone.BoneName       = BoneName;
-            Bone.WorldTransform = GetMesh()->GetBoneTransform(BoneIndex);
-            Current.Bones.Add(Bone);
-        }
-        return Current;
-    }
-    if (!Before) return *After;
-    if (!After)  return *Before;
-    if (Before == After) return *Before;
-
-    // 두 스냅샷 사이 보간
-    const float Range = After->ServerTime - Before->ServerTime;
-    const float Alpha = FMath::Clamp((TargetTime - Before->ServerTime) / Range, 0.f, 1.f);
-
-    FEPHitboxSnapshot Result;
-    Result.ServerTime = TargetTime;
-
-    for (int32 i = 0; i < Before->Bones.Num(); ++i)
-    {
-        if (!After->Bones.IsValidIndex(i)) break;
-
-        FEPBoneSnapshot InterpBone;
-        InterpBone.BoneName = Before->Bones[i].BoneName;
-        InterpBone.WorldTransform = FTransform(
-            // 회전: Slerp (각도 랩어라운드 방지)
-            FQuat::Slerp(
-                Before->Bones[i].WorldTransform.GetRotation(),
-                After->Bones[i].WorldTransform.GetRotation(),
-                Alpha),
-            // 위치: Lerp
-            FMath::Lerp(
-                Before->Bones[i].WorldTransform.GetLocation(),
-                After->Bones[i].WorldTransform.GetLocation(),
-                Alpha),
-            // 스케일: Lerp
-            FMath::Lerp(
-                Before->Bones[i].WorldTransform.GetScale3D(),
-                After->Bones[i].WorldTransform.GetScale3D(),
-                Alpha)
-        );
-        Result.Bones.Add(InterpBone);
-    }
-
-    return Result;
-}
-```
-
-### TakeDamage — 부위별 배율 추가
-
-```cpp
-float AEPCharacter::TakeDamage(
-    float DamageAmount, FDamageEvent const& DamageEvent,
-    AController* EventInstigator, AActor* DamageCause)
-{
-    if (!HasAuthority()) return 0.f;
-
-    float ActualDamage = Super::TakeDamage(DamageAmount, DamageEvent,
-        EventInstigator, DamageCause);
-
-    // ApplyPointDamage로 넘어온 경우 부위별 배율 적용
-    if (DamageEvent.IsOfType(FPointDamageEvent::ClassID))
-    {
-        const FPointDamageEvent* PointDmg =
-            static_cast<const FPointDamageEvent*>(&DamageEvent);
-
-        const FName HitBone = PointDmg->HitInfo.BoneName;
-
-        if (HitBone == "head")
-            ActualDamage *= 2.0f;
-        else if (HitBone == "upperarm_l" || HitBone == "upperarm_r" ||
-                 HitBone == "lowerarm_l" || HitBone == "lowerarm_r" ||
-                 HitBone == "thigh_l"    || HitBone == "thigh_r"    ||
-                 HitBone == "calf_l"     || HitBone == "calf_r")
-            ActualDamage *= 0.75f;
-        // spine: 기본 1.0x — 변경 없음
-    }
-
-    HP = FMath::Clamp(HP - ActualDamage, 0.f, (float)MaxHP);
-    if (HP <= 0.f) Die(EventInstigator);
-
-    Multicast_PlayHitReact();
-    Multicast_PlayPainSound();
-
-    if (AEPPlayerController* InstigatorPC = Cast<AEPPlayerController>(EventInstigator))
-        InstigatorPC->Client_PlayHitConfirmSound();
-
-    ForceNetUpdate();
-    return ActualDamage;
-}
-```
-
-> **include 추가 필요** (EPCharacter.cpp):
-> ```cpp
-> #include "GameFramework/DamageType.h"
-> ```
+이유:
+- 서버 데미지 계산 책임을 한 곳으로 모아야 중복 계산/불일치 버그를 줄일 수 있다.
 
 ---
 
-## Step 4. EPCombatComponent.h — Server_Fire 파라미터 변경
+## Lag Compensation과 결합 시 기준
+- 리와인드로 얻은 `RewindHit`를 최종 판정 히트로 사용한다.
+- 데미지 계산도 반드시 `RewindHit` 기준으로 한다.
+- 이펙트(`Impact FX`)는 시각 동기화 목적이므로 `PreHit` 또는 `RewindHit` 중 팀 룰을 정해 일관되게 유지한다.
 
-```cpp
-// Public/Combat/EPCombatComponent.h
-
-// 기존
-UFUNCTION(Server, Reliable)
-void Server_Fire(const FVector& Origin, const FVector& Direction);
-
-// 변경: ClientFireTime 추가
-UFUNCTION(Server, Reliable)
-void Server_Fire(const FVector& Origin, const FVector& Direction, float ClientFireTime);
-```
+실무 권장:
+- 판정/데미지: `RewindHit`
+- VFX/SFX: 실제 판정 히트와 동일한 Hit 사용(디버깅 쉬움)
 
 ---
 
-## Step 5. EPCombatComponent.cpp — Server_Fire + 리와인드 로직
+## GAS 전환 시 바뀌는 부분 (미리 알고 가기)
+- 유지되는 것:
+  - 트레이스
+  - Bone/PhysMat 추출
+  - 배율 계산 입력값
+- 바뀌는 것:
+  - `ApplyPointDamage` -> `GameplayEffectSpec` 적용
+  - `FinalDamage`는 `SetByCaller` 또는 Execution Calculation 입력으로 전달
 
-### RequestFire — ClientFireTime 전달
-
-```cpp
-void UEPCombatComponent::RequestFire(const FVector& Origin, const FVector& Direction)
-{
-    if (!EquippedWeapon || !EquippedWeapon->WeaponDef) return;
-    if (EquippedWeapon->CurrentAmmo <= 0) return;
-
-    AEPCharacter* Owner = GetOwnerCharacter();
-
-    float FireInterval = 1.f / EquippedWeapon->WeaponDef->FireRate;
-    float CurrentTime = GetWorld()->GetTimeSeconds();
-    if (CurrentTime - LocalLastFireTime < FireInterval) return;
-    LocalLastFireTime = CurrentTime;
-
-    // 클라이언트 발사 시각 — GetServerWorldTimeSeconds()로 서버 기준 시간 전달
-    const float ClientFireTime = GetWorld()->GetGameState()->GetServerWorldTimeSeconds();
-    Server_Fire(Origin, Direction, ClientFireTime);
-
-    if (Owner->IsLocallyControlled())
-    {
-        float Pitch = EquippedWeapon->GetRecoilPitch();
-        float Yaw   = FMath::RandRange(
-            -EquippedWeapon->GetRecoilYaw(),
-             EquippedWeapon->GetRecoilYaw());
-        Owner->AddControllerPitchInput(-Pitch);
-        Owner->AddControllerYawInput(Yaw);
-    }
-}
-```
-
-### Server_Fire_Implementation — 리와인드 삽입
-
-```cpp
-void UEPCombatComponent::Server_Fire_Implementation(
-    const FVector& Origin, const FVector& Direction, float ClientFireTime)
-{
-    if (!EquippedWeapon || !EquippedWeapon->CanFire()) return;
-
-    FVector SpreadDir = Direction;
-    EquippedWeapon->Fire(SpreadDir);
-
-    AEPCharacter* Owner = GetOwnerCharacter();
-
-    FCollisionQueryParams Params;
-    Params.AddIgnoredActor(Owner);
-    Params.AddIgnoredActor(EquippedWeapon);
-
-    const FVector End = Origin + SpreadDir * 10000.f;
-
-    // --- 리와인드 윈도우 제한 ---
-    const float MaxLagCompWindow = 0.2f;
-    const float ServerNow = GetWorld()->GetGameState()->GetServerWorldTimeSeconds();
-    if (ServerNow - ClientFireTime > MaxLagCompWindow)
-        ClientFireTime = ServerNow;  // 오래된 요청 → 현재 시점 기준
-
-    // --- 선행 레이캐스트: 히트 캐릭터 특정 ---
-    FHitResult PreHit;
-    GetWorld()->LineTraceSingleByChannel(PreHit, Origin, End, ECC_GameTraceChannel1, Params);
-
-    AEPCharacter* HitChar = Cast<AEPCharacter>(PreHit.GetActor());
-
-    if (HitChar)
-    {
-        // --- 리와인드: 해당 캐릭터 하나만 ---
-        FTransform OriginalTransform = HitChar->GetActorTransform();
-        FEPHitboxSnapshot Snapshot   = HitChar->GetSnapshotAtTime(ClientFireTime);
-
-        for (const FEPBoneSnapshot& Bone : Snapshot.Bones)
-        {
-            HitChar->GetMesh()->SetBoneTransformByName(
-                Bone.BoneName, Bone.WorldTransform, EBoneSpaces::WorldSpace);
-        }
-
-        // --- 리와인드 상태에서 재확인 레이캐스트 ---
-        FHitResult RewindHit;
-        const bool bHit = GetWorld()->LineTraceSingleByChannel(
-            RewindHit, Origin, End, ECC_GameTraceChannel1, Params);
-
-        // --- 복구 ---
-        for (const FEPBoneSnapshot& Bone : Snapshot.Bones)
-        {
-            HitChar->GetMesh()->SetBoneTransformByName(
-                Bone.BoneName,
-                HitChar->GetMesh()->GetBoneTransform(
-                    HitChar->GetMesh()->GetBoneIndex(Bone.BoneName)),
-                EBoneSpaces::WorldSpace);
-        }
-
-        // --- 히트 처리 ---
-        if (bHit && RewindHit.GetActor() == HitChar)
-        {
-            UGameplayStatics::ApplyPointDamage(
-                HitChar,
-                EquippedWeapon->GetDamage(),
-                SpreadDir,
-                RewindHit,   // BoneName 포함 → TakeDamage에서 부위 배율 적용
-                Owner->GetController(),
-                Owner,
-                UDamageType::StaticClass()
-            );
-        }
-    }
-
-    // --- 이펙트 (히트 여부 무관) ---
-    const FVector MuzzleLocation =
-        EquippedWeapon->WeaponMesh->DoesSocketExist(TEXT("MuzzleSocket"))
-        ? EquippedWeapon->WeaponMesh->GetSocketLocation(TEXT("MuzzleSocket"))
-        : EquippedWeapon->GetActorLocation();
-
-    Multicast_PlayMuzzleEffect(MuzzleLocation);
-    if (PreHit.bBlockingHit)
-        Multicast_PlayImpactEffect(PreHit.ImpactPoint, PreHit.ImpactNormal);
-}
-```
-
-> **include 추가 필요** (EPCombatComponent.cpp):
-> ```cpp
-> #include "Types/EPTypes.h"
-> #include "GameFramework/DamageType.h"
-> #include "GameFramework/GameStateBase.h"
-> ```
+권장 태그 흐름:
+- `Gameplay.Zone.WeakSpot`
+- `Gameplay.Damage.Type.Bullet`
+- `Gameplay.Damage.Source.Weapon`
 
 ---
 
-## Step 6. Physics Asset 에디터 설정
-
-> 코드 외 에디터 작업. 한 번만 하면 됨.
-
-1. `Content/Characters/MetaHuman/` 에서 `PHA_EPCharacter` 열기 (없으면 생성)
-2. 각 본 선택 → `Add Shape` → 구체 or 캡슐 추가
-   - `head`: 구체
-   - `spine_03`, `spine_01`: 캡슐
-   - 팔/다리 본: 캡슐
-3. 각 콜리전 바디의 **Collision Response** → `ECC_GameTraceChannel1`을 `Block`으로 설정
-4. 기타 채널(WorldStatic 등)은 `Ignore`로 설정
-   - 캐릭터 히트박스가 환경에 반응하면 판정 오류 발생
+## 에디터 세팅 체크리스트
+- Physics Asset에서 각 히트 바디가 `ECC_GameTraceChannel1`을 `Block`하는지 확인
+- 약점 부위(예: head) 바디에 약점용 Physical Material이 들어가 있는지 확인
+- 무기 데이터의 `MaterialDamageMultiplier`에 약점 태그 배율이 들어가 있는지 확인
+- 실제 PIE에서 로그로 다음을 검증
+  - BoneName
+  - PhysMat 이름
+  - 태그 매칭 결과
+  - FinalDamage
 
 ---
 
-## 체크리스트
-
-- [ ] `EPTypes.h`: `FEPBoneSnapshot`, `FEPHitboxSnapshot`, `GEPHitBones` 추가
-- [ ] `EPCharacter.h`: 히스토리 버퍼 멤버 선언
-- [ ] `EPCharacter.cpp`: `Tick` 기록, `SaveHitboxSnapshot`, `GetSnapshotAtTime`
-- [ ] `EPCharacter.cpp`: `TakeDamage` — `FPointDamageEvent` 캐스트 + 부위 배율
-- [ ] `EPCombatComponent.h`: `Server_Fire` 파라미터에 `float ClientFireTime` 추가
-- [ ] `EPCombatComponent.cpp`: `RequestFire` — `GetServerWorldTimeSeconds()` 전달
-- [ ] `EPCombatComponent.cpp`: `Server_Fire_Implementation` — 리와인드 + `ApplyPointDamage`
-- [ ] Physics Asset 에디터: 본 콜리전 바디 + `ECC_GameTraceChannel1` Block 설정
+## 구현 완료 기준
+- 같은 BaseDamage로 발사했을 때:
+  - 몸통 > 기본값
+  - 팔다리 < 몸통
+  - 약점 PhysMat 부위 > 몸통
+- 약점 태그 제거 시 배율이 즉시 1.0으로 떨어진다.
+- (나중에) GAS 전환 시 트레이스/배율 코드 대부분 재사용 가능하다.
