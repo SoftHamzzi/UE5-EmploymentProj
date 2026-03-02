@@ -238,6 +238,11 @@ void AMyCharacter::SaveHitboxSnapshot()
 }
 ```
 
+> **기록 간격을 100ms로 설정한 이유:**
+> 200ms 윈도우 / 100ms 간격 = 최소 2개 스냅샷 사이를 보간하게 됨.
+> 빠르게 움직이는 캐릭터에서 오차가 커질 수 있으므로, 실무에서는 33~50ms 간격을 사용.
+> 포트폴리오 수준에서는 100ms로 개념 확인 후 필요 시 간격을 줄여 정밀도 향상.
+
 #### 3) 서버 시간 동기화
 
 클라이언트의 `ClientFireTime`을 서버 시간으로 변환해야 한다:
@@ -274,41 +279,45 @@ void AMyCharacter::Server_Fire_Implementation(
         ClientFireTime = ServerNow;
     }
 
-    // 1. 모든 다른 캐릭터의 히트박스를 ClientFireTime 시점으로 리와인드
-    TArray<TPair<AMyCharacter*, FTransform>> OriginalTransforms;
+    // 1. 현재 위치 기준 선행 레이캐스트 (히트 캐릭터 특정)
+    //    모든 캐릭터를 리와인드하는 O(N) 대신, 맞은 캐릭터 하나만 리와인드
+    FHitResult PreHitResult;
+    const FVector End = Origin + Direction * WeaponRange;
+    GetWorld()->LineTraceSingleByChannel(PreHitResult, Origin, End, ECC_Visibility);
 
-    for (AMyCharacter* OtherChar : GetAllOtherCharacters())
-    {
-        // 현재 위치 저장
-        OriginalTransforms.Add({OtherChar, OtherChar->GetActorTransform()});
+    AMyCharacter* HitChar = Cast<AMyCharacter>(PreHitResult.GetActor());
+    if (!HitChar)
+        return;  // 캐릭터 아닌 것에 맞으면 리와인드 불필요, 바로 종료
 
-        // ClientFireTime에 해당하는 스냅샷 찾기 (보간)
-        FHitboxSnapshot Snapshot = OtherChar->GetSnapshotAtTime(ClientFireTime);
+    // 2. 맞은 캐릭터 하나만 리와인드
+    FTransform OriginalTransform = HitChar->GetActorTransform();
 
-        // 리와인드 (임시로 위치 이동)
-        OtherChar->SetActorLocation(Snapshot.Location);
-        OtherChar->SetActorRotation(Snapshot.Rotation);
-    }
+    FHitboxSnapshot Snapshot = HitChar->GetSnapshotAtTime(ClientFireTime);
 
-    // 2. 리와인드된 상태에서 레이캐스트
+    // ETeleportType::TeleportPhysics: 물리/콜리전 이벤트 발생 없이 이동
+    HitChar->SetActorLocation(Snapshot.Location, false, nullptr, ETeleportType::TeleportPhysics);
+    HitChar->SetActorRotation(Snapshot.Rotation, ETeleportType::TeleportPhysics);
+
+    // 3. 리와인드된 상태에서 재확인 레이캐스트
     FHitResult HitResult;
-    FVector End = Origin + Direction * WeaponRange;
     bool bHit = GetWorld()->LineTraceSingleByChannel(
         HitResult, Origin, End, ECC_Visibility);
 
-    // 3. 원래 위치로 복구
-    for (auto& Pair : OriginalTransforms)
-    {
-        Pair.Key->SetActorTransform(Pair.Value);
-    }
+    // 4. 원래 위치로 복구
+    HitChar->SetActorTransform(OriginalTransform, false, nullptr, ETeleportType::TeleportPhysics);
 
-    // 4. 히트 처리
-    if (bHit)
+    // 5. 히트 처리
+    if (bHit && HitResult.GetActor() == HitChar)
     {
-        if (AMyCharacter* HitChar = Cast<AMyCharacter>(HitResult.GetActor()))
-        {
-            UGameplayStatics::ApplyDamage(HitChar, WeaponDamage, GetController(), this, nullptr);
-        }
+        UGameplayStatics::ApplyPointDamage(
+            HitChar,
+            WeaponDamage,
+            Direction,
+            HitResult,     // BoneName 포함 (부위별 데미지에 활용)
+            GetController(),
+            this,
+            UDamageType::StaticClass()
+        );
     }
 }
 ```
@@ -362,7 +371,12 @@ FHitboxSnapshot AMyCharacter::GetSnapshotAtTime(float TargetTime) const
     FHitboxSnapshot Result;
     Result.ServerTime = TargetTime;
     Result.Location = FMath::Lerp(Before->Location, After->Location, Alpha);
-    Result.Rotation = FMath::Lerp(Before->Rotation, After->Rotation, Alpha);
+    // FMath::Lerp는 각도 랩어라운드(-179° ↔ 181°) 문제 발생
+    // Slerp(구면 선형 보간)으로 올바른 회전 보간
+    Result.Rotation = FQuat::Slerp(
+        Before->Rotation.Quaternion(),
+        After->Rotation.Quaternion(),
+        Alpha).Rotator();
     return Result;
 }
 ```
