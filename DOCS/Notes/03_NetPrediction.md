@@ -100,50 +100,70 @@ CharacterMovementComponent는 이동 예측을 내장하고 있다:
 
 ### RPC 설계
 
+`Server_Fire`는 `AEPCharacter`가 아닌 `UEPCombatComponent`에 위치한다.
+전투 관련 로직을 Character에서 분리한 설계 의도를 유지.
+
 ```cpp
-// 클라이언트 → 서버
-UFUNCTION(Server, Reliable, WithValidation)
-void Server_Fire(
-    FVector_NetQuantize Origin,           // 발사 위치 (양자화로 대역폭 절감)
-    FVector_NetQuantizeNormal Direction,  // 발사 방향 (정규화 벡터 양자화)
-    float ClientFireTime                  // 클라이언트 발사 시각 (Lag Compensation용)
-);
+// EPCombatComponent.h
+// 현재: const FVector& 사용
+// 권장: FVector_NetQuantize / FVector_NetQuantizeNormal (대역폭 절감)
+//       Lag Compensation 구현 시 float ClientFireTime 추가
+UFUNCTION(Server, Reliable)
+void Server_Fire(const FVector& Origin, const FVector& Direction);
 
-bool AMyCharacter::Server_Fire_Validate(
-    FVector_NetQuantize Origin,
-    FVector_NetQuantizeNormal Direction,
-    float ClientFireTime)
+// EPCombatComponent.cpp
+void UEPCombatComponent::Server_Fire_Implementation(
+    const FVector& Origin, const FVector& Direction)
 {
-    // 기본 검증: 비정상 값 체크
-    // 필요 시 연사 속도 검증, 탄약 검증 등 추가
-    return !Direction.IsNearlyZero();
-}
+    if (!EquippedWeapon || !EquippedWeapon->CanFire()) return;
 
-void AMyCharacter::Server_Fire_Implementation(
-    FVector_NetQuantize Origin,
-    FVector_NetQuantizeNormal Direction,
-    float ClientFireTime)
-{
-    // 서버에서 레이캐스트
-    FHitResult HitResult;
-    FVector End = Origin + Direction * WeaponRange;
+    // Spread 적용 + 탄약 차감 (AEPWeapon 내부 처리)
+    FVector SpreadDir = Direction;
+    EquippedWeapon->Fire(SpreadDir);
+
+    AEPCharacter* Owner = GetOwnerCharacter();
 
     FCollisionQueryParams Params;
-    Params.AddIgnoredActor(this);
+    Params.AddIgnoredActor(Owner);
+    Params.AddIgnoredActor(EquippedWeapon);  // 자기 무기 무시
 
-    if (GetWorld()->LineTraceSingleByChannel(HitResult, Origin, End, ECC_Visibility, Params))
+    const FVector End = Origin + SpreadDir * 10000.f;
+
+    // ECC_GameTraceChannel1: 히트박스 전용 채널 (환경과 분리)
+    FHitResult Hit;
+    const bool bHit = GetWorld()->LineTraceSingleByChannel(
+        Hit, Origin, End, ECC_GameTraceChannel1, Params);
+
+    if (bHit && Hit.GetActor())
     {
-        // 히트 판정 성공 → 데미지 적용
-        if (AMyCharacter* HitChar = Cast<AMyCharacter>(HitResult.GetActor()))
-        {
-            UGameplayStatics::ApplyDamage(HitChar, WeaponDamage, GetController(), this, nullptr);
-        }
+        // ApplyPointDamage 권장 (BoneName → 부위별 데미지)
+        // 현재는 ApplyDamage 사용 — 03_BoneHitbox_Implementation.md에서 교체
+        UGameplayStatics::ApplyDamage(
+            Hit.GetActor(),
+            EquippedWeapon->GetDamage(),
+            Owner->GetController(),
+            Owner,
+            nullptr
+        );
     }
 
-    // 모든 클라이언트에 이펙트 전파
-    Multicast_PlayFireEffect(GetActorLocation(), GetActorRotation());
+    // 총구 이펙트와 탄착 이펙트를 별도 Multicast로 분리
+    // (발생 위치와 조건이 다르기 때문)
+    const FVector MuzzleLocation =
+        EquippedWeapon->WeaponMesh->DoesSocketExist(TEXT("MuzzleSocket"))
+        ? EquippedWeapon->WeaponMesh->GetSocketLocation(TEXT("MuzzleSocket"))
+        : EquippedWeapon->GetActorLocation();
+
+    Multicast_PlayMuzzleEffect(MuzzleLocation);
+    if (bHit)
+        Multicast_PlayImpactEffect(Hit.ImpactPoint, Hit.ImpactNormal);
 }
 ```
+
+**현재 코드의 한계 (3단계에서 개선):**
+- `const FVector&` → `FVector_NetQuantize`로 교체 시 대역폭 절감
+- `ClientFireTime` 파라미터 추가로 Lag Compensation 활성화
+- `ApplyDamage` → `ApplyPointDamage`로 교체 시 부위별 데미지 가능
 
 ### FVector_NetQuantize / FVector_NetQuantizeNormal
 
@@ -180,31 +200,31 @@ T=50ms: 서버가 RPC 수신 (서버에서 적은 이미 위치 B로 이동)
 #### 1) 히트박스 히스토리 링버퍼
 
 ```cpp
-// 과거 위치/회전 기록
+// EPTypes.h에 정의 (본 단위 확장은 03_BoneHitbox.md 참고)
+// 캡슐 기준 기본 구조 (개념 설명용)
 USTRUCT()
-struct FHitboxSnapshot
+struct FEPHitboxSnapshot
 {
     GENERATED_BODY()
 
-    float ServerTime;          // 기록 시점의 서버 시간
-    FVector Location;          // 캡슐/히트박스 위치
+    float ServerTime = 0.f;    // 기록 시점의 서버 시간
+    FVector Location;          // 캐릭터 위치
     FRotator Rotation;         // 회전
-    float CapsuleHalfHeight;   // 캡슐 크기
-    float CapsuleRadius;
 };
 
-// 캐릭터에 링버퍼 저장 (서버에서만)
-static const int32 MAX_HISTORY = 20;  // ~2초치 (100ms 간격)
+// AEPCharacter에 링버퍼 저장 (서버에서만, private)
+static constexpr int32 MaxHitboxHistory = 20;  // ~2초치 (100ms 간격)
 
-TArray<FHitboxSnapshot> HitboxHistory;  // 링버퍼
+TArray<FEPHitboxSnapshot> HitboxHistory;
 int32 HistoryIndex = 0;
+float HistoryTimer = 0.f;
 ```
 
 #### 2) 히스토리 기록 (서버, 주기적)
 
 ```cpp
-// 서버 Tick에서 100ms마다 기록
-void AMyCharacter::Tick(float DeltaTime)
+// AEPCharacter::Tick (EPCharacter.cpp)
+void AEPCharacter::Tick(float DeltaTime)
 {
     Super::Tick(DeltaTime);
 
@@ -219,21 +239,19 @@ void AMyCharacter::Tick(float DeltaTime)
     }
 }
 
-void AMyCharacter::SaveHitboxSnapshot()
+void AEPCharacter::SaveHitboxSnapshot()
 {
-    FHitboxSnapshot Snapshot;
+    FEPHitboxSnapshot Snapshot;
     Snapshot.ServerTime = GetWorld()->GetTimeSeconds();
-    Snapshot.Location = GetActorLocation();
-    Snapshot.Rotation = GetActorRotation();
-    Snapshot.CapsuleHalfHeight = GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
-    Snapshot.CapsuleRadius = GetCapsuleComponent()->GetScaledCapsuleRadius();
+    Snapshot.Location   = GetActorLocation();
+    Snapshot.Rotation   = GetActorRotation();
 
-    if (HitboxHistory.Num() < MAX_HISTORY)
+    if (HitboxHistory.Num() < MaxHitboxHistory)
         HitboxHistory.Add(Snapshot);
     else
     {
         HitboxHistory[HistoryIndex] = Snapshot;
-        HistoryIndex = (HistoryIndex + 1) % MAX_HISTORY;
+        HistoryIndex = (HistoryIndex + 1) % MaxHitboxHistory;
     }
 }
 ```
@@ -264,61 +282,77 @@ float ServerTime = GetWorld()->GetGameState<AGameStateBase>()->GetServerWorldTim
 #### 4) 리와인드 → 레이캐스트 → 복구
 
 ```cpp
-void AMyCharacter::Server_Fire_Implementation(
-    FVector_NetQuantize Origin,
-    FVector_NetQuantizeNormal Direction,
-    float ClientFireTime)
+// UEPCombatComponent::Server_Fire_Implementation (EPCombatComponent.cpp)
+// Lag Compensation 적용 버전 (ClientFireTime 파라미터 추가 후)
+void UEPCombatComponent::Server_Fire_Implementation(
+    const FVector& Origin, const FVector& Direction, float ClientFireTime)
 {
-    // 0. 리와인드 윈도우 제한 (200ms 초과 요청 거부)
+    if (!EquippedWeapon || !EquippedWeapon->CanFire()) return;
+
+    FVector SpreadDir = Direction;
+    EquippedWeapon->Fire(SpreadDir);
+
+    AEPCharacter* Owner = GetOwnerCharacter();
+
+    FCollisionQueryParams Params;
+    Params.AddIgnoredActor(Owner);
+    Params.AddIgnoredActor(EquippedWeapon);
+
+    const FVector End = Origin + SpreadDir * 10000.f;
+
+    // 0. 리와인드 윈도우 제한
     const float MaxLagCompWindow = 0.2f;
-    const float ServerNow = GetWorld()->GetTimeSeconds();
+    const float ServerNow = GetWorld()->GetGameState()->GetServerWorldTimeSeconds();
     if (ServerNow - ClientFireTime > MaxLagCompWindow)
-    {
-        // 너무 오래된 요청: 현재 시점 기준으로 강제 설정
-        // 거부 대신 현재 위치 기준 판정 → 핵 유저에게 불리하게 작동
         ClientFireTime = ServerNow;
-    }
 
-    // 1. 현재 위치 기준 선행 레이캐스트 (히트 캐릭터 특정)
-    //    모든 캐릭터를 리와인드하는 O(N) 대신, 맞은 캐릭터 하나만 리와인드
-    FHitResult PreHitResult;
-    const FVector End = Origin + Direction * WeaponRange;
-    GetWorld()->LineTraceSingleByChannel(PreHitResult, Origin, End, ECC_Visibility);
+    // 1. 선행 레이캐스트 — 히트 캐릭터 특정 (O(N) 전체 순회 방지)
+    FHitResult PreHit;
+    GetWorld()->LineTraceSingleByChannel(PreHit, Origin, End, ECC_GameTraceChannel1, Params);
 
-    AMyCharacter* HitChar = Cast<AMyCharacter>(PreHitResult.GetActor());
-    if (!HitChar)
-        return;  // 캐릭터 아닌 것에 맞으면 리와인드 불필요, 바로 종료
-
-    // 2. 맞은 캐릭터 하나만 리와인드
-    FTransform OriginalTransform = HitChar->GetActorTransform();
-
-    FHitboxSnapshot Snapshot = HitChar->GetSnapshotAtTime(ClientFireTime);
-
-    // ETeleportType::TeleportPhysics: 물리/콜리전 이벤트 발생 없이 이동
-    HitChar->SetActorLocation(Snapshot.Location, false, nullptr, ETeleportType::TeleportPhysics);
-    HitChar->SetActorRotation(Snapshot.Rotation, ETeleportType::TeleportPhysics);
-
-    // 3. 리와인드된 상태에서 재확인 레이캐스트
-    FHitResult HitResult;
-    bool bHit = GetWorld()->LineTraceSingleByChannel(
-        HitResult, Origin, End, ECC_Visibility);
-
-    // 4. 원래 위치로 복구
-    HitChar->SetActorTransform(OriginalTransform, false, nullptr, ETeleportType::TeleportPhysics);
-
-    // 5. 히트 처리
-    if (bHit && HitResult.GetActor() == HitChar)
+    AEPCharacter* HitChar = Cast<AEPCharacter>(PreHit.GetActor());
+    if (HitChar)
     {
-        UGameplayStatics::ApplyPointDamage(
-            HitChar,
-            WeaponDamage,
-            Direction,
-            HitResult,     // BoneName 포함 (부위별 데미지에 활용)
-            GetController(),
-            this,
-            UDamageType::StaticClass()
-        );
+        // 2. 해당 캐릭터 하나만 리와인드
+        FTransform OriginalTransform = HitChar->GetActorTransform();
+        FEPHitboxSnapshot Snapshot   = HitChar->GetSnapshotAtTime(ClientFireTime);
+
+        // ETeleportType::TeleportPhysics: 물리/콜리전 이벤트 없이 이동
+        HitChar->SetActorLocation(Snapshot.Location, false, nullptr, ETeleportType::TeleportPhysics);
+        HitChar->SetActorRotation(Snapshot.Rotation, ETeleportType::TeleportPhysics);
+
+        // 3. 리와인드 상태에서 재확인 레이캐스트
+        FHitResult RewindHit;
+        const bool bHit = GetWorld()->LineTraceSingleByChannel(
+            RewindHit, Origin, End, ECC_GameTraceChannel1, Params);
+
+        // 4. 복구
+        HitChar->SetActorTransform(OriginalTransform, false, nullptr, ETeleportType::TeleportPhysics);
+
+        // 5. 히트 처리
+        if (bHit && RewindHit.GetActor() == HitChar)
+        {
+            UGameplayStatics::ApplyPointDamage(
+                HitChar,
+                EquippedWeapon->GetDamage(),
+                SpreadDir,
+                RewindHit,                      // BoneName → TakeDamage 부위 배율
+                Owner->GetController(),
+                Owner,
+                UDamageType::StaticClass()
+            );
+        }
     }
+
+    // 이펙트 (히트 여부 무관)
+    const FVector MuzzleLocation =
+        EquippedWeapon->WeaponMesh->DoesSocketExist(TEXT("MuzzleSocket"))
+        ? EquippedWeapon->WeaponMesh->GetSocketLocation(TEXT("MuzzleSocket"))
+        : EquippedWeapon->GetActorLocation();
+
+    Multicast_PlayMuzzleEffect(MuzzleLocation);
+    if (PreHit.bBlockingHit)
+        Multicast_PlayImpactEffect(PreHit.ImpactPoint, PreHit.ImpactNormal);
 }
 ```
 
@@ -332,13 +366,13 @@ void AMyCharacter::Server_Fire_Implementation(
 정확한 시점의 스냅샷이 없을 수 있으므로 두 스냅샷 사이를 보간:
 
 ```cpp
-FHitboxSnapshot AMyCharacter::GetSnapshotAtTime(float TargetTime) const
+// AEPCharacter::GetSnapshotAtTime (EPCharacter.cpp)
+FEPHitboxSnapshot AEPCharacter::GetSnapshotAtTime(float TargetTime) const
 {
-    // 가장 가까운 두 스냅샷 찾기
-    const FHitboxSnapshot* Before = nullptr;
-    const FHitboxSnapshot* After = nullptr;
+    const FEPHitboxSnapshot* Before = nullptr;
+    const FEPHitboxSnapshot* After  = nullptr;
 
-    for (const FHitboxSnapshot& Snap : HitboxHistory)
+    for (const FEPHitboxSnapshot& Snap : HitboxHistory)
     {
         if (Snap.ServerTime <= TargetTime)
         {
@@ -352,25 +386,26 @@ FHitboxSnapshot AMyCharacter::GetSnapshotAtTime(float TargetTime) const
         }
     }
 
-    // 둘 다 없으면 현재 위치 반환
+    // 히스토리 없으면 현재 위치 반환
     if (!Before && !After)
     {
-        FHitboxSnapshot Current;
-        Current.Location = GetActorLocation();
-        Current.Rotation = GetActorRotation();
+        FEPHitboxSnapshot Current;
+        Current.ServerTime = TargetTime;
+        Current.Location   = GetActorLocation();
+        Current.Rotation   = GetActorRotation();
         return Current;
     }
     if (!Before) return *After;
-    if (!After) return *Before;
+    if (!After)  return *Before;
     if (Before == After) return *Before;
 
-    // 보간
-    float Alpha = (TargetTime - Before->ServerTime) / (After->ServerTime - Before->ServerTime);
-    Alpha = FMath::Clamp(Alpha, 0.f, 1.f);
+    // 두 스냅샷 사이 보간
+    const float Range = After->ServerTime - Before->ServerTime;
+    const float Alpha = FMath::Clamp((TargetTime - Before->ServerTime) / Range, 0.f, 1.f);
 
-    FHitboxSnapshot Result;
+    FEPHitboxSnapshot Result;
     Result.ServerTime = TargetTime;
-    Result.Location = FMath::Lerp(Before->Location, After->Location, Alpha);
+    Result.Location   = FMath::Lerp(Before->Location, After->Location, Alpha);
     // FMath::Lerp는 각도 랩어라운드(-179° ↔ 181°) 문제 발생
     // Slerp(구면 선형 보간)으로 올바른 회전 보간
     Result.Rotation = FQuat::Slerp(
