@@ -160,10 +160,11 @@ void UEPCombatComponent::Server_Fire_Implementation(
 }
 ```
 
-**현재 코드의 한계 (3단계에서 개선):**
-- `const FVector&` → `FVector_NetQuantize`로 교체 시 대역폭 절감
-- `ClientFireTime` 파라미터 추가로 Lag Compensation 활성화
-- `ApplyDamage` → `ApplyPointDamage`로 교체 시 부위별 데미지 가능
+**3단계에서 변경할 내용:**
+- `const FVector&` → `FVector_NetQuantize` / `FVector_NetQuantizeNormal` (대역폭 절감)
+- `ClientFireTime` 파라미터 추가 → Lag Compensation 활성화
+- `EEPBallisticType` 분기 → `HandleHitscanFire` / `HandleProjectileFire` 추출
+- `ApplyDamage` → `ApplyPointDamage` (부위별 데미지, 03_BoneHitbox 단계)
 
 ### FVector_NetQuantize / FVector_NetQuantizeNormal
 
@@ -173,6 +174,65 @@ void UEPCombatComponent::Server_Fire_Implementation(
 | `FVector_NetQuantizeNormal` | 방향 (정규화 벡터) | 16비트 각도 (65536 방향, 0.005도 정밀도) |
 
 일반 FVector 대비 대역폭을 크게 절감한다.
+
+### 탄도 방식 분리 (EEPBallisticType)
+
+무기뿐 아니라 **스킬(어빌리티)도 히트스캔·투사체 방식을 쓴다.**
+예) 섬광탄 스킬 = 즉발 범위 판정(히트스캔), 화염구 스킬 = 투사체.
+따라서 탄도 방식 분기를 `Server_Fire` 내부에 묻지 않고 **재사용 가능한 함수로 분리**한다.
+
+`EEPFireMode`(Single/Burst/Auto)는 트리거 방식이다. 탄도 방식은 **별개 enum**:
+
+```cpp
+// EPTypes.h
+UENUM(BlueprintType)
+enum class EEPBallisticType : uint8
+{
+    Hitscan,    // 즉발 LineTrace (라이플, SMG, 히트스캔 스킬)
+    Projectile, // 탄속 Actor   (저격총, 유탄, 투사체 스킬)
+};
+```
+
+**WeaponDefinition 확장:**
+
+```cpp
+UPROPERTY(EditDefaultsOnly, Category = "Weapon|Ballistics")
+EEPBallisticType BallisticType = EEPBallisticType::Hitscan;
+
+UPROPERTY(EditDefaultsOnly, Category = "Weapon|Ballistics",
+    meta = (EditCondition = "BallisticType == EEPBallisticType::Projectile"))
+TSubclassOf<AEPProjectile> ProjectileClass;
+
+// ProjectileSpeed는 여기 두지 않는다.
+// 투사체마다 중력·반사·속도 특성이 다르므로 각 ProjectileClass Blueprint에서
+// UProjectileMovementComponent::InitialSpeed 등을 직접 설정한다.
+```
+
+**Server_Fire 분기:**
+
+```cpp
+void UEPCombatComponent::Server_Fire_Implementation(
+    const FVector_NetQuantize& Origin,
+    const FVector_NetQuantizeNormal& Direction,
+    float ClientFireTime)
+{
+    if (!EquippedWeapon || !EquippedWeapon->CanFire()) return;
+
+    FVector SpreadDir = Direction;
+    EquippedWeapon->Fire(SpreadDir); // 탄약 차감 + 스프레드
+
+    AEPCharacter* Owner = GetOwnerCharacter();
+
+    if (EquippedWeapon->WeaponDef->BallisticType == EEPBallisticType::Hitscan)
+        HandleHitscanFire(Owner, Origin, SpreadDir, ClientFireTime);
+    else
+        HandleProjectileFire(Owner, Origin, SpreadDir);
+}
+```
+
+`HandleHitscanFire`를 독립 함수로 추출하는 이유:
+**GAS 어빌리티의 히트스캔 스킬도 동일 함수를 호출**할 수 있어야 하기 때문이다.
+랙 보상 인프라(`GetSnapshotAtTime`, 링버퍼)는 무기·스킬 구분 없이 공유된다.
 
 ---
 
@@ -194,6 +254,19 @@ T=50ms: 서버가 RPC 수신 (서버에서 적은 이미 위치 B로 이동)
 ### 해결: 서버 리와인드
 
 서버가 클라이언트의 발사 시각으로 **히트박스를 되돌려서** 판정하는 기법.
+
+### 히트스캔 vs 투사체 — 랙 보상 필요 여부
+
+| | 히트스캔 | 투사체 |
+|---|---|---|
+| 판정 시점 | 발사 즉시 | 투사체가 충돌한 순간 |
+| 랙 보상 | **필요** | **불필요** |
+| 이유 | 클라 시점 ≠ 서버 시점 | 투사체 이동 시간이 지연을 흡수 |
+| 리와인드 시각 | `ClientFireTime` | — |
+
+투사체는 서버에서도 실시간으로 날아간다.
+클라가 발사한 시점과 서버 투사체가 충돌하는 시점이 이미 같은 서버 시각이므로,
+히트스캔처럼 과거로 되돌릴 필요가 없다.
 
 ### 구현 구조
 
@@ -242,7 +315,10 @@ void AEPCharacter::Tick(float DeltaTime)
 void AEPCharacter::SaveHitboxSnapshot()
 {
     FEPHitboxSnapshot Snapshot;
-    Snapshot.ServerTime = GetWorld()->GetTimeSeconds();
+    // GetServerWorldTimeSeconds(): GameState가 복제하는 서버 기준 시간.
+    // ClientFireTime과 동일 기준을 써야 리와인드 시각이 정확하게 맞는다.
+    const AGameStateBase* GS = GetWorld()->GetGameState<AGameStateBase>();
+    Snapshot.ServerTime = GS ? GS->GetServerWorldTimeSeconds() : GetWorld()->GetTimeSeconds();
     Snapshot.Location   = GetActorLocation();
     Snapshot.Rotation   = GetActorRotation();
 
@@ -281,29 +357,31 @@ float ServerTime = GetWorld()->GetGameState<AGameStateBase>()->GetServerWorldTim
 
 #### 4) 리와인드 → 레이캐스트 → 복구
 
+`HandleHitscanFire`로 추출한다. `Server_Fire`뿐 아니라 GAS 어빌리티에서도 호출할 수 있다.
+
 ```cpp
-// UEPCombatComponent::Server_Fire_Implementation (EPCombatComponent.cpp)
-// Lag Compensation 적용 버전 (ClientFireTime 파라미터 추가 후)
-void UEPCombatComponent::Server_Fire_Implementation(
-    const FVector& Origin, const FVector& Direction, float ClientFireTime)
+// UEPCombatComponent (EPCombatComponent.cpp)
+void UEPCombatComponent::HandleHitscanFire(
+    AEPCharacter* Owner,
+    const FVector& Origin,
+    const FVector& Direction,
+    float ClientFireTime)
 {
-    if (!EquippedWeapon || !EquippedWeapon->CanFire()) return;
-
-    FVector SpreadDir = Direction;
-    EquippedWeapon->Fire(SpreadDir);
-
-    AEPCharacter* Owner = GetOwnerCharacter();
-
-    FCollisionQueryParams Params;
+    FCollisionQueryParams Params(SCENE_QUERY_STAT(HitscanFire), false);
     Params.AddIgnoredActor(Owner);
     Params.AddIgnoredActor(EquippedWeapon);
 
-    const FVector End = Origin + SpreadDir * 10000.f;
+    const FVector End = Origin + Direction * 10000.f;
 
-    // 0. 리와인드 윈도우 제한
-    const float MaxLagCompWindow = 0.2f;
-    const float ServerNow = GetWorld()->GetGameState()->GetServerWorldTimeSeconds();
-    if (ServerNow - ClientFireTime > MaxLagCompWindow)
+    // ── [Rewind Block] ──────────────────────────────────────────────────────
+    // 이 블록은 무기/스킬 공통 인프라다.
+    // Chapter 4에서 GAS 어빌리티도 동일한 흐름으로 리와인드를 수행한다.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    // 0. 리와인드 윈도우 클램프 (200ms 초과 = 조작으로 간주)
+    const AGameStateBase* GS = GetWorld()->GetGameState<AGameStateBase>();
+    const float ServerNow = GS ? GS->GetServerWorldTimeSeconds() : GetWorld()->GetTimeSeconds();
+    if (ServerNow - ClientFireTime > 0.2f)
         ClientFireTime = ServerNow;
 
     // 1. 선행 레이캐스트 — 히트 캐릭터 특정 (O(N) 전체 순회 방지)
@@ -311,50 +389,64 @@ void UEPCombatComponent::Server_Fire_Implementation(
     GetWorld()->LineTraceSingleByChannel(PreHit, Origin, End, ECC_GameTraceChannel1, Params);
 
     AEPCharacter* HitChar = Cast<AEPCharacter>(PreHit.GetActor());
+    bool bConfirmedHit = false;
+    FHitResult FinalHit = PreHit;
+
     if (HitChar)
     {
         // 2. 해당 캐릭터 하나만 리와인드
-        FTransform OriginalTransform = HitChar->GetActorTransform();
-        FEPHitboxSnapshot Snapshot   = HitChar->GetSnapshotAtTime(ClientFireTime);
+        const FVector OrigLoc = HitChar->GetActorLocation();
+        const FRotator OrigRot = HitChar->GetActorRotation();
+        const FEPHitboxSnapshot Snap = HitChar->GetSnapshotAtTime(ClientFireTime);
 
         // ETeleportType::TeleportPhysics: 물리/콜리전 이벤트 없이 이동
-        HitChar->SetActorLocation(Snapshot.Location, false, nullptr, ETeleportType::TeleportPhysics);
-        HitChar->SetActorRotation(Snapshot.Rotation, ETeleportType::TeleportPhysics);
+        HitChar->SetActorLocationAndRotation(
+            Snap.Location, Snap.Rotation, false, nullptr, ETeleportType::TeleportPhysics);
 
         // 3. 리와인드 상태에서 재확인 레이캐스트
         FHitResult RewindHit;
-        const bool bHit = GetWorld()->LineTraceSingleByChannel(
-            RewindHit, Origin, End, ECC_GameTraceChannel1, Params);
+        bConfirmedHit = GetWorld()->LineTraceSingleByChannel(
+            RewindHit, Origin, End, ECC_GameTraceChannel1, Params)
+            && RewindHit.GetActor() == HitChar;
 
-        // 4. 복구
-        HitChar->SetActorTransform(OriginalTransform, false, nullptr, ETeleportType::TeleportPhysics);
+        if (bConfirmedHit) FinalHit = RewindHit;
 
-        // 5. 히트 처리
-        if (bHit && RewindHit.GetActor() == HitChar)
-        {
-            UGameplayStatics::ApplyPointDamage(
-                HitChar,
-                EquippedWeapon->GetDamage(),
-                SpreadDir,
-                RewindHit,                      // BoneName → TakeDamage 부위 배율
-                Owner->GetController(),
-                Owner,
-                UDamageType::StaticClass()
-            );
-        }
+        // 4. 복구 (반드시 리와인드 직후)
+        HitChar->SetActorLocationAndRotation(
+            OrigLoc, OrigRot, false, nullptr, ETeleportType::TeleportPhysics);
     }
 
-    // 이펙트 (히트 여부 무관)
-    const FVector MuzzleLocation =
+    // ── [Damage Block] ──────────────────────────────────────────────────────
+    // Chapter 4 GAS 전환 시 이 블록을 GameplayEffectSpec + SetByCaller로 교체한다.
+    // ─────────────────────────────────────────────────────────────────────────
+    if (bConfirmedHit && FinalHit.GetActor())
+    {
+        UGameplayStatics::ApplyPointDamage(
+            FinalHit.GetActor(),
+            EquippedWeapon->GetDamage(),
+            Direction,
+            FinalHit,                   // BoneName → 부위 배율 (03_BoneHitbox)
+            Owner->GetController(),
+            Owner,
+            UDamageType::StaticClass());
+    }
+
+    // ── [Effect Block] ───────────────────────────────────────────────────────
+    const FVector MuzzleLoc =
         EquippedWeapon->WeaponMesh->DoesSocketExist(TEXT("MuzzleSocket"))
         ? EquippedWeapon->WeaponMesh->GetSocketLocation(TEXT("MuzzleSocket"))
         : EquippedWeapon->GetActorLocation();
 
-    Multicast_PlayMuzzleEffect(MuzzleLocation);
-    if (PreHit.bBlockingHit)
-        Multicast_PlayImpactEffect(PreHit.ImpactPoint, PreHit.ImpactNormal);
+    Multicast_PlayMuzzleEffect(MuzzleLoc);
+    if (bConfirmedHit)
+        Multicast_PlayImpactEffect(FinalHit.ImpactPoint, FinalHit.ImpactNormal);
 }
 ```
+
+> **GAS 전환 포인트:**
+> Rewind Block은 Chapter 4에서도 그대로 재사용된다.
+> Damage Block의 `ApplyPointDamage`만 `GameplayEffectSpec` 적용으로 교체하면 된다.
+> Effect Block은 변경 없음.
 
 **왜 200ms인가:**
 - 일반적인 게임에서 허용하는 최대 핑 = 150~200ms
@@ -416,38 +508,115 @@ FEPHitboxSnapshot AEPCharacter::GetSnapshotAtTime(float TargetTime) const
 }
 ```
 
+#### 6) 투사체 스폰 및 히트 처리
+
+**스폰 (HandleProjectileFire):**
+
+```cpp
+// UEPCombatComponent (EPCombatComponent.cpp)
+void UEPCombatComponent::HandleProjectileFire(
+    AEPCharacter* Owner,
+    const FVector& Origin,
+    const FVector& Direction)
+{
+    if (!EquippedWeapon->WeaponDef->ProjectileClass) return;
+
+    const FVector MuzzleLoc =
+        EquippedWeapon->WeaponMesh->DoesSocketExist(TEXT("MuzzleSocket"))
+        ? EquippedWeapon->WeaponMesh->GetSocketLocation(TEXT("MuzzleSocket"))
+        : Origin;
+
+    FActorSpawnParameters SpawnParams;
+    SpawnParams.Owner      = Owner;
+    SpawnParams.Instigator = Owner;
+
+    AEPProjectile* Proj = GetWorld()->SpawnActor<AEPProjectile>(
+        EquippedWeapon->WeaponDef->ProjectileClass,
+        MuzzleLoc,
+        Direction.Rotation(),
+        SpawnParams);
+
+    if (Proj)
+    {
+        // 탄속은 Proj Blueprint의 ProjectileMovementComponent에서 설정됨
+        Proj->Initialize(EquippedWeapon->GetDamage());
+    }
+
+    // 투사체는 탄착 이펙트를 OnProjectileHit에서 처리하므로 총구만 재생
+    Multicast_PlayMuzzleEffect(MuzzleLoc);
+}
+```
+
+**히트 처리 (AEPProjectile::OnProjectileHit):**
+
+투사체는 랙 보상 없이 **서버 현재 시각 기준**으로 즉시 판정한다.
+
+```cpp
+void AEPProjectile::OnProjectileHit(
+    UPrimitiveComponent*, AActor* OtherActor,
+    UPrimitiveComponent*, FVector, const FHitResult& Hit)
+{
+    if (!HasAuthority()) return; // 서버만 데미지 처리
+
+    // 리와인드 불필요 — 투사체 이동 시간이 지연을 흡수
+    // [Chapter 4 GAS 전환 포인트] ApplyPointDamage → GameplayEffectSpec
+    UGameplayStatics::ApplyPointDamage(
+        OtherActor,
+        BaseDamage,
+        (Hit.TraceEnd - Hit.TraceStart).GetSafeNormal(), // 정규화 필수
+        Hit,
+        GetInstigatorController(),
+        GetInstigator(),
+        UDamageType::StaticClass());
+
+    Destroy();
+}
+```
+
+`bReplicates = true`로 클라이언트에도 투사체가 보이지만,
+`OnProjectileHit` 데미지 처리는 `HasAuthority()` 분기로 서버에서만 실행된다.
+
 ---
 
 ## 6. UE5 내장 지원 vs 직접 구현
 
 | 기능 | UE5 내장 | 비고 |
-|------|---------|------|
+| --- | --- | --- |
 | 이동 예측/보정 | O (CMC) | 자동 처리, 확장만 하면 됨 |
-| 히트스캔 랙 보상 | X | 직접 구현 필요 |
-| GAS 어빌리티 예측 | O (FPredictionKey) | LocalPredicted 정책 사용 |
+| 히트스캔 랙 보상 | X | 직접 구현 (HandleHitscanFire) |
+| 투사체 랙 보상 | X (불필요) | 이동 시간이 지연 흡수, 서버 현재 시각 판정 |
+| GAS 어빌리티 예측 | O (FPredictionKey) | LocalPredicted — Chapter 4에서 구현 |
+| GAS 히트스캔/투사체 스킬 | X | Rewind Block 재사용 — Chapter 4에서 연결 |
 
 Lag Compensation은 UE5가 범용으로 제공하지 않는다.
-이를 직접 구현하는 것이 포트폴리오에서 차별화 포인트가 되는 이유.
+이를 직접 구현하고 무기/스킬 양쪽에서 재사용하는 구조가 포트폴리오 차별화 포인트다.
 
 ---
 
 ## 7. EmploymentProj 3단계 구현 체크리스트
 
-- [ ] Hit Validation
-  - [ ] `Server_Fire` RPC 구현 (Origin + Direction + ClientFireTime)
-  - [ ] 서버에서 레이캐스트로 히트 판정
-  - [ ] `WithValidation`으로 기본 치트 방지
+- [ ] 탄도 방식 분리
+  - [ ] `EEPBallisticType` enum 추가 (EPTypes.h)
+  - [ ] `WeaponDefinition`에 `BallisticType` + `ProjectileClass` 추가
+  - [ ] `Server_Fire`에서 `HandleHitscanFire` / `HandleProjectileFire` 분기
+- [ ] Hit Validation (히트스캔)
+  - [ ] `Server_Fire` RPC 시그니처 확장 (FVector_NetQuantize + ClientFireTime)
+  - [ ] `HandleHitscanFire` 구현 (서버 레이캐스트)
+  - [ ] 입력 검증은 구현부 내부에서 처리 (UE5는 `_Validate` 대신 서버 내부 조건문 사용)
 - [ ] Lag Compensation
-  - [ ] FHitboxSnapshot 구조체 정의
-  - [ ] 서버에서 100ms 간격 히스토리 기록 (링버퍼)
-  - [ ] GetSnapshotAtTime() 보간 함수
-  - [ ] 리와인드 → 레이캐스트 → 복구 흐름
-  - [ ] 서버 시간 동기화 (`GetServerWorldTimeSeconds`)
-- [ ] Reconciliation (사격)
+  - [ ] `FEPHitboxSnapshot` 구조체 정의 (EPTypes.h)
+  - [ ] 서버에서 100ms 간격 히스토리 기록 (링버퍼, AEPCharacter)
+  - [ ] `GetSnapshotAtTime()` 보간 함수
+  - [ ] 리와인드 → 재레이캐스트 → 복구 흐름 (HandleHitscanFire 내부)
+- [ ] 투사체 지원
+  - [ ] `AEPProjectile` 클래스 추가 (`UProjectileMovementComponent`, `bReplicates = true`)
+  - [ ] `HandleProjectileFire` 구현 (서버 스폰)
+  - [ ] `OnProjectileHit`에서 서버 권한 데미지 처리
+- [ ] Reconciliation (사격 결과 피드백)
   - [ ] `Client_OnHitConfirmed` RPC로 히트 결과 전달
   - [ ] 히트마커/데미지 숫자 UI 표시
 - [ ] Multicast 이펙트
-  - [ ] `Multicast_PlayFireEffect` (총구 이펙트, 사운드)
+  - [ ] `Multicast_PlayMuzzleEffect` (총구 이펙트 + 사운드)
   - [ ] `Multicast_PlayImpactEffect` (탄착 이펙트)
 
 ---
