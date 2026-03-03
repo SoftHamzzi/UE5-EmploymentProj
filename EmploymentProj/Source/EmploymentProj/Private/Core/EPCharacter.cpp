@@ -166,6 +166,7 @@ float AEPCharacter::TakeDamage(
 		EventInstigator, DamageCause);
 	
 	HP = FMath::Clamp(HP - ActualDamage, 0.f, MaxHP);
+	ForceNetUpdate();
 	if (HP <= 0.f) Die(EventInstigator);
 	
 	Multicast_PlayHitReact();
