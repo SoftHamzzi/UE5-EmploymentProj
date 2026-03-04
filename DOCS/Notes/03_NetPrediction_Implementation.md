@@ -284,7 +284,7 @@ void Server_Fire(const FVector_NetQuantize& Origin,
 
 ```cpp
 private:
-	// 히트스캔: 리와인드 + 레이캐스트 판정
+	// 히트스캔: Broad Phase 후보 선정 → Multi-Rewind → Narrow Phase 판정
 	void HandleHitscanFire(AEPCharacter* Owner,
 	                       const FVector& Origin,
 	                       const FVector& Direction,
@@ -294,6 +294,13 @@ private:
 	void HandleProjectileFire(AEPCharacter* Owner,
 	                          const FVector& Origin,
 	                          const FVector& Direction);
+
+	// Broad Phase 후보 선정 — 현재 O(N), 향후 Spatial Hash로 O(K) 전환 가능
+	// Origin~End 선분과 과거 위치 거리 기준으로 후보를 필터링한다
+	TArray<AEPCharacter*> GetHitscanCandidates(AEPCharacter* Owner,
+	                                           const FVector& Origin,
+	                                           const FVector& End,
+	                                           float ClientFireTime) const;
 ```
 
 주의:
@@ -375,11 +382,73 @@ void UEPCombatComponent::Server_Fire_Implementation(
 
 ---
 
-## Step 8) HandleHitscanFire — 리와인드 판정
+## Step 8) HandleHitscanFire — Multi-Candidate 리와인드 판정
 
 파일: `Private/Combat/EPCombatComponent.cpp`
 
-흐름: 윈도우 클램프 → PreTrace → 리와인드 → ReTrace → 복구 → 데미지 → 이펙트
+흐름: 윈도우 클램프 → **Broad Phase(후보 선정)** → **Multi-Rewind** → **Narrow Phase** → **일괄 복구** → 데미지 → 이펙트
+
+### 8-1. include 추가
+
+```cpp
+#include "Components/CapsuleComponent.h" // GetScaledCapsuleRadius()
+#include "EngineUtils.h"                  // TActorIterator
+```
+
+### 8-2. FEPRewindEntry 구조체 (EPCombatComponent.cpp 상단 파일 스코프)
+
+`AEPCharacter*`에 의존하므로 EPTypes.h 대신 .cpp 내부에 정의한다.
+
+```cpp
+// 리와인드 작업용 임시 구조체 — 복제 불필요, .cpp 파일 스코프 한정
+struct FEPRewindEntry
+{
+	AEPCharacter* Character     = nullptr;
+	FVector       SavedLocation = FVector::ZeroVector;
+	FRotator      SavedRotation = FRotator::ZeroRotator;
+};
+```
+
+### 8-3. GetHitscanCandidates — Broad Phase 후보 선정
+
+```cpp
+// 설계 원칙:
+//   현재: O(N) — 맵의 모든 AEPCharacter를 순회 (10~30인 규모에서 충분)
+//   향후: 공간 분할(Grid/Hash)로 교체 시 O(K)로 개선 가능.
+//         GetHitscanCandidates 함수 자체를 교체하는 것으로 확장된다.
+TArray<AEPCharacter*> UEPCombatComponent::GetHitscanCandidates(
+	AEPCharacter* Owner,
+	const FVector& Origin,
+	const FVector& End,
+	float ClientFireTime) const
+{
+	TArray<AEPCharacter*> Candidates;
+
+	for (TActorIterator<AEPCharacter> It(GetWorld()); It; ++It)
+	{
+		AEPCharacter* Char = *It;
+		if (!Char || Char == Owner) continue;
+
+		// 과거 위치 기준으로 Broad Phase 수행
+		// (현재 위치 기준이면 이미 이동한 대상을 놓칠 수 있다)
+		const FEPHitboxSnapshot Snap = Char->GetSnapshotAtTime(ClientFireTime);
+
+		// 총알 선분과 과거 위치 간 거리 체크 (느슨한 경계 — 정밀 판정은 Narrow Phase에서)
+		const float CapsuleRadius    = Char->GetCapsuleComponent()->GetScaledCapsuleRadius();
+		const float BroadPhaseRadius = CapsuleRadius + 50.f; // 50cm 여유
+		const float DistToLine       = FMath::PointDistToSegment(Snap.Location, Origin, End);
+
+		if (DistToLine <= BroadPhaseRadius)
+		{
+			Candidates.Add(Char);
+		}
+	}
+
+	return Candidates;
+}
+```
+
+### 8-4. HandleHitscanFire 구현
 
 ```cpp
 void UEPCombatComponent::HandleHitscanFire(
@@ -388,10 +457,6 @@ void UEPCombatComponent::HandleHitscanFire(
 	const FVector& Direction,
 	float ClientFireTime)
 {
-	FCollisionQueryParams Params(SCENE_QUERY_STAT(HitscanFire), false);
-	Params.AddIgnoredActor(Owner);
-	Params.AddIgnoredActor(EquippedWeapon);
-
 	const FVector End = Origin + Direction * 10000.f;
 
 	// ── [Rewind Block] ────────────────────────────────────────────────────────
@@ -403,40 +468,47 @@ void UEPCombatComponent::HandleHitscanFire(
 	if (ServerNow - ClientFireTime > 0.2f)
 		ClientFireTime = ServerNow;
 
-	// 1. PreTrace — 후보 캐릭터 1명 특정 (O(N) 전체 순회 방지)
-	FHitResult PreHit;
-	GetWorld()->LineTraceSingleByChannel(PreHit, Origin, End, ECC_GameTraceChannel1, Params);
+	// 1. Broad Phase — 후보 캐릭터 선정
+	//    GetHitscanCandidates: 향후 Spatial Partition으로 교체 가능한 추상화 경계
+	const TArray<AEPCharacter*> Candidates =
+		GetHitscanCandidates(Owner, Origin, End, ClientFireTime);
 
-	AEPCharacter* HitChar = Cast<AEPCharacter>(PreHit.GetActor());
-	bool bConfirmedHit = false;
-	FHitResult FinalHit = PreHit;
+	// 2. 후보 전체를 과거 시점으로 리와인드 + 현재 위치 저장
+	TArray<FEPRewindEntry> RewindEntries;
+	RewindEntries.Reserve(Candidates.Num());
 
-	if (HitChar)
+	for (AEPCharacter* Char : Candidates)
 	{
-		// 2. 해당 캐릭터만 리와인드
-		const FVector   OrigLoc = HitChar->GetActorLocation();
-		const FRotator  OrigRot = HitChar->GetActorRotation();
-		const FEPHitboxSnapshot Snap = HitChar->GetSnapshotAtTime(ClientFireTime);
+		FEPRewindEntry& Entry = RewindEntries.AddDefaulted_GetRef();
+		Entry.Character     = Char;
+		Entry.SavedLocation = Char->GetActorLocation();
+		Entry.SavedRotation = Char->GetActorRotation();
 
-		// TeleportPhysics: 물리/콜리전 이벤트 없이 즉시 이동
-		HitChar->SetActorLocationAndRotation(
+		const FEPHitboxSnapshot Snap = Char->GetSnapshotAtTime(ClientFireTime);
+		Char->SetActorLocationAndRotation(
 			Snap.Location, Snap.Rotation, false, nullptr, ETeleportType::TeleportPhysics);
-
-		// 3. ReTrace — 리와인드 위치에서 재확인
-		FHitResult RewindHit;
-		bConfirmedHit = GetWorld()->LineTraceSingleByChannel(
-			RewindHit, Origin, End, ECC_GameTraceChannel1, Params)
-			&& RewindHit.GetActor() == HitChar;
-
-		if (bConfirmedHit) FinalHit = RewindHit;
-
-		// 4. 복구 (반드시 리와인드 직후, 순서 절대 변경 금지)
-		HitChar->SetActorLocationAndRotation(
-			OrigLoc, OrigRot, false, nullptr, ETeleportType::TeleportPhysics);
 	}
-	// 주의: else 브랜치로 비캐릭터(벽 등) 히트 처리를 하지 않는다.
-	// ECC_GameTraceChannel1은 캐릭터 히트박스 전용 채널이며,
-	// 환경 피격은 별도 채널/로직으로 처리한다.
+
+	// 3. Narrow Phase — 모든 후보가 과거 위치에 있는 상태에서 정밀 레이캐스트
+	FCollisionQueryParams Params(SCENE_QUERY_STAT(HitscanFire), false);
+	Params.AddIgnoredActor(Owner);
+	Params.AddIgnoredActor(EquippedWeapon);
+
+	FHitResult FinalHit;
+	const bool bConfirmedHit =
+		GetWorld()->LineTraceSingleByChannel(FinalHit, Origin, End, ECC_GameTraceChannel1, Params)
+		&& Cast<AEPCharacter>(FinalHit.GetActor()) != nullptr;
+
+	// 4. 후보 전체 일괄 복구 (반드시 Narrow Phase 직후, 순서 변경 금지)
+	for (const FEPRewindEntry& Entry : RewindEntries)
+	{
+		Entry.Character->SetActorLocationAndRotation(
+			Entry.SavedLocation, Entry.SavedRotation,
+			false, nullptr, ETeleportType::TeleportPhysics);
+	}
+
+	// ECC_GameTraceChannel1은 캐릭터 히트박스 전용 채널.
+	// 환경(벽 등) 피격은 별도 채널/로직으로 처리한다.
 
 	// ── [Damage Block] ────────────────────────────────────────────────────────
 	// Chapter 4 GAS 전환 시 이 블록을 GameplayEffectSpec + SetByCaller로 교체한다.
@@ -665,10 +737,10 @@ void AEPProjectile::OnProjectileHit(
 ```cpp
 UE_LOG(LogTemp, Log, TEXT("[HitscanFire] ServerNow=%.3f ClientFireTime=%.3f Delta=%.3f"),
 	ServerNow, ClientFireTime, ServerNow - ClientFireTime);
-UE_LOG(LogTemp, Log, TEXT("[HitscanFire] PreHit=%s RewindHit=%s Confirmed=%d"),
-	*GetNameSafe(PreHit.GetActor()),
-	bConfirmedHit ? *GetNameSafe(FinalHit.GetActor()) : TEXT("none"),
-	bConfirmedHit);
+UE_LOG(LogTemp, Log, TEXT("[HitscanFire] Candidates=%d Confirmed=%d HitActor=%s"),
+	Candidates.Num(),
+	bConfirmedHit,
+	bConfirmedHit ? *GetNameSafe(FinalHit.GetActor()) : TEXT("none"));
 ```
 
 ---
