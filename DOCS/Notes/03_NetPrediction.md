@@ -279,8 +279,75 @@ void UEPCombatComponent::Server_Fire_Implementation(
 > RPC로 클라이언트의 펠릿 방향을 그대로 수신하는 방식은
 > **핵 클라이언트가 모든 펠릿을 조준점으로 보내는 것을 막을 수 없어** 사용하지 않는다.
 >
-> 구현 포인트: `AEPWeapon::Fire(const FVector& AimDir, TArray<FVector>& OutPellets)`
-> — `WeaponDef->PelletCount`, `WeaponDef->BaseSpread`로 N개 방향 생성 후 `OutPellets`에 추가.
+> **시드 변환:** `ClientFireTime`은 float(초 단위)이므로 `FRandomStream` 시드(int32)로 변환한다.
+> ```cpp
+> // 밀리초 단위 정수로 변환 — 클라/서버 동일 연산으로 동일 시드 보장
+> const int32 Seed = FMath::FloorToInt(ClientFireTime * 1000.f);
+> FRandomStream RandStream(Seed);
+> // 128Hz 틱: 연속 두 틱 차이 = 7.8ms → 시드 7 이상 차이 보장 (같은 발사에서 충돌 없음)
+> ```
+>
+> **구현 포인트:** `AEPWeapon::Fire(const FVector& AimDir, float ClientFireTime, TArray<FVector>& OutPellets)`
+> — `WeaponDef->PelletCount`, `WeaponDef->BaseSpread`, `FRandomStream(Seed)`로 N개 방향 생성.
+> 단일 펠릿 무기는 `PelletCount = 1`로 설정하면 동일 함수를 공유한다.
+
+**RequestFire (클라이언트 측):**
+
+```cpp
+void UEPCombatComponent::RequestFire(const FVector& Origin, const FVector& Direction)
+{
+    if (!EquippedWeapon || !EquippedWeapon->WeaponDef) return;
+    if (EquippedWeapon->CurrentAmmo <= 0) return;
+
+    AEPCharacter* Owner = GetOwnerCharacter();
+
+    // 클라이언트 측 연사속도 체크 (서버도 독립적으로 검증 — 이중 방어)
+    const float FireInterval = 1.f / EquippedWeapon->WeaponDef->FireRate;
+    const float CurrentTime  = GetWorld()->GetTimeSeconds();
+    if (CurrentTime - LocalLastFireTime < FireInterval) return;
+    LocalLastFireTime = CurrentTime;
+
+    // 서버 기준 시간 획득 — HitboxHistory 기록과 동일 기준이어야 리와인드가 정확하다.
+    // GameState null 체크: 초기화 타이밍에 따라 null일 수 있다.
+    const AGameStateBase* GS = GetWorld()->GetGameState<AGameStateBase>();
+    const float ClientFireTime = GS
+        ? GS->GetServerWorldTimeSeconds()
+        : GetWorld()->GetTimeSeconds();
+
+    Server_Fire(Origin, Direction.GetSafeNormal(), ClientFireTime);
+
+    if (Owner && Owner->IsLocallyControlled())
+    {
+        // 반동 예측 — 서버 확인 전에 즉시 적용 (체감 우선)
+        Owner->AddControllerPitchInput(-EquippedWeapon->GetRecoilPitch());
+        Owner->AddControllerYawInput(FMath::RandRange(
+            -EquippedWeapon->GetRecoilYaw(),
+             EquippedWeapon->GetRecoilYaw()));
+
+        // ProjectileFast: 발사자는 Multicast 왕복을 기다리지 않고 즉시 코스메틱 스폰.
+        // Multicast_SpawnCosmeticProjectile의 IsLocallyControlled() 체크와 짝을 이룬다.
+        if (EquippedWeapon->WeaponDef->BallisticType == EEPBallisticType::ProjectileFast
+            && EquippedWeapon->WeaponDef->ProjectileClass)
+        {
+            const FVector MuzzleLoc =
+                EquippedWeapon->WeaponMesh->DoesSocketExist(TEXT("MuzzleSocket"))
+                ? EquippedWeapon->WeaponMesh->GetSocketLocation(TEXT("MuzzleSocket"))
+                : Origin;
+            AEPProjectile* Cosmetic = GetWorld()->SpawnActor<AEPProjectile>(
+                EquippedWeapon->WeaponDef->ProjectileClass,
+                MuzzleLoc, Direction.GetSafeNormal().Rotation());
+            if (Cosmetic)
+                Cosmetic->SetCosmeticOnly();
+        }
+
+        // 산탄총(PelletCount > 1): 서버와 동일 시드로 N개 펠릿 방향 생성 → 로컬 이펙트 표시
+        // const int32 Seed = FMath::FloorToInt(ClientFireTime * 1000.f);
+        // FRandomStream RandStream(Seed);
+        // EquippedWeapon->GenerateClientPellets(Direction, RandStream, PelletDirs);
+        // → 각 방향으로 트레이서/이펙트 재생 (판정 없음, 순수 코스메틱)
+    }
+}
+```
 
 `HandleHitscanFire`를 독립 함수로 추출하는 이유:
 **GAS 어빌리티의 히트스캔 스킬도 동일 함수를 호출**할 수 있어야 하기 때문이다.
