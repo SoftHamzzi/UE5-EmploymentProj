@@ -1,7 +1,10 @@
 # 3단계 외전: 본 단위 히트박스 & 부위별 데미지
 
-> **전제**: 03_NetPrediction.md의 Lag Compensation(서버 리와인드) 구조 위에서 동작
-> **목표**: 캡슐 단일 판정 → 본 단위 판정으로 확장, 헤드샷/부위별 데미지 배율 적용
+> **이 단계에서 구현하는 것**:
+> 1. 서버 히트박스 스냅샷 히스토리 + Lag Compensation(리와인드)
+> 2. Physics Asset 본 단위 판정으로 헤드샷/부위별 데미지 배율 적용
+>
+> **전제 조건**: 기본 `Server_Fire` RPC가 존재하고 빌드가 통과되는 상태
 
 ---
 
@@ -9,22 +12,35 @@
 
 ```
 현재 구조:
-  LineTrace → 캡슐 하나에 충돌 → ApplyDamage(고정 데미지)
+  LineTrace → ECC_GameTraceChannel1 → 캡슐 하나에 충돌 → ApplyDamage(고정 데미지)
 
 문제:
   - 머리를 맞춰도 발을 맞춰도 동일 데미지
-  - 팔로 몸을 가려도 피해 발생 (캡슐이 팔을 포함하지 않을 수 있음)
   - 헤드샷 시스템 구현 불가
+  - Lag Compensation 없음 — 지연 환경에서 판정 불일치
 ```
 
 ---
 
 ## 2. 구조 개요
 
-### 캡슐 → Physics Asset 콜리전 바디
+### 운영 상수는 설정값으로 분리
+
+아래 값은 문서 예시 숫자를 그대로 하드코딩하지 말고 설정화한다.
+- `MaxRewindSeconds`
+- `SnapshotIntervalSeconds`
+- `BroadPhasePaddingCm`
+- `TraceDistanceCm`
+- `BoneDamageMultiplierMap`
+
+권장 위치:
+- 공통: `UDeveloperSettings`
+- 무기별: `UEPWeaponDefinition`
+
+### Physics Asset 콜리전 바디
 
 스켈레탈 메시의 각 본에 Physics Asset 콜리전 바디를 붙이고,
-히트박스 전용 트레이스 채널을 사용해 LineTrace로 본 이름을 얻는다.
+`WeaponTrace` 채널로 LineTrace해서 본 이름을 얻는다.
 
 ```
 [Physics Asset: PHA_EPCharacter]
@@ -37,245 +53,459 @@
 └── calf_l/r      → 캡슐  (종아리 배율 0.75x)
 ```
 
-### 트레이스 채널 분리
+### 트레이스 채널
 
-| 채널 | 용도 |
-|------|------|
-| `ECC_Visibility` | 기존 환경(벽/바닥) 충돌 |
-| `ECC_GameTraceChannel1` (Hitbox) | 본 단위 캐릭터 히트박스 전용 |
+`WeaponTrace` 채널은 이미 `DefaultEngine.ini`에 등록되어 있다.
 
-환경과 캐릭터 히트박스 채널을 분리하면 벽을 관통해 캐릭터만 맞는 오판정을 방지할 수 있다.
+| 채널 | DefaultResponse | 설정 방향 |
+|------|----------------|----------|
+| `WeaponTrace` (ECC_GameTraceChannel1) | Ignore | 환경 메시는 무시, Physics Asset 바디에만 명시적 Block |
+
+Default를 Ignore로 두면 리와인드된 캐릭터가 벽 안쪽으로 이동해도
+LineTrace가 벽에 막히지 않고 캐릭터 바디만 감지한다.
+
+### 전체 흐름
+
+```
+[클라이언트]
+  Input_Fire
+    → ClientFireTime = GS->GetServerWorldTimeSeconds()  ← 서버 동기화 시계 사용
+    → RequestFire(Origin, Direction, ClientFireTime)
+    → Server_Fire RPC
+
+[서버] Server_Fire_Implementation
+    → HandleHitscanFire(Owner, Origin, Directions, ClientFireTime)
+         ├─ [Rewind Block]
+         │    ├─ 0. ClientFireTime 클램프 (MaxRewindSeconds 초과 = 현재 시점)
+         │    ├─ 1. GetHitscanCandidates — Broad Phase (Location 기반, O(N))
+         │    ├─ 2. 후보 FBodyInstance 리와인드 (과거 본 Transform으로 이동)
+         │    ├─ 3. LineTrace × N (WeaponTrace, bReturnPhysicalMaterial=true)
+         │    └─ 4. FBodyInstance 복구 (현재 Transform 복원)
+         └─ [Damage Block]
+              ├─ GetBoneMultiplier(Hit.BoneName)
+              ├─ Cast<UEPPhysicalMaterial>(Hit.PhysMaterial)
+              ├─ FinalDamage = Base × Bone× × Mat×
+              └─ ApplyPointDamage → TakeDamage (HP·사망만)
+```
 
 ---
 
-## 3. 스냅샷 구조 변경
+## 3. 스냅샷 구조
 
-캡슐 위치 하나 → 각 본의 월드 Transform 배열로 확장:
+### FEPBoneSnapshot (신규)
+
+```cpp
+// EPTypes.h
+USTRUCT()
+struct FEPBoneSnapshot
+{
+    GENERATED_BODY()
+    UPROPERTY() FName      BoneName;
+    UPROPERTY() FTransform WorldTransform; // 서버 시뮬레이션 기준 본 월드 Transform
+};
+```
+
+### FEPHitboxSnapshot (신규)
 
 ```cpp
 USTRUCT()
-struct FBoneSnapshot
+struct FEPHitboxSnapshot
 {
     GENERATED_BODY()
-
-    FName BoneName;
-    FTransform WorldTransform;
-};
-
-USTRUCT()
-struct FHitboxSnapshot
-{
-    GENERATED_BODY()
-
-    float ServerTime = 0.f;
-    TArray<FBoneSnapshot> Bones;
+    UPROPERTY() float   ServerTime = 0.f;
+    UPROPERTY() FVector Location   = FVector::ZeroVector;  // Broad Phase용 (캐릭터 루트)
+    UPROPERTY() TArray<FEPBoneSnapshot> Bones;             // Narrow Phase 리와인드용
 };
 ```
+
+`Location`을 별도로 저장하는 이유: Broad Phase(`GetHitscanCandidates`)는 루트 위치만으로 충분하다.
+본 단위 `GetBodyInstance` 호출은 Narrow Phase 후보에만 적용해 비용을 줄인다.
 
 ### 기록할 본 목록
 
-전체 본을 기록하면 스냅샷 크기가 너무 커진다.
-히트 판정에 실제로 필요한 본만 선택한다:
-
 ```cpp
+// EPCharacter.h (static const)
 static const TArray<FName> HitBones =
 {
-    "head",
-    "spine_03", "spine_01",
-    "upperarm_l", "upperarm_r",
-    "lowerarm_l", "lowerarm_r",
-    "thigh_l",   "thigh_r",
-    "calf_l",    "calf_r"
+    TEXT("head"),
+    TEXT("spine_03"), TEXT("spine_01"),
+    TEXT("upperarm_l"), TEXT("upperarm_r"),
+    TEXT("lowerarm_l"), TEXT("lowerarm_r"),
+    TEXT("thigh_l"),    TEXT("thigh_r"),
+    TEXT("calf_l"),     TEXT("calf_r")
 };
 ```
 
+전체 본 대신 판정에 필요한 본만 선택해 스냅샷 크기를 제한한다.
+
 ---
 
-## 4. 히스토리 기록 (서버)
+## 4. 히스토리 기록 (SaveHitboxSnapshot)
+
+서버 Tick에서 호출. `GetServerWorldTimeSeconds()`로 서버 기준 시간을 사용한다.
 
 ```cpp
 void AEPCharacter::SaveHitboxSnapshot()
 {
-    FHitboxSnapshot Snapshot;
-    Snapshot.ServerTime = GetWorld()->GetTimeSeconds();
+    if (!HasAuthority()) return;
+
+    const AGameStateBase* GS = GetWorld()->GetGameState<AGameStateBase>();
+    const float ServerNow = GS ? GS->GetServerWorldTimeSeconds()
+                               : GetWorld()->GetTimeSeconds();
+
+    FEPHitboxSnapshot Snapshot;
+    Snapshot.ServerTime = ServerNow;
+    Snapshot.Location   = GetActorLocation(); // Broad Phase용
 
     for (const FName& BoneName : HitBones)
     {
-        FBoneSnapshot Bone;
-        Bone.BoneName      = BoneName;
-        Bone.WorldTransform = GetMesh()->GetBoneTransform(
-            GetMesh()->GetBoneIndex(BoneName));
+        const int32 BoneIndex = GetMesh()->GetBoneIndex(BoneName);
+        if (BoneIndex == INDEX_NONE) continue;
+
+        FEPBoneSnapshot Bone;
+        Bone.BoneName       = BoneName;
+        Bone.WorldTransform = GetMesh()->GetBoneTransform(BoneIndex);
         Snapshot.Bones.Add(Bone);
     }
 
-    // 링버퍼에 저장 (03_NetPrediction.md 구조 동일)
-    if (HitboxHistory.Num() < MAX_HISTORY)
-        HitboxHistory.Add(Snapshot);
-    else
-    {
-        HitboxHistory[HistoryIndex] = Snapshot;
-        HistoryIndex = (HistoryIndex + 1) % MAX_HISTORY;
-    }
+    // 시간 오름차순 배열: 오래된 것을 앞에서 제거하고 뒤에 추가
+    // → GetSnapshotAtTime의 선형 탐색이 항상 시간 순서를 보장한다.
+    // (링버퍼 방식은 wrap 후 탐색 순서가 깨져 잘못된 스냅샷을 반환한다)
+    if (HitboxHistory.Num() >= MaxHistoryCount)
+        HitboxHistory.RemoveAt(0); // O(N), N=20이므로 무시
+    HitboxHistory.Add(Snapshot);
 }
 ```
 
 ---
 
-## 5. 리와인드 → 레이캐스트 → 복구
+## 5. GetSnapshotAtTime — per-bone 보간
 
-캡슐을 옮기는 대신 Physics Asset 바디를 본 Transform으로 직접 이동:
+클라이언트 발사 시점(ClientFireTime)에 해당하는 스냅샷을 Before/After 사이에서 보간해 반환한다.
 
 ```cpp
-void AEPCharacter::Server_Fire_Implementation(
-    FVector_NetQuantize Origin,
-    FVector_NetQuantizeNormal Direction,
-    float ClientFireTime)
+FEPHitboxSnapshot AEPCharacter::GetSnapshotAtTime(float TargetTime) const
 {
-    // 리와인드 윈도우 제한 (03_NetPrediction.md 참고)
-    const float MaxLagCompWindow = 0.2f;
-    const float ServerNow = GetWorld()->GetTimeSeconds();
-    if (ServerNow - ClientFireTime > MaxLagCompWindow)
+    if (HitboxHistory.IsEmpty())
+        return FEPHitboxSnapshot{};
+
+    if (TargetTime <= HitboxHistory[0].ServerTime)
+        return HitboxHistory[0];
+    if (TargetTime >= HitboxHistory.Last().ServerTime)
+        return HitboxHistory.Last();
+
+    const FEPHitboxSnapshot* Before = nullptr;
+    const FEPHitboxSnapshot* After  = nullptr;
+
+    for (int32 i = 0; i < HitboxHistory.Num() - 1; ++i)
+    {
+        if (HitboxHistory[i].ServerTime <= TargetTime &&
+            HitboxHistory[i + 1].ServerTime >= TargetTime)
+        {
+            Before = &HitboxHistory[i];
+            After  = &HitboxHistory[i + 1];
+            break;
+        }
+    }
+
+    if (!Before || !After)
+        return HitboxHistory.Last();
+
+    const float Denom = After->ServerTime - Before->ServerTime;
+    const float Alpha = (Denom > KINDA_SMALL_NUMBER)
+                      ? (TargetTime - Before->ServerTime) / Denom
+                      : 0.f;
+
+    FEPHitboxSnapshot Result;
+    Result.ServerTime = TargetTime;
+    Result.Location   = FMath::Lerp(Before->Location, After->Location, Alpha);
+
+    // per-bone 보간 — FTransform::BlendWith로 위치/회전/스케일 동시 보간
+    const int32 BoneCount = FMath::Min(Before->Bones.Num(), After->Bones.Num());
+    Result.Bones.Reserve(BoneCount);
+    for (int32 i = 0; i < BoneCount; ++i)
+    {
+        FEPBoneSnapshot BoneResult;
+        BoneResult.BoneName       = Before->Bones[i].BoneName;
+        BoneResult.WorldTransform = Before->Bones[i].WorldTransform;
+        BoneResult.WorldTransform.BlendWith(After->Bones[i].WorldTransform, Alpha);
+        Result.Bones.Add(BoneResult);
+    }
+
+    return Result;
+}
+```
+
+---
+
+## 6. 리와인드 → 레이캐스트 → 복구
+
+### 올바른 리와인드 API
+
+```
+잘못된 접근: SetBoneTransformByName → 애니메이션 포즈 변경 (물리 바디 이동 안 됨)
+올바른 접근: FBodyInstance::SetBodyTransform → 물리 바디 직접 이동
+```
+
+```cpp
+// 현재 Transform 저장
+FBodyInstance* Body = Char->GetMesh()->GetBodyInstance(BoneName);
+FTransform Saved = Body->GetUnrealWorldTransform();
+
+// 리와인드
+Body->SetBodyTransform(SnapshotTransform, ETeleportType::TeleportPhysics);
+
+// 복구
+Body->SetBodyTransform(Saved, ETeleportType::TeleportPhysics);
+```
+
+### FEPRewindEntry (EPCombatComponent.cpp 파일 스코프)
+
+```cpp
+// AEPCharacter*에 의존하므로 EPTypes.h에 넣지 않는다.
+// 복제 불필요 — 리와인드 중 임시 사용 후 즉시 복구된다.
+struct FEPRewindEntry
+{
+    AEPCharacter*           Character  = nullptr;
+    TArray<FEPBoneSnapshot> SavedBones; // 리와인드 전 현재(서버) 물리 바디 Transform
+};
+```
+
+### HandleHitscanFire 흐름
+
+```cpp
+void UEPCombatComponent::HandleHitscanFire(
+    AEPCharacter* Owner, const FVector& Origin,
+    const TArray<FVector>& Directions, float ClientFireTime)
+{
+    // ── [Rewind Block] ────────────────────────────────────────────────────────
+    // 0. 클램프 (200ms 초과 = 조작 의심)
+    const AGameStateBase* GS = GetWorld()->GetGameState<AGameStateBase>();
+    const float ServerNow = GS ? GS->GetServerWorldTimeSeconds() : GetWorld()->GetTimeSeconds();
+    if (ServerNow - ClientFireTime > CombatSettings->MaxRewindSeconds)
         ClientFireTime = ServerNow;
 
-    // --- 리와인드 ---
-    struct FRewindEntry
+    // 1. Broad Phase
+    const TArray<AEPCharacter*> Candidates =
+        GetHitscanCandidates(Owner, Origin, Directions, ClientFireTime);
+
+    // 2. 본 단위 리와인드
+    TArray<FEPRewindEntry> RewindEntries;
+    for (AEPCharacter* Char : Candidates)
     {
-        AEPCharacter* Character;
-        TArray<FBoneSnapshot> OriginalBones;
-    };
-    TArray<FRewindEntry> RewindEntries;
-
-    for (AEPCharacter* OtherChar : GetAllOtherCharacters())
-    {
-        FRewindEntry Entry;
-        Entry.Character = OtherChar;
-
-        FHitboxSnapshot Snapshot = OtherChar->GetSnapshotAtTime(ClientFireTime);
-
-        for (const FBoneSnapshot& Bone : Snapshot.Bones)
+        FEPRewindEntry& Entry = RewindEntries.AddDefaulted_GetRef();
+        Entry.Character = Char;
+        const FEPHitboxSnapshot Snap = Char->GetSnapshotAtTime(ClientFireTime);
+        for (const FEPBoneSnapshot& Bone : Snap.Bones)
         {
-            // 원본 Transform 저장
-            FBoneSnapshot Original;
-            Original.BoneName = Bone.BoneName;
-            Original.WorldTransform = OtherChar->GetMesh()->GetBoneTransform(
-                OtherChar->GetMesh()->GetBoneIndex(Bone.BoneName));
-            Entry.OriginalBones.Add(Original);
-
-            // 리와인드: 스냅샷 위치로 이동
-            OtherChar->GetMesh()->SetBoneTransformByName(
-                Bone.BoneName, Bone.WorldTransform, EBoneSpaces::WorldSpace);
-        }
-
-        RewindEntries.Add(Entry);
-    }
-
-    // --- 히트박스 전용 채널로 레이캐스트 ---
-    FHitResult HitResult;
-    const FVector End = Origin + Direction * WeaponRange;
-
-    GetWorld()->LineTraceSingleByChannel(
-        HitResult, Origin, End, ECC_GameTraceChannel1);  // Hitbox 채널
-
-    // --- 복구 ---
-    for (const FRewindEntry& Entry : RewindEntries)
-    {
-        for (const FBoneSnapshot& Original : Entry.OriginalBones)
-        {
-            Entry.Character->GetMesh()->SetBoneTransformByName(
-                Original.BoneName, Original.WorldTransform, EBoneSpaces::WorldSpace);
+            FBodyInstance* Body = Char->GetMesh()->GetBodyInstance(Bone.BoneName);
+            if (!Body) continue;
+            FEPBoneSnapshot Saved;
+            Saved.BoneName       = Bone.BoneName;
+            Saved.WorldTransform = Body->GetUnrealWorldTransform();
+            Entry.SavedBones.Add(Saved);
+            Body->SetBodyTransform(Bone.WorldTransform, ETeleportType::TeleportPhysics);
         }
     }
 
-    // --- 히트 처리 ---
-    if (HitResult.GetActor())
+    // 3. Narrow Phase
+    FCollisionQueryParams Params(SCENE_QUERY_STAT(HitscanFire), false);
+    Params.AddIgnoredActor(Owner);
+    Params.AddIgnoredActor(EquippedWeapon);
+    Params.bReturnPhysicalMaterial = true;
+
+    TArray<FHitResult> ConfirmedHits;
+    for (const FVector& Dir : Directions)
     {
-        UGameplayStatics::ApplyPointDamage(
-            HitResult.GetActor(),
-            WeaponDamage,
-            Direction,
-            HitResult,          // BoneName 포함
-            GetOwner()->GetInstigatorController(),
-            GetOwner(),
-            UDamageType::StaticClass()
-        );
+        FHitResult Hit;
+        if (GetWorld()->LineTraceSingleByChannel(
+                Hit, Origin, Origin + Dir * TraceDistanceCm, EP_TraceChannel_Weapon, Params)
+            && Cast<AEPCharacter>(Hit.GetActor()))
+            ConfirmedHits.Add(Hit);
+    }
+
+    // 4. 복구 (반드시 Narrow Phase 직후)
+    for (const FEPRewindEntry& Entry : RewindEntries)
+        for (const FEPBoneSnapshot& Saved : Entry.SavedBones)
+            if (FBodyInstance* Body = Entry.Character->GetMesh()->GetBodyInstance(Saved.BoneName))
+                Body->SetBodyTransform(Saved.WorldTransform, ETeleportType::TeleportPhysics);
+
+    // ── [Damage Block] ────────────────────────────────────────────────────────
+    for (const FHitResult& Hit : ConfirmedHits)
+    {
+        const float FinalDamage = EquippedWeapon->GetDamage()
+                                * GetBoneMultiplier(Hit.BoneName)
+                                * GetMaterialMultiplier(Hit.PhysMaterial.Get());
+        UGameplayStatics::ApplyPointDamage(Hit.GetActor(), FinalDamage,
+            (Hit.ImpactPoint - Origin).GetSafeNormal(), Hit,
+            Owner->GetController(), Owner, UDamageType::StaticClass());
     }
 }
 ```
 
 ---
 
-## 6. TakeDamage — 부위별 배율 적용
+## 7. bReturnPhysicalMaterial — Hit.BoneName 확보 조건
 
-`ApplyPointDamage`로 넘어온 `FPointDamageEvent`에서 `BoneName` 추출:
+| 필드 | 확보 조건 |
+|------|----------|
+| `Hit.BoneName` | Physics Asset 바디 이름 = 본 이름이어야 함 (UE5 기본 동작) |
+| `Hit.PhysMaterial` | `bReturnPhysicalMaterial = true` **필수** + Physics Asset 바디에 PM 할당 |
+
+`bReturnPhysicalMaterial = true` 없이는 `Hit.PhysMaterial`이 항상 nullptr이다.
+
+---
+
+## 8. 부위별 데미지: PhysicalMaterial + BoneName 이중 계층
+
+```
+FinalDamage = BaseDamage × BoneMultiplier × MaterialMultiplier
+```
+
+**판정 책임 분리**:
+- `EPCombatComponent` — 배율 계산 + 최종 데미지 결정
+- `EPCharacter::TakeDamage` — HP 반영 + 사망 처리만 (배율 재계산 없음)
+
+### UEPPhysicalMaterial (신규, GAS 태그 확장 대응)
 
 ```cpp
-float AEPCharacter::TakeDamage(
-    float DamageAmount,
-    FDamageEvent const& DamageEvent,
-    AController* EventInstigator,
-    AActor* DamageCauser)
+UCLASS()
+class EMPLOYMENTPROJ_API UEPPhysicalMaterial : public UPhysicalMaterial
+{
+    GENERATED_BODY()
+public:
+    UPROPERTY(EditDefaultsOnly, Category = "Damage")
+    FGameplayTagContainer MaterialTags; // 예: Gameplay.Zone.WeakSpot
+
+    // Pre-GAS 임시 경로 (호환용)
+    UPROPERTY(EditDefaultsOnly, Category = "Damage") bool  bIsWeakSpot       = false;
+    UPROPERTY(EditDefaultsOnly, Category = "Damage") float WeakSpotMultiplier = 2.0f;
+};
+```
+
+Physics Asset 에디터에서 `head` 바디 → `PM_WeakSpot` (bIsWeakSpot=true) 할당.
+
+### GetBoneMultiplier
+
+```cpp
+float UEPCombatComponent::GetBoneMultiplier(const FName& BoneName)
+{
+    if (EquippedWeapon && EquippedWeapon->WeaponDef)
+        if (const float* Found = EquippedWeapon->WeaponDef->BoneDamageMultiplierMap.Find(BoneName))
+            return *Found;
+    return 1.0f;
+}
+```
+
+---
+
+## 9. TakeDamage — HP 반영·사망 처리만
+
+배율 계산이 `HandleHitscanFire`로 이전되었으므로 단순화된다.
+
+```cpp
+float AEPCharacter::TakeDamage(float DamageAmount, FDamageEvent const& DamageEvent,
+    AController* EventInstigator, AActor* DamageCauser)
 {
     if (!HasAuthority()) return 0.f;
 
-    if (DamageEvent.IsOfType(FPointDamageEvent::ClassID))
-    {
-        const FPointDamageEvent* PointDmg =
-            static_cast<const FPointDamageEvent*>(&DamageEvent);
-
-        const FName HitBone = PointDmg->HitInfo.BoneName;
-
-        float Multiplier = 1.0f;
-        if (HitBone == "head")
-            Multiplier = 2.0f;
-        else if (HitBone == "upperarm_l" || HitBone == "upperarm_r" ||
-                 HitBone == "lowerarm_l" || HitBone == "lowerarm_r" ||
-                 HitBone == "thigh_l"    || HitBone == "thigh_r"    ||
-                 HitBone == "calf_l"     || HitBone == "calf_r")
-            Multiplier = 0.75f;
-
-        DamageAmount *= Multiplier;
-    }
-
-    HP = FMath::Clamp(HP - DamageAmount, 0.f, (float)MaxHP);
-
+    HP = FMath::Clamp(HP - DamageAmount, 0.f, static_cast<float>(MaxHP));
     Multicast_PlayHitReact();
     Multicast_PlayPainSound();
 
-    if (AEPPlayerController* InstigatorPC =
-            Cast<AEPPlayerController>(EventInstigator))
-        InstigatorPC->Client_PlayHitConfirmSound();
+    if (AEPPlayerController* PC = Cast<AEPPlayerController>(EventInstigator))
+        PC->Client_PlayHitConfirmSound();
 
-    if (HP <= 0) Die(EventInstigator);
-
+    if (HP <= 0.f) Die(EventInstigator);
     ForceNetUpdate();
     return DamageAmount;
 }
 ```
 
----
-
-## 7. ApplyDamage vs ApplyPointDamage
-
-| | ApplyDamage | ApplyPointDamage |
-|--|-------------|-----------------|
-| HitResult 전달 | ❌ | ✅ |
-| BoneName 접근 | ❌ | ✅ (`FPointDamageEvent`) |
-| 부위별 배율 | 서버에서 미리 계산 필요 | TakeDamage 안에서 처리 가능 |
-| 히트스캔 무기 | 부적합 | ✅ 적합 |
-| DoT/낙사 | ✅ 적합 | 불필요 |
-
-LineTrace 결과가 있는 히트스캔 무기는 항상 `ApplyPointDamage`.
+> **GAS 전환 시**: `ApplyPointDamage` → `ApplyGameplayEffectSpecToTarget`으로 교체.
+> 트레이스·배율 계산 코드는 그대로 GAS Execution의 입력값으로 재사용된다.
 
 ---
 
-## 8. 구현 체크리스트
+## 10. 구현 체크리스트
 
-- [ ] Physics Asset 본 콜리전 바디 설정 (head, spine, 팔, 다리)
-- [ ] 히트박스 전용 트레이스 채널 추가 (Project Settings → Collision)
-- [ ] Physics Asset 콜리전 채널을 Hitbox로 설정
-- [ ] `FBoneSnapshot` / `FHitboxSnapshot` 구조체 정의
-- [ ] `SaveHitboxSnapshot()` — 본 Transform 배열 기록
-- [ ] `GetSnapshotAtTime()` — 보간 (03_NetPrediction.md 구조 그대로)
-- [ ] `Server_Fire` — 본 단위 리와인드 + Hitbox 채널 레이캐스트
-- [ ] `TakeDamage` — `FPointDamageEvent` 캐스트 + 부위별 배율
-- [ ] `ApplyDamage` → `ApplyPointDamage` 교체
+- [ ] Physics Asset 본 콜리전 바디 설정 (head 구체, spine/사지 캡슐)
+- [ ] Physics Asset 모든 바디 → `WeaponTrace` Block 설정
+- [ ] head 바디 → `PM_WeakSpot` (`UEPPhysicalMaterial`, bIsWeakSpot=true) 할당
+- [ ] `FEPBoneSnapshot` / `FEPHitboxSnapshot` (EPTypes.h)
+- [ ] `AEPCharacter` — `HitBones`, `HitboxHistory`, `SnapshotIntervalSeconds`, `MaxHistoryCount`
+- [ ] `AEPCharacter` — `IsDead()`, `SaveHitboxSnapshot()`, `GetSnapshotAtTime()`
+- [ ] `SaveHitboxSnapshot()` — 서버 Tick에서 호출 (스냅샷 누적)
+- [ ] `EP_TraceChannel_Weapon` 상수 정의
+- [ ] `Server_Fire` 시그니처에 `float ClientFireTime` 추가
+- [ ] `RequestFire` — `LocalLastFireTime` 전달
+- [ ] `FEPRewindEntry` (EPCombatComponent.cpp 파일 스코프)
+- [ ] `GetHitscanCandidates` — Broad Phase (TActorIterator)
+- [ ] `HandleHitscanFire` — FBodyInstance 리와인드/복구 + bReturnPhysicalMaterial
+- [ ] `UEPPhysicalMaterial` 신규 클래스
+- [ ] `GetBoneMultiplier` 헬퍼 (EPCombatComponent)
+- [ ] `HandleHitscanFire` Damage Block — BoneName × PM 배율
+- [ ] `TakeDamage` 단순화
+
+---
+
+## 11. NetPrediction 단계와의 연결
+
+### BoneHitbox가 확립하는 것 (NetPrediction이 재사용)
+
+| 구성 요소 | 역할 | NetPrediction에서 |
+|----------|------|-----------------|
+| `FEPHitboxSnapshot` (Location + Bones) | 시간별 포즈 저장 | 그대로 사용 |
+| `SaveHitboxSnapshot` (링버퍼, GetServerWorldTimeSeconds) | 히스토리 누적 | 그대로 사용 |
+| `GetSnapshotAtTime` (per-bone BlendWith) | 시점 보간 | 그대로 사용 |
+| `FBodyInstance::SetBodyTransform` 리와인드 | 물리 바디 이동 | 그대로 사용 |
+| `GetHitscanCandidates` (Broad Phase) | 후보 선정 | 그대로 사용 |
+| `HandleHitscanFire` | Hitscan 전용 처리 | 그대로 유지, Projectile 핸들러 추가됨 |
+
+### NetPrediction이 추가하는 것
+
+```
+BoneHitbox 완료 후 Server_Fire 구조:
+
+  Server_Fire → HandleHitscanFire(...)  [Hitscan만]
+
+NetPrediction 완료 후:
+
+  Server_Fire → switch(BallisticType)
+                  ├─ Hitscan:         HandleHitscanFire(...)     [이미 완성]
+                  ├─ ProjectileFast:  HandleProjectileFastFire(...) [신규]
+                  └─ ProjectileSlow:  HandleProjectileSlowFire(...) [신규]
+```
+
+NetPrediction에서 추가되는 것:
+- `EEPBallisticType` enum (Hitscan / ProjectileFast / ProjectileSlow)
+- `EPWeaponDefinition`에 `BallisticType`, `ProjectileClass` 필드
+- `Server_Fire`의 switch 분기
+- `EPProjectile` 클래스 (서버 권한 투사체)
+- ProjectileFast: 클라이언트 스폰 + 서버 검증
+- ProjectileSlow: 순수 서버 투사체
+
+### 03_NetPrediction_Implementation.md에서 건너뛸 내용
+
+BoneHitbox 완료 후 NetPrediction 문서를 따라갈 때, 다음 항목은 **이미 구현됨**으로 건너뛴다:
+
+| NetPrediction 구현서 항목 | 이유 |
+|--------------------------|------|
+| `FEPHitboxSnapshot` 정의 | BoneHitbox에서 Bones 포함 버전으로 완성 |
+| `SaveHitboxSnapshot` 구현 | BoneHitbox에서 완성 |
+| `GetSnapshotAtTime` 구현 | BoneHitbox에서 per-bone 보간 포함 완성 |
+| `FEPRewindEntry` (SavedLocation/Rotation) | **무시** — SavedBones 버전으로 교체됨 |
+| `HandleHitscanFire`의 `SetActorLocationAndRotation` | **무시** — FBodyInstance 방식 유지 |
+| `GetHitscanCandidates` | BoneHitbox에서 완성 |
+
+### GAS 전환 준비 상태
+
+BoneHitbox 완료 시점에서 GAS 전환을 위한 구조적 준비가 완료된다:
+
+```
+[유지]  트레이스 로직 (GetHitscanCandidates + LineTrace)
+[유지]  FBodyInstance 리와인드/복구
+[유지]  GetBoneMultiplier (Hit.BoneName → 배율)
+[교체]  UEPPhysicalMaterial.MaterialTags + WeaponDefinition(MaterialDamageMultiplier)
+[교체]  ApplyPointDamage(FinalDamage) → ApplyGameplayEffectSpecToTarget(GE, SetByCaller)
+```

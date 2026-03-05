@@ -1,32 +1,47 @@
 // Fill out your copyright notice in the Description page of Project Settings.
 
-
 #include "Core/EPCharacter.h"
-#include "Camera/CameraComponent.h"
-#include "Core/EPPlayerController.h"
-#include "Movement/EPCharacterMovement.h"
 
+// 입력
 #include "InputAction.h"
 #include "InputActionValue.h"
 #include "EnhancedInputComponent.h"
-#include "Components/SkeletalMeshComponent.h"
+#include "Movement/EPCharacterMovement.h"
 
+// Combat
 #include "Combat/EPWeapon.h"
 #include "Combat/EPCombatComponent.h"
+#include "Combat/EPCombatDeveloperSettings.h"
+
+// Core
+#include "Camera/CameraComponent.h"
+#include "Core/EPPlayerController.h"
+#include "Components/SkeletalMeshComponent.h"
 #include "Components/CapsuleComponent.h"
-#include "Core/EPCorpse.h"
 #include "Core/EPGameMode.h"
 #include "Kismet/GameplayStatics.h"
 #include "Net/UnrealNetwork.h"
-#include "Runtime/AIModule/Classes/AITypes.h"
+
+const TArray<FName> AEPCharacter::HitBones =
+{
+	TEXT("head"),
+	TEXT("spine_03"), TEXT("spine_01"),
+	TEXT("upperarm_l"), TEXT("upperarm_r"),
+	TEXT("lowerarm_l"), TEXT("lowerarm_r"),
+	TEXT("thigh_l"),    TEXT("thigh_r"),
+	TEXT("calf_l"),     TEXT("calf_r")
+};
 
 AEPCharacter::AEPCharacter(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer.SetDefaultSubobjectClass<UEPCharacterMovement>(
 		ACharacter::CharacterMovementComponentName))
 {
+	PrimaryActorTick.bCanEverTick = true;
+	
 	// --- Body Mesh 설정 ---
 	GetMesh()->SetRelativeLocation(FVector(0.f, 0.f, -90.f));
 	GetMesh()->SetRelativeRotation(FRotator(0.f, -90.f, 0.f));
+	GetMesh()->VisibilityBasedAnimTickOption = EVisibilityBasedAnimTickOption::AlwaysTickPoseAndRefreshBones;
 	
 	// 메타휴먼
 	FaceMesh = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("Face"));
@@ -63,6 +78,12 @@ void AEPCharacter::BeginPlay()
 {
 	Super::BeginPlay();
 	
+	const UEPCombatDeveloperSettings* CombatSettings = GetDefault<UEPCombatDeveloperSettings>();
+	const float Interval = FMath::Max(0.01f, CombatSettings->SnapshotIntervalSeconds);
+	const float RewindWindow = FMath::Max(0.05f, CombatSettings->MaxRewindSeconds);
+	
+	MaxHistoryCount = FMath::CeilToInt(RewindWindow) + 2;
+	
 	if (IsLocallyControlled())
 	{
 		// GetMesh() 제외한 모든 스켈레탈 메시 컴포넌트 숨김
@@ -74,6 +95,22 @@ void AEPCharacter::BeginPlay()
 			if (Comp != GetMesh())
 				Comp->bOwnerNoSee = true;
 		}
+	}
+}
+
+void AEPCharacter::Tick(float DeltaSeconds)
+{
+	Super::Tick(DeltaSeconds);
+	
+	if (!HasAuthority()) return;
+	
+	const UEPCombatDeveloperSettings* CombatSettings = GetDefault<UEPCombatDeveloperSettings>();
+	SnapshotAccumulator += DeltaSeconds;
+	
+	if (SnapshotAccumulator >= CombatSettings->SnapshotIntervalSeconds)
+	{
+		SnapshotAccumulator = 0.f;
+		SaveHitboxSnapshot();
 	}
 }
 

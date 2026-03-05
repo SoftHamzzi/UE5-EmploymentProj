@@ -34,6 +34,9 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Combat")
 	uint8 MaxAmmo = 30;
 	
+	// 부위별 대미지(GAS 이후 태그 기반으로 수정)
+	TMap<FName, float> BoneDamageMultiplierMap;
+	
 	// 장전 시간
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Combat")
 	float ReloadTime = 2.0f;
@@ -74,6 +77,9 @@ public:
 	// --- 비주얼 ---
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Visual")
 	TSoftObjectPtr<USkeletalMesh> WeaponMesh;
+	
+	// --- 트레이스 ---
+	float TraceDistanceCm = 10000.f;
 	
 	// PrimaryDataAsset Id 오버라이드
 	virtual FPrimaryAssetId GetPrimaryAssetId() const override;

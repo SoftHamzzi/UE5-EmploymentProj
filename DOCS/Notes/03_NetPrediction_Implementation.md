@@ -36,7 +36,7 @@
 - `Private/Combat/EPProjectile.cpp`
 
 **프로젝트 설정:**
-- Project Settings → Collision → Trace Channels (`ECC_GameTraceChannel1` 추가)
+- Project Settings → Collision → Trace Channels (`EP_TraceChannel_Weapon` 추가)
 
 ---
 
@@ -44,27 +44,52 @@
 
 ---
 
-## Step 0) 프로젝트 설정 — 히트박스 트레이스 채널 추가
+## Step 0) 프로젝트 설정 — 히트박스 트레이스 채널 설정
 
 파일: `Config/DefaultEngine.ini` (에디터 UI로 자동 저장)
 
-히트스캔 LineTrace는 캐릭터 히트박스 전용 채널(`ECC_GameTraceChannel1`)을 사용한다.
-환경(벽, 바닥)과 채널을 분리해 히트박스만 선택적으로 감지한다.
+히트스캔 LineTrace는 캐릭터 히트박스 전용 채널을 사용한다.
+환경(벽, 바닥)과 채널을 분리해야 **리와인드된 캐릭터가 벽 안에 있을 때 LineTrace가 벽에 먼저 막히는 문제**를 방지할 수 있다.
 
-**에디터에서 추가하는 방법:**
+**WeaponTrace 채널 이미 존재하는 경우 (현재 프로젝트):**
+
+기존 `WeaponTrace` 채널을 그대로 사용한다. 단, Default Response를 반드시 `Ignore`로 변경해야 한다.
+
 1. `Edit → Project Settings → Engine → Collision`
-2. `Trace Channels` 섹션 → `New Trace Channel` 클릭
-3. Name: `Hitbox`, Default Response: `Ignore`
-4. 저장 → `ECC_GameTraceChannel1`로 자동 매핑됨
+2. `Trace Channels` 목록에서 `WeaponTrace` 찾기
+3. Default Response: `Block` → **`Ignore`** 로 변경
+4. 저장
+
+> **왜 Ignore여야 하는가:**
+> Default가 Block이면 벽·바닥 등 모든 메시가 이 채널에 반응한다.
+> 리와인드 시 캐릭터가 과거 위치(현재 서버 기준 벽 안쪽)로 이동하면,
+> LineTrace가 캐릭터에 도달하기 전에 벽에 막혀 히트 판정 실패가 발생한다.
+> Default를 Ignore로 두면 캐릭터 Physics Asset에 명시적으로 Block을 설정한 것만 감지한다.
 
 **캐릭터 Physics Asset 설정:**
 1. BP_EPCharacter의 Physics Asset 열기
 2. 모든 바디(Capsule, Pelvis 등) 선택
-3. Collision Responses → `Hitbox` 채널: `Block` 설정
-4. 환경 메시(StaticMesh 등)에는 `Hitbox` 채널을 `Ignore`로 유지
+3. Collision Responses → `WeaponTrace` 채널: **`Block`** 설정
+4. 환경 메시(StaticMesh, Landscape 등)는 Default Ignore를 그대로 유지
 
-> C++ 코드에서는 `ECC_GameTraceChannel1`로 참조한다.
-> 채널 순서가 바뀌면 코드의 채널 enum도 같이 바꿔야 한다.
+**채널 번호 확인 및 코드 상수 정의:**
+
+`Config/DefaultEngine.ini`에서 WeaponTrace의 채널 번호를 확인한다:
+```ini
+; DefaultEngine.ini
++CustomTraceChannel=(Channel=ECC_GameTraceChannelN,Name="WeaponTrace",...)
+```
+
+확인한 번호로 `EPTypes.h`에 상수를 정의한다.
+채널 번호를 코드 곳곳에 하드코딩하면 채널 추가/삭제 시 모두 수정해야 하므로 한 곳에 정의한다:
+
+```cpp
+// EPTypes.h — 채널 번호를 한 곳에서 관리
+// DefaultEngine.ini의 WeaponTrace 채널 번호를 확인 후 아래 값을 맞춘다
+inline constexpr ECollisionChannel EP_TraceChannel_Weapon = EP_TraceChannel_Weapon; // N을 확인된 번호로 교체
+```
+
+이후 코드에서 `EP_TraceChannel_Weapon` 대신 `EP_TraceChannel_Weapon`을 사용한다.
 
 ---
 
@@ -637,7 +662,7 @@ void UEPCombatComponent::HandleHitscanFire(
         const FVector End = Origin + Dir * 10000.f;
         FHitResult Hit;
         if (GetWorld()->LineTraceSingleByChannel(
-                Hit, Origin, End, ECC_GameTraceChannel1, Params)
+                Hit, Origin, End, EP_TraceChannel_Weapon, Params)
             && Cast<AEPCharacter>(Hit.GetActor()) != nullptr)
         {
             ConfirmedHits.Add(Hit);
@@ -979,7 +1004,7 @@ UE_LOG(LogTemp, Log,
 ## 4. 트러블슈팅
 
 **1. 캐릭터가 안 맞는 경우**
-- Physics Asset에서 각 히트 바디가 `ECC_GameTraceChannel1 = Block`인지 확인
+- Physics Asset에서 각 히트 바디가 `EP_TraceChannel_Weapon = Block`인지 확인
 - `GetHitscanCandidates`에서 후보가 0명인지 확인 (Broad Phase 반경 문제)
 - `IsDead()` 구현 확인 — Step 3에서 선언, 내부에서 `Health <= 0.f` 반환
 

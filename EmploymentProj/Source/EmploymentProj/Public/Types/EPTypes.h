@@ -47,3 +47,27 @@ enum class EEPItemType : uint8
 	QuestItem,
 	Misc
 };
+
+USTRUCT()
+struct FEPBoneSnapshot
+{
+	GENERATED_BODY()
+	
+	UPROPERTY()
+	FName BoneName;
+	UPROPERTY()
+	FTransform WorldTransform;
+};
+
+USTRUCT()
+struct FEPHitboxSnapshot
+{
+	GENERATED_BODY()
+	
+	UPROPERTY()
+	float ServerTime = 0.f;
+	UPROPERTY()
+	FVector Location = FVector::ZeroVector;
+	UPROPERTY()
+	TArray<FEPBoneSnapshot> Bones;
+};

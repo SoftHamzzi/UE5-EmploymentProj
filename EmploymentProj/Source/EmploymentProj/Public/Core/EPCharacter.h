@@ -34,6 +34,10 @@ public:
 	UEPCombatComponent* GetCombatComponent() const;
 	FORCEINLINE USkeletalMeshComponent* GetFaceMesh() const { return FaceMesh; }
 	FORCEINLINE USkeletalMeshComponent* GetOutfitMesh() const { return OutfitMesh; }
+	FORCEINLINE bool IsDead() const { return HP <= 0; }
+	
+	// Lag Compensation: 서버에서 호출한다.
+	FEPHitboxSnapshot GetSnapshotAtTime(float TargetTime) const;
 
 protected:
 	// === 변수 ===
@@ -42,7 +46,21 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat")
 	UEPCombatComponent* CombatComponent;
 	
-	// // --- 메타 휴먼 ---
+	// --- Net Prediction ---
+	static const TArray<FName> HitBones; // 기록할 본 목록
+	float SnapshotAccumulator = 0.f; // Tick 누적
+	int32 MaxHistoryCount = 0;
+	
+	// 시간 오름차순으로 유지 - [0] 오래됨, [Last] 최신
+	// 링버퍼 대신 단순 배열을 통해 GetSnapshotAtTime의 탐색 순서 보장
+	UPROPERTY()
+	TArray<FEPHitboxSnapshot> HitboxHistory;
+	
+	// 서버 Tick에서 SnapshotInterval마다 호출
+	void SaveHitboxSnapshot();
+	
+	
+	// --- 메타 휴먼 ---
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "MetaHuman")
 	TObjectPtr<USkeletalMeshComponent> FaceMesh;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "MetaHuman")
@@ -58,6 +76,7 @@ protected:
 	// === 함수 ===
 	// --- 오버라이드 ---
 	virtual void BeginPlay() override;
+	virtual void Tick(float DeltaSeconds) override;
 	
 	// Enhanced Input 바인딩
 	virtual void SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent) override;
