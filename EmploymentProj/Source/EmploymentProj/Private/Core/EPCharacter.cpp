@@ -11,26 +11,18 @@
 // Combat
 #include "Combat/EPWeapon.h"
 #include "Combat/EPCombatComponent.h"
-#include "Combat/EPCombatDeveloperSettings.h"
+#include "Combat/EPServerSideRewindComponent.h"
 
 // Core
 #include "Camera/CameraComponent.h"
 #include "Core/EPPlayerController.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/CapsuleComponent.h"
+#include "InputCoreTypes.h"
 #include "Core/EPGameMode.h"
 #include "Kismet/GameplayStatics.h"
 #include "Net/UnrealNetwork.h"
-
-const TArray<FName> AEPCharacter::HitBones =
-{
-	TEXT("head"),
-	TEXT("spine_03"), TEXT("spine_01"),
-	TEXT("upperarm_l"), TEXT("upperarm_r"),
-	TEXT("lowerarm_l"), TEXT("lowerarm_r"),
-	TEXT("thigh_l"),    TEXT("thigh_r"),
-	TEXT("calf_l"),     TEXT("calf_r")
-};
+#include "GameFramework/GameStateBase.h"
 
 AEPCharacter::AEPCharacter(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer.SetDefaultSubobjectClass<UEPCharacterMovement>(
@@ -63,6 +55,7 @@ AEPCharacter::AEPCharacter(const FObjectInitializer& ObjectInitializer)
 	
 	// --- Combat ---
 	CombatComponent = CreateDefaultSubobject<UEPCombatComponent>(TEXT("CombatComponent"));
+	RewindComponent = CreateDefaultSubobject<UEPServerSideRewindComponent>(TEXT("ServerSideRewindComponent"));
 	
 	// --- Movement ---
 	UEPCharacterMovement* Movement = Cast<UEPCharacterMovement>(GetCharacterMovement());
@@ -77,13 +70,7 @@ AEPCharacter::AEPCharacter(const FObjectInitializer& ObjectInitializer)
 void AEPCharacter::BeginPlay()
 {
 	Super::BeginPlay();
-	
-	const UEPCombatDeveloperSettings* CombatSettings = GetDefault<UEPCombatDeveloperSettings>();
-	const float Interval = FMath::Max(0.01f, CombatSettings->SnapshotIntervalSeconds);
-	const float RewindWindow = FMath::Max(0.05f, CombatSettings->MaxRewindSeconds);
-	
-	MaxHistoryCount = FMath::CeilToInt(RewindWindow) + 2;
-	
+
 	if (IsLocallyControlled())
 	{
 		// GetMesh() 제외한 모든 스켈레탈 메시 컴포넌트 숨김
@@ -101,17 +88,8 @@ void AEPCharacter::BeginPlay()
 void AEPCharacter::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
-	
-	if (!HasAuthority()) return;
-	
-	const UEPCombatDeveloperSettings* CombatSettings = GetDefault<UEPCombatDeveloperSettings>();
-	SnapshotAccumulator += DeltaSeconds;
-	
-	if (SnapshotAccumulator >= CombatSettings->SnapshotIntervalSeconds)
-	{
-		SnapshotAccumulator = 0.f;
-		SaveHitboxSnapshot();
-	}
+
+	TickAutoStrafeInputTest(DeltaSeconds);
 }
 
 // Enhanced Input 바인딩
@@ -185,6 +163,8 @@ void AEPCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCompone
 		ETriggerEvent::Triggered, this,
 		&AEPCharacter::Input_Fire
 	);
+
+	PlayerInputComponent->BindKey(EKeys::T, IE_Pressed, this, &AEPCharacter::Input_ToggleAutoStrafeTest);
 }
 
 UCameraComponent* AEPCharacter::GetCameraComponent() const { return FirstPersonCamera; }
@@ -194,25 +174,29 @@ UEPCombatComponent* AEPCharacter::GetCombatComponent() const
 	return CombatComponent;
 }
 
+UEPServerSideRewindComponent* AEPCharacter::GetServerSideRewindComponent() const
+{
+	return RewindComponent;
+}
+
 float AEPCharacter::TakeDamage(
 	float DamageAmount, struct FDamageEvent const& DamageEvent,
 	class AController* EventInstigator, AActor* DamageCause)
 {
-	if(!HasAuthority()) return 0.f;
-	float ActualDamage = Super::TakeDamage(DamageAmount, DamageEvent,
-		EventInstigator, DamageCause);
-	
-	HP = FMath::Clamp(HP - ActualDamage, 0.f, MaxHP);
-	ForceNetUpdate();
-	if (HP <= 0.f) Die(EventInstigator);
-	
+	if (!HasAuthority()) return 0.f;
+
+	HP = FMath::Clamp(HP - DamageAmount, 0.f, static_cast<float>(MaxHP));
+
 	Multicast_PlayHitReact();
 	Multicast_PlayPainSound();
-	
+
 	if (AEPPlayerController* InstigatorPC = Cast<AEPPlayerController>(EventInstigator))
 		InstigatorPC->Client_PlayHitConfirmSound();
-	
-	return ActualDamage;
+
+	if (HP <= 0.f) Die(EventInstigator);
+
+	ForceNetUpdate();
+	return DamageAmount;
 }
 
 void AEPCharacter::Die(AController* Killer)
@@ -346,10 +330,44 @@ void AEPCharacter::Input_UnCrouch(const FInputActionValue& Value)
 void AEPCharacter::Input_Fire(const FInputActionValue& Value)
 {
 	if (!CombatComponent) return;
+	
+	const AGameStateBase* GS = GetWorld()->GetGameState<AGameStateBase>();
+	const float ClientFireTime = GS ? GS->GetServerWorldTimeSeconds()
+									: GetWorld()->GetTimeSeconds();
+	
 	CombatComponent->RequestFire(
 		FirstPersonCamera->GetComponentLocation(),
-		FirstPersonCamera->GetForwardVector()
+		FirstPersonCamera->GetForwardVector(),
+		ClientFireTime
 	);
+}
+
+void AEPCharacter::Input_ToggleAutoStrafeTest()
+{
+	if (!IsLocallyControlled()) return;
+
+	bEnableAutoStrafeInputTest = !bEnableAutoStrafeInputTest;
+	AutoStrafeElapsed = 0.f;
+	AutoStrafeDirectionSign = 1.f;
+
+	UE_LOG(LogTemp, Log, TEXT("[AutoStrafeTest] %s"), bEnableAutoStrafeInputTest ? TEXT("ON") : TEXT("OFF"));
+}
+
+void AEPCharacter::TickAutoStrafeInputTest(float DeltaSeconds)
+{
+	if (!bEnableAutoStrafeInputTest) return;
+	if (!IsLocallyControlled()) return;
+	if (IsDead()) return;
+	if (!Controller) return;
+
+	AutoStrafeElapsed += DeltaSeconds;
+	if (AutoStrafeElapsed >= FMath::Max(0.1f, AutoStrafeSwitchInterval))
+	{
+		AutoStrafeElapsed = 0.f;
+		AutoStrafeDirectionSign *= -1.f;
+	}
+
+	AddMovementInput(GetActorRightVector(), AutoStrafeDirectionSign * AutoStrafeInputScale);
 }
 
 void AEPCharacter::OnRep_HP()

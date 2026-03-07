@@ -11,6 +11,7 @@
 class UCameraComponent;
 // --- 전투 ---
 class UEPCombatComponent;
+class UEPServerSideRewindComponent;
 // --- 입력 ---
 class UInputAction;
 struct FInputActionValue;
@@ -35,9 +36,7 @@ public:
 	FORCEINLINE USkeletalMeshComponent* GetFaceMesh() const { return FaceMesh; }
 	FORCEINLINE USkeletalMeshComponent* GetOutfitMesh() const { return OutfitMesh; }
 	FORCEINLINE bool IsDead() const { return HP <= 0; }
-	
-	// Lag Compensation: 서버에서 호출한다.
-	FEPHitboxSnapshot GetSnapshotAtTime(float TargetTime) const;
+	UEPServerSideRewindComponent* GetServerSideRewindComponent() const;
 
 protected:
 	// === 변수 ===
@@ -45,19 +44,10 @@ protected:
 	UCameraComponent* FirstPersonCamera;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat")
 	UEPCombatComponent* CombatComponent;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Rewind")
+	UEPServerSideRewindComponent* RewindComponent;
 	
-	// --- Net Prediction ---
-	static const TArray<FName> HitBones; // 기록할 본 목록
-	float SnapshotAccumulator = 0.f; // Tick 누적
-	int32 MaxHistoryCount = 0;
-	
-	// 시간 오름차순으로 유지 - [0] 오래됨, [Last] 최신
-	// 링버퍼 대신 단순 배열을 통해 GetSnapshotAtTime의 탐색 순서 보장
-	UPROPERTY()
-	TArray<FEPHitboxSnapshot> HitboxHistory;
-	
-	// 서버 Tick에서 SnapshotInterval마다 호출
-	void SaveHitboxSnapshot();
+	void TickAutoStrafeInputTest(float DeltaSeconds);
 	
 	
 	// --- 메타 휴먼 ---
@@ -114,6 +104,7 @@ protected:
 	
 	// 발사
 	void Input_Fire(const FInputActionValue& Value);
+	void Input_ToggleAutoStrafeTest();
 	
 	// OnRep
 	UFUNCTION()
@@ -137,4 +128,18 @@ private:
 	
 	UPROPERTY(EditDefaultsOnly, Category = "Combat")
 	TObjectPtr<USoundBase> PainSound;
+
+	// --- 테스트: 로컬 입력 기반 자동 좌우 이동 ---
+	// T 키로 토글. 클라이언트 입력 -> 서버 검증 경로를 그대로 사용한다.
+	UPROPERTY(EditAnywhere, Category = "Debug|NetPrediction")
+	bool bEnableAutoStrafeInputTest = false;
+
+	UPROPERTY(EditAnywhere, Category = "Debug|NetPrediction", meta = (ClampMin = "0.1"))
+	float AutoStrafeSwitchInterval = 3.f;
+
+	UPROPERTY(EditAnywhere, Category = "Debug|NetPrediction", meta = (ClampMin = "0.1"))
+	float AutoStrafeInputScale = 1.0f;
+
+	float AutoStrafeElapsed = 0.f;
+	float AutoStrafeDirectionSign = 1.f;
 };

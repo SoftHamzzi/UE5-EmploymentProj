@@ -11,7 +11,13 @@ AEPGameState::AEPGameState()
 // --- OnRep 콜백 ---
 void AEPGameState::OnRep_RemainingTime()
 {
-	UE_LOG(LogTemp, Log, TEXT("Remain: %fs"), RemainingTime);
+	if (GEngine)
+		GEngine->AddOnScreenDebugMessage(
+			1001,
+			1.1f,
+			FColor::Green,
+			FString::Printf(TEXT("Remain: %fs"), RemainingTime)
+		);
 }
 
 void AEPGameState::OnRep_MatchPhase()

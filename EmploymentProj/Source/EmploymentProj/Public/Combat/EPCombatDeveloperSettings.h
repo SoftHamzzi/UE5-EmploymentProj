@@ -6,20 +6,17 @@
 #include "Engine/DeveloperSettings.h"
 #include "EPCombatDeveloperSettings.generated.h"
 
-/**
- * 
- */
-UCLASS()
+UCLASS(Config=Game, DefaultConfig)
 class EMPLOYMENTPROJ_API UEPCombatDeveloperSettings : public UDeveloperSettings
 {
 	GENERATED_BODY()
 	
 public:
 	UPROPERTY(Config, EditAnywhere, Category="LagComp")
-	float MaxRewindSeconds = 0.2f;
+	float MaxRewindSeconds = 0.5f;
 	
 	UPROPERTY(Config, EditAnywhere, Category="LagComp")
-	float SnapshotIntervalSeconds = 0.05f;
+	float SnapshotIntervalSeconds = 0.03f;
 	
 	UPROPERTY(Config, EditAnywhere, Category="Trace")
 	float BroadPhasePaddingCm = 50.f;

@@ -71,3 +71,5 @@ struct FEPHitboxSnapshot
 	UPROPERTY()
 	TArray<FEPBoneSnapshot> Bones;
 };
+
+static constexpr ECollisionChannel EP_TraceChannel_Weapon = ECC_GameTraceChannel1;
