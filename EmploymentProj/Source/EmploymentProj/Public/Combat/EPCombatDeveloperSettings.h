@@ -23,4 +23,16 @@ public:
 	
 	UPROPERTY(Config, EditAnywhere, Category="Trace")
 	float DefaultTraceDistanceCm = 10000.f;
+
+	UPROPERTY(Config, EditAnywhere, Category="Debug|SSR")
+	bool bEnableSSRDebugDraw = false;
+
+	UPROPERTY(Config, EditAnywhere, Category="Debug|SSR", meta=(ClampMin="0.01"))
+	float SSRDebugDrawDuration = 2.0f;
+
+	UPROPERTY(Config, EditAnywhere, Category="Debug|SSR", meta=(ClampMin="0.1"))
+	float SSRDebugLineThickness = 1.5f;
+
+	UPROPERTY(Config, EditAnywhere, Category="Debug|SSR")
+	bool bEnableSSRDebugLog = false;
 };

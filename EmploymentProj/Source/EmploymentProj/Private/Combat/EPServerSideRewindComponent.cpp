@@ -6,15 +6,79 @@
 #include "Combat/EPWeapon.h"
 #include "Components/CapsuleComponent.h"
 #include "Core/EPCharacter.h"
+#include "DrawDebugHelpers.h"
 #include "EngineUtils.h"
 #include "GameFramework/GameStateBase.h"
+#include "PhysicsEngine/AggregateGeom.h"
 #include "PhysicsEngine/BodyInstance.h"
+#include "PhysicsEngine/BodySetup.h"
 
 struct FEPRewindEntry
 {
 	AEPCharacter* Character = nullptr;
 	TArray<FEPBoneSnapshot> SavedBones;
 };
+
+static void DrawBodyAggGeomPrimitives(
+	UWorld* World,
+	const FBodyInstance* Body,
+	const FColor& Color,
+	const float Duration,
+	const float Thickness)
+{
+	if (!World || !Body) return;
+
+	const UBodySetup* BodySetup = Body->GetBodySetup();
+	if (!BodySetup) return;
+
+	const FTransform BodyWorld = Body->GetUnrealWorldTransform();
+	const FVector Scale3D = BodyWorld.GetScale3D().GetAbs();
+
+	for (const FKSphereElem& Sphere : BodySetup->AggGeom.SphereElems)
+	{
+		const FVector CenterWS = BodyWorld.TransformPosition(Sphere.Center);
+		const float RadiusWS = Sphere.Radius * Scale3D.GetMax();
+		DrawDebugSphere(World, CenterWS, RadiusWS, 16, Color, false, Duration, 0, Thickness);
+	}
+
+	for (const FKSphylElem& Sphyl : BodySetup->AggGeom.SphylElems)
+	{
+		const FVector CenterWS = BodyWorld.TransformPosition(Sphyl.Center);
+		const FQuat RotWS = BodyWorld.GetRotation() * FQuat(Sphyl.Rotation);
+
+		const float RadiusWS = Sphyl.Radius * FMath::Max(Scale3D.X, Scale3D.Y);
+		const float HalfHeightWS = (Sphyl.Length * 0.5f + Sphyl.Radius) * Scale3D.Z;
+
+		DrawDebugCapsule(World, CenterWS, HalfHeightWS, RadiusWS, RotWS, Color, false, Duration, 0, Thickness);
+	}
+
+	for (const FKBoxElem& Box : BodySetup->AggGeom.BoxElems)
+	{
+		const FVector CenterWS = BodyWorld.TransformPosition(Box.Center);
+		const FQuat RotWS = BodyWorld.GetRotation() * FQuat(Box.Rotation);
+		const FVector ExtentWS = FVector(Box.X * 0.5f, Box.Y * 0.5f, Box.Z * 0.5f) * Scale3D;
+
+		DrawDebugBox(World, CenterWS, ExtentWS, RotWS, Color, false, Duration, 0, Thickness);
+	}
+}
+
+static void DrawHitBonesPrimitivesForCharacter(
+	UWorld* World,
+	const AEPCharacter* Char,
+	const TArray<FName>& Bones,
+	const FColor& Color,
+	const float Duration,
+	const float Thickness)
+{
+	if (!World || !Char || !Char->GetMesh()) return;
+
+	for (const FName& BoneName : Bones)
+	{
+		const FBodyInstance* Body = Char->GetMesh()->GetBodyInstance(BoneName);
+		if (!Body) continue;
+		DrawBodyAggGeomPrimitives(World, Body, Color, Duration, Thickness);
+	}
+}
 
 const TArray<FName> UEPServerSideRewindComponent::HitBones =
 {
@@ -211,6 +275,16 @@ bool UEPServerSideRewindComponent::ConfirmHitscan(
 	const UEPCombatDeveloperSettings* CombatSettings = GetDefault<UEPCombatDeveloperSettings>();
 	const float ServerNow = GS ? GS->GetServerWorldTimeSeconds() : GetWorld()->GetTimeSeconds();
 
+	bool bDebugDraw = CombatSettings->bEnableSSRDebugDraw;
+	bool bDebugLog = CombatSettings->bEnableSSRDebugLog;
+	const float DebugDuration = CombatSettings->SSRDebugDrawDuration;
+	const float DebugThickness = CombatSettings->SSRDebugLineThickness;
+
+#if (UE_BUILD_SHIPPING || UE_BUILD_TEST)
+	bDebugDraw = false;
+	bDebugLog = false;
+#endif
+
 	if (ServerNow - ClientFireTime > CombatSettings->MaxRewindSeconds)
 	{
 		ClientFireTime = ServerNow;
@@ -218,6 +292,12 @@ bool UEPServerSideRewindComponent::ConfirmHitscan(
 
 	const TArray<AEPCharacter*> Candidates =
 		GetHitscanCandidates(Shooter, EquippedWeapon, Origin, Directions, ClientFireTime);
+
+	if (bDebugLog)
+	{
+		UE_LOG(LogTemp, Log, TEXT("[SSR] ServerNow=%.3f ClientFireTime=%.3f Delta=%.3f Candidates=%d"),
+			ServerNow, ClientFireTime, ServerNow - ClientFireTime, Candidates.Num());
+	}
 
 	TSet<TObjectPtr<AEPCharacter>> CandidateSet;
 	CandidateSet.Reserve(Candidates.Num());
@@ -238,6 +318,11 @@ bool UEPServerSideRewindComponent::ConfirmHitscan(
 		Entry.Character = Char;
 		const FEPHitboxSnapshot Snap = TargetSSR->GetSnapshotAtTime(ClientFireTime);
 
+		if (bDebugDraw)
+		{
+			DrawHitBonesPrimitivesForCharacter(GetWorld(), Char, HitBones, FColor::Blue, DebugDuration, DebugThickness);
+		}
+
 		for (const FEPBoneSnapshot& Bone : Snap.Bones)
 		{
 			FBodyInstance* Body = Char->GetMesh()->GetBodyInstance(Bone.BoneName);
@@ -249,6 +334,11 @@ bool UEPServerSideRewindComponent::ConfirmHitscan(
 			Entry.SavedBones.Add(Saved);
 
 			Body->SetBodyTransform(Bone.WorldTransform, ETeleportType::TeleportPhysics);
+		}
+
+		if (bDebugDraw)
+		{
+			DrawHitBonesPrimitivesForCharacter(GetWorld(), Char, HitBones, FColor::Red, DebugDuration, DebugThickness);
 		}
 	}
 
@@ -264,6 +354,11 @@ bool UEPServerSideRewindComponent::ConfirmHitscan(
 			: CombatSettings->DefaultTraceDistanceCm;
 		const FVector End = Origin + Dir * TraceDistanceCm;
 
+		if (bDebugDraw)
+		{
+			DrawDebugLine(GetWorld(), Origin, End, FColor::White, false, DebugDuration, 0, DebugThickness);
+		}
+
 		FHitResult Hit;
 		if (GetWorld()->LineTraceSingleByChannel(Hit, Origin, End, EP_TraceChannel_Weapon, Params))
 		{
@@ -271,6 +366,19 @@ bool UEPServerSideRewindComponent::ConfirmHitscan(
 			if (HitChar && CandidateSet.Contains(HitChar))
 			{
 				OutConfirmedHits.Add(Hit);
+
+				if (bDebugDraw)
+				{
+					DrawDebugSphere(GetWorld(), Hit.ImpactPoint, 10.f, 12, FColor::Yellow, false, DebugDuration, 0, DebugThickness);
+				}
+
+				if (bDebugLog)
+				{
+					UE_LOG(LogTemp, Log, TEXT("[SSR] Hit Actor=%s Bone=%s PM=%s"),
+						*GetNameSafe(Hit.GetActor()),
+						*Hit.BoneName.ToString(),
+						Hit.PhysMaterial.IsValid() ? *Hit.PhysMaterial->GetName() : TEXT("None"));
+				}
 			}
 		}
 	}
@@ -286,6 +394,11 @@ bool UEPServerSideRewindComponent::ConfirmHitscan(
 				Body->SetBodyTransform(Saved.WorldTransform, ETeleportType::TeleportPhysics);
 			}
 		}
+	}
+
+	if (bDebugLog)
+	{
+		UE_LOG(LogTemp, Log, TEXT("[SSR] ConfirmedHits=%d"), OutConfirmedHits.Num());
 	}
 
 	return OutConfirmedHits.Num() > 0;
