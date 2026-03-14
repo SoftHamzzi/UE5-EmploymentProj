@@ -8,7 +8,10 @@
 #include "Core/EPCharacter.h"
 #include "DrawDebugHelpers.h"
 #include "EngineUtils.h"
+#include "Movement/EPCharacterMovement.h"
 #include "GameFramework/GameStateBase.h"
+#include "GameFramework/PlayerState.h"
+#include "Kismet/GameplayStatics.h"
 #include "PhysicsEngine/AggregateGeom.h"
 #include "PhysicsEngine/BodyInstance.h"
 #include "PhysicsEngine/BodySetup.h"
@@ -98,6 +101,7 @@ const TArray<FName> UEPServerSideRewindComponent::HitBones =
 UEPServerSideRewindComponent::UEPServerSideRewindComponent()
 {
 	PrimaryComponentTick.bCanEverTick = true;
+	PrimaryComponentTick.TickGroup = TG_PostPhysics;
 	SetIsReplicatedByDefault(false);
 }
 
@@ -106,9 +110,25 @@ void UEPServerSideRewindComponent::BeginPlay()
 	Super::BeginPlay();
 
 	const UEPCombatDeveloperSettings* CombatSettings = GetDefault<UEPCombatDeveloperSettings>();
-	const float Interval = FMath::Max(0.01f, CombatSettings->SnapshotIntervalSeconds);
 	const float RewindWindow = FMath::Max(0.05f, CombatSettings->MaxRewindSeconds);
-	MaxHistoryCount = FMath::CeilToInt(RewindWindow / Interval) + 2;
+	// ClientNetSendMoveDeltaTime: DefaultGame.ini [/Script/Engine.GameNetworkManager] 에서 설정
+	float MoveDeltaTime = 1.f / 60.f;
+	GConfig->GetFloat(
+		TEXT("/Script/Engine.GameNetworkManager"),
+		TEXT("ClientNetSendMoveDeltaTime"),
+		MoveDeltaTime,
+		GGameIni);
+	if (MoveDeltaTime <= 0.f) MoveDeltaTime = 1.f / 60.f;
+	MaxHistoryCount = FMath::CeilToInt(RewindWindow / MoveDeltaTime) + 4;
+
+	// CMC의 OnServerMoveProcessed 델리게이트 구독
+	if (AEPCharacter* OwnerChar = Cast<AEPCharacter>(GetOwner()))
+	{
+		if (UEPCharacterMovement* CMC = Cast<UEPCharacterMovement>(OwnerChar->GetCharacterMovement()))
+		{
+			CMC->OnServerMoveProcessed.AddUObject(this, &UEPServerSideRewindComponent::OnServerMoveProcessed);
+		}
+	}
 }
 
 void UEPServerSideRewindComponent::TickComponent(
@@ -119,27 +139,39 @@ void UEPServerSideRewindComponent::TickComponent(
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
 	AEPCharacter* OwnerChar = Cast<AEPCharacter>(GetOwner());
-	if (!OwnerChar || !OwnerChar->HasAuthority()) return;
+	if (!OwnerChar) return;
 
-	const UEPCombatDeveloperSettings* CombatSettings = GetDefault<UEPCombatDeveloperSettings>();
-	SnapshotAccumulator += DeltaTime;
-	if (SnapshotAccumulator < CombatSettings->SnapshotIntervalSeconds) return;
+	if (!OwnerChar->HasAuthority()) return;
 
-	SnapshotAccumulator = 0.f;
-	SaveHitboxSnapshot();
+	// PostPhysics — 본 Transform 갱신 완료. pending이 있으면 스냅샷 커밋.
+	if (bHasPendingSnapshot)
+	{
+		SaveHitboxSnapshot(PendingSnapshotTime, PendingSnapshotLocation);
+		bHasPendingSnapshot = false;
+	}
 }
 
-void UEPServerSideRewindComponent::SaveHitboxSnapshot()
+void UEPServerSideRewindComponent::OnServerMoveProcessed(float Time, FVector Location)
+{
+	// TickDispatch 시점 — 본 Transform이 아직 갱신되지 않았으므로 값만 보관.
+	// 실제 스냅샷 저장은 PostPhysics Tick(본 갱신 완료 후)에서 수행.
+	bHasPendingSnapshot = true;
+	PendingSnapshotTime = Time;
+	PendingSnapshotLocation = Location;
+}
+
+void UEPServerSideRewindComponent::SaveHitboxSnapshot(float Time, const FVector& Location)
 {
 	AEPCharacter* OwnerChar = Cast<AEPCharacter>(GetOwner());
 	if (!OwnerChar) return;
 
-	const AGameStateBase* GS = GetWorld()->GetGameState<AGameStateBase>();
-	const float ServerNow = GS ? GS->GetServerWorldTimeSeconds() : GetWorld()->GetTimeSeconds();
-
 	FEPHitboxSnapshot Snapshot;
-	Snapshot.ServerTime = ServerNow;
-	Snapshot.Location = OwnerChar->GetActorLocation();
+	Snapshot.ServerTime = Time;
+	Snapshot.Location = Location;
+
+	// const AGameStateBase* GS = GetWorld()->GetGameState<AGameStateBase>();
+	// const float ServerNow = GS ? GS->GetServerWorldTimeSeconds() : GetWorld()->GetTimeSeconds();
+	// UE_LOG(LogTemp, Warning, TEXT("[SHS] Now=%.4f Param=%.4f Diff=%.4f"), ServerNow, Time, ServerNow - Time);
 
 	for (const FName& BoneName : HitBones)
 	{
@@ -157,6 +189,7 @@ void UEPServerSideRewindComponent::SaveHitboxSnapshot()
 		HitboxHistory.RemoveAt(0);
 	}
 	HitboxHistory.Add(Snapshot);
+
 }
 
 FEPHitboxSnapshot UEPServerSideRewindComponent::GetSnapshotAtTime(float TargetTime) const
@@ -168,10 +201,12 @@ FEPHitboxSnapshot UEPServerSideRewindComponent::GetSnapshotAtTime(float TargetTi
 
 	if (TargetTime <= HitboxHistory[0].ServerTime)
 	{
+		UE_LOG(LogTemp, Log, TEXT("Target Time <= Snapshot"));
 		return HitboxHistory[0];
 	}
 	if (TargetTime >= HitboxHistory.Last().ServerTime)
 	{
+		UE_LOG(LogTemp, Log, TEXT("Target Time >= Snapshot"));
 		return HitboxHistory.Last();
 	}
 
@@ -191,6 +226,7 @@ FEPHitboxSnapshot UEPServerSideRewindComponent::GetSnapshotAtTime(float TargetTi
 
 	if (!Before || !After)
 	{
+		UE_LOG(LogTemp, Log, TEXT("!Before || !After"));
 		return HitboxHistory.Last();
 	}
 
@@ -284,9 +320,10 @@ bool UEPServerSideRewindComponent::ConfirmHitscan(
 	bDebugDraw = false;
 	bDebugLog = false;
 #endif
-
+	
 	if (ServerNow - ClientFireTime > CombatSettings->MaxRewindSeconds)
 	{
+		UE_LOG(LogTemp, Log, TEXT("Exceed MaxRewindSeconds"));
 		ClientFireTime = ServerNow;
 	}
 
@@ -317,6 +354,15 @@ bool UEPServerSideRewindComponent::ConfirmHitscan(
 		FEPRewindEntry& Entry = RewindEntries.AddDefaulted_GetRef();
 		Entry.Character = Char;
 		const FEPHitboxSnapshot Snap = TargetSSR->GetSnapshotAtTime(ClientFireTime);
+
+		if (bDebugLog && Snap.Bones.Num() > 0)
+		{
+			UE_LOG(LogTemp, Log, TEXT("[SERVER_REWIND_POS] ClientFireTime=%.3f Actor=%s ServerPos=%s RewindPos=%s"),
+				ClientFireTime,
+				*Char->GetName(),
+				*Char->GetActorLocation().ToString(),
+				*Snap.Location.ToString());
+		}
 
 		if (bDebugDraw)
 		{
@@ -367,10 +413,10 @@ bool UEPServerSideRewindComponent::ConfirmHitscan(
 			{
 				OutConfirmedHits.Add(Hit);
 
-				if (bDebugDraw)
-				{
+				// if (bDebugDraw)
+				// {
 					DrawDebugSphere(GetWorld(), Hit.ImpactPoint, 10.f, 12, FColor::Yellow, false, DebugDuration, 0, DebugThickness);
-				}
+				// }
 
 				if (bDebugLog)
 				{

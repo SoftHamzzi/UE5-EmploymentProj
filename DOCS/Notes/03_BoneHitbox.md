@@ -75,18 +75,22 @@ LineTrace가 벽에 막히지 않고 캐릭터 바디만 감지한다.
 
 [서버] Server_Fire_Implementation
     → HandleHitscanFire(Owner, Origin, Directions, ClientFireTime)
-         ├─ [Rewind Block]
+         ├─ [Rewind Block] → Owner->GetServerSideRewindComponent()->ConfirmHitscan(...)
          │    ├─ 0. ClientFireTime 클램프 (MaxRewindSeconds 초과 = 현재 시점)
          │    ├─ 1. GetHitscanCandidates — Broad Phase (Location 기반, O(N))
          │    ├─ 2. 후보 FBodyInstance 리와인드 (과거 본 Transform으로 이동)
          │    ├─ 3. LineTrace × N (WeaponTrace, bReturnPhysicalMaterial=true)
          │    └─ 4. FBodyInstance 복구 (현재 Transform 복원)
-         └─ [Damage Block]
+         └─ [Damage Block] (CombatComponent에 남음)
               ├─ GetBoneMultiplier(Hit.BoneName)
               ├─ Cast<UEPPhysicalMaterial>(Hit.PhysMaterial)
               ├─ FinalDamage = Base × Bone× × Mat×
               └─ ApplyPointDamage → TakeDamage (HP·사망만)
 ```
+
+**책임 분리**:
+- `UEPServerSideRewindComponent` — 히스토리 기록, 보간, 후보 선정, 리와인드/복구, Narrow Trace, 디버그
+- `UEPCombatComponent` — 입력 검증, Server_Fire 진입, SSR 호출, 데미지 계산/적용, 이펙트
 
 ---
 
@@ -124,30 +128,39 @@ struct FEPHitboxSnapshot
 ### 기록할 본 목록
 
 ```cpp
-// EPCharacter.h (static const)
-static const TArray<FName> HitBones =
+// EPServerSideRewindComponent.cpp (static const, 클래스 정의 전)
+const TArray<FName> UEPServerSideRewindComponent::HitBones =
 {
     TEXT("head"),
-    TEXT("spine_03"), TEXT("spine_01"),
+    TEXT("neck_01"),
+    TEXT("pelvis"),
+    TEXT("spine_04"), TEXT("spine_02"),
+    TEXT("clavicle_l"), TEXT("clavicle_r"),
     TEXT("upperarm_l"), TEXT("upperarm_r"),
     TEXT("lowerarm_l"), TEXT("lowerarm_r"),
+    TEXT("hand_l"),     TEXT("hand_r"),
     TEXT("thigh_l"),    TEXT("thigh_r"),
-    TEXT("calf_l"),     TEXT("calf_r")
+    TEXT("calf_l"),     TEXT("calf_r"),
+    TEXT("foot_l"),     TEXT("foot_r")
 };
 ```
 
 전체 본 대신 판정에 필요한 본만 선택해 스냅샷 크기를 제한한다.
+`HitBones`는 SSR 컴포넌트가 소유하며 `EPCharacter`에는 없다.
 
 ---
 
 ## 4. 히스토리 기록 (SaveHitboxSnapshot)
 
-서버 Tick에서 호출. `GetServerWorldTimeSeconds()`로 서버 기준 시간을 사용한다.
+SSR 컴포넌트의 TickComponent에서 `SnapshotIntervalSeconds`마다 호출.
+`GetServerWorldTimeSeconds()`로 서버 기준 시간을 사용한다.
+권한 체크(`HasAuthority`)는 TickComponent에서 이미 처리한다.
 
 ```cpp
-void AEPCharacter::SaveHitboxSnapshot()
+void UEPServerSideRewindComponent::SaveHitboxSnapshot()
 {
-    if (!HasAuthority()) return;
+    AEPCharacter* OwnerChar = Cast<AEPCharacter>(GetOwner());
+    if (!OwnerChar) return;
 
     const AGameStateBase* GS = GetWorld()->GetGameState<AGameStateBase>();
     const float ServerNow = GS ? GS->GetServerWorldTimeSeconds()
@@ -155,16 +168,16 @@ void AEPCharacter::SaveHitboxSnapshot()
 
     FEPHitboxSnapshot Snapshot;
     Snapshot.ServerTime = ServerNow;
-    Snapshot.Location   = GetActorLocation(); // Broad Phase용
+    Snapshot.Location   = OwnerChar->GetActorLocation(); // Broad Phase용
 
     for (const FName& BoneName : HitBones)
     {
-        const int32 BoneIndex = GetMesh()->GetBoneIndex(BoneName);
+        const int32 BoneIndex = OwnerChar->GetMesh()->GetBoneIndex(BoneName);
         if (BoneIndex == INDEX_NONE) continue;
 
         FEPBoneSnapshot Bone;
         Bone.BoneName       = BoneName;
-        Bone.WorldTransform = GetMesh()->GetBoneTransform(BoneIndex);
+        Bone.WorldTransform = OwnerChar->GetMesh()->GetBoneTransform(BoneIndex);
         Snapshot.Bones.Add(Bone);
     }
 
@@ -184,7 +197,7 @@ void AEPCharacter::SaveHitboxSnapshot()
 클라이언트 발사 시점(ClientFireTime)에 해당하는 스냅샷을 Before/After 사이에서 보간해 반환한다.
 
 ```cpp
-FEPHitboxSnapshot AEPCharacter::GetSnapshotAtTime(float TargetTime) const
+FEPHitboxSnapshot UEPServerSideRewindComponent::GetSnapshotAtTime(float TargetTime) const
 {
     if (HitboxHistory.IsEmpty())
         return FEPHitboxSnapshot{};
@@ -259,7 +272,7 @@ Body->SetBodyTransform(SnapshotTransform, ETeleportType::TeleportPhysics);
 Body->SetBodyTransform(Saved, ETeleportType::TeleportPhysics);
 ```
 
-### FEPRewindEntry (EPCombatComponent.cpp 파일 스코프)
+### FEPRewindEntry (EPServerSideRewindComponent.cpp 파일 스코프)
 
 ```cpp
 // AEPCharacter*에 의존하므로 EPTypes.h에 넣지 않는다.
@@ -271,76 +284,50 @@ struct FEPRewindEntry
 };
 ```
 
-### HandleHitscanFire 흐름
+### HandleHitscanFire — SSR 위임 패턴
+
+`UEPCombatComponent::HandleHitscanFire`는 Rewind Block을 직접 구현하지 않고
+`UEPServerSideRewindComponent::ConfirmHitscan`에 위임한다.
+Damage Block만 CombatComponent에 남는다.
 
 ```cpp
 void UEPCombatComponent::HandleHitscanFire(
     AEPCharacter* Owner, const FVector& Origin,
     const TArray<FVector>& Directions, float ClientFireTime)
 {
-    // ── [Rewind Block] ────────────────────────────────────────────────────────
-    // 0. 클램프 (200ms 초과 = 조작 의심)
-    const AGameStateBase* GS = GetWorld()->GetGameState<AGameStateBase>();
-    const float ServerNow = GS ? GS->GetServerWorldTimeSeconds() : GetWorld()->GetTimeSeconds();
-    if (ServerNow - ClientFireTime > CombatSettings->MaxRewindSeconds)
-        ClientFireTime = ServerNow;
+    if (!Owner || !Owner->GetServerSideRewindComponent()) return;
 
-    // 1. Broad Phase
-    const TArray<AEPCharacter*> Candidates =
-        GetHitscanCandidates(Owner, Origin, Directions, ClientFireTime);
-
-    // 2. 본 단위 리와인드
-    TArray<FEPRewindEntry> RewindEntries;
-    for (AEPCharacter* Char : Candidates)
-    {
-        FEPRewindEntry& Entry = RewindEntries.AddDefaulted_GetRef();
-        Entry.Character = Char;
-        const FEPHitboxSnapshot Snap = Char->GetSnapshotAtTime(ClientFireTime);
-        for (const FEPBoneSnapshot& Bone : Snap.Bones)
-        {
-            FBodyInstance* Body = Char->GetMesh()->GetBodyInstance(Bone.BoneName);
-            if (!Body) continue;
-            FEPBoneSnapshot Saved;
-            Saved.BoneName       = Bone.BoneName;
-            Saved.WorldTransform = Body->GetUnrealWorldTransform();
-            Entry.SavedBones.Add(Saved);
-            Body->SetBodyTransform(Bone.WorldTransform, ETeleportType::TeleportPhysics);
-        }
-    }
-
-    // 3. Narrow Phase
-    FCollisionQueryParams Params(SCENE_QUERY_STAT(HitscanFire), false);
-    Params.AddIgnoredActor(Owner);
-    Params.AddIgnoredActor(EquippedWeapon);
-    Params.bReturnPhysicalMaterial = true;
-
+    // ── [Rewind Block] → SSR 컴포넌트에 위임 ──────────────────────────────
+    // 후보 선정, 리와인드, Narrow Trace, 복구, 디버그 모두 SSR 내부에서 처리
     TArray<FHitResult> ConfirmedHits;
-    for (const FVector& Dir : Directions)
-    {
-        FHitResult Hit;
-        if (GetWorld()->LineTraceSingleByChannel(
-                Hit, Origin, Origin + Dir * TraceDistanceCm, EP_TraceChannel_Weapon, Params)
-            && Cast<AEPCharacter>(Hit.GetActor()))
-            ConfirmedHits.Add(Hit);
-    }
+    Owner->GetServerSideRewindComponent()->ConfirmHitscan(
+        Owner, EquippedWeapon, Origin, Directions, ClientFireTime, ConfirmedHits);
 
-    // 4. 복구 (반드시 Narrow Phase 직후)
-    for (const FEPRewindEntry& Entry : RewindEntries)
-        for (const FEPBoneSnapshot& Saved : Entry.SavedBones)
-            if (FBodyInstance* Body = Entry.Character->GetMesh()->GetBodyInstance(Saved.BoneName))
-                Body->SetBodyTransform(Saved.WorldTransform, ETeleportType::TeleportPhysics);
-
-    // ── [Damage Block] ────────────────────────────────────────────────────────
+    // ── [Damage Block] ─────────────────────────────────────────────────────
     for (const FHitResult& Hit : ConfirmedHits)
     {
-        const float FinalDamage = EquippedWeapon->GetDamage()
-                                * GetBoneMultiplier(Hit.BoneName)
-                                * GetMaterialMultiplier(Hit.PhysMaterial.Get());
+        if (!Hit.GetActor()) continue;
+
+        const float BaseDamage       = EquippedWeapon ? EquippedWeapon->GetDamage() : 0.f;
+        const float BoneMultiplier   = GetBoneMultiplier(Hit.BoneName);
+        const float MaterialMultiplier = GetMaterialMultiplier(Hit.PhysMaterial.Get());
+        const float FinalDamage      = BaseDamage * BoneMultiplier * MaterialMultiplier;
+
         UGameplayStatics::ApplyPointDamage(Hit.GetActor(), FinalDamage,
             (Hit.ImpactPoint - Origin).GetSafeNormal(), Hit,
             Owner->GetController(), Owner, UDamageType::StaticClass());
     }
 }
+```
+
+`UEPServerSideRewindComponent::ConfirmHitscan` 내부 흐름:
+```
+0. ClientFireTime 클램프 (MaxRewindSeconds 초과 = 현재 시점)
+1. GetHitscanCandidates — Broad Phase (Location 기반, O(N))
+2. 후보 FBodyInstance 리와인드 (과거 본 Transform으로 이동)
+3. LineTrace × N (WeaponTrace, bReturnPhysicalMaterial=true)
+4. FBodyInstance 복구 (현재 Transform 복원) — 무조건 실행
+5. 디버그 draw (Blue/Red/White/Yellow)
 ```
 
 ---
@@ -374,14 +361,20 @@ class EMPLOYMENTPROJ_API UEPPhysicalMaterial : public UPhysicalMaterial
 {
     GENERATED_BODY()
 public:
-    UPROPERTY(EditDefaultsOnly, Category = "Damage")
-    FGameplayTagContainer MaterialTags; // 예: Gameplay.Zone.WeakSpot
+    // GAS 확장용 (현재 주석 처리 — GAS 단계에서 활성화)
+    // UPROPERTY(EditDefaultsOnly, Category = "Damage")
+    // FGameplayTagContainer MaterialTags; // 예: Gameplay.Zone.WeakSpot
 
-    // Pre-GAS 임시 경로 (호환용)
-    UPROPERTY(EditDefaultsOnly, Category = "Damage") bool  bIsWeakSpot       = false;
-    UPROPERTY(EditDefaultsOnly, Category = "Damage") float WeakSpotMultiplier = 2.0f;
+    UPROPERTY(EditDefaultsOnly, Category = "Damage")
+    bool bIsWeakSpot = false;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Damage",
+        meta = (EditCondition = "bIsWeakSpot"))
+    float WeakSpotMultiplier = 2.0f;
 };
 ```
+
+`MaterialTags`는 GAS 단계에서 `ApplyPointDamage` → `GameplayEffectSpec`으로 전환할 때 활성화한다.
 
 Physics Asset 에디터에서 `head` 바디 → `PM_WeakSpot` (bIsWeakSpot=true) 할당.
 
@@ -429,23 +422,47 @@ float AEPCharacter::TakeDamage(float DamageAmount, FDamageEvent const& DamageEve
 
 ## 10. 구현 체크리스트
 
+**에디터**
 - [ ] Physics Asset 본 콜리전 바디 설정 (head 구체, spine/사지 캡슐)
 - [ ] Physics Asset 모든 바디 → `WeaponTrace` Block 설정
 - [ ] head 바디 → `PM_WeakSpot` (`UEPPhysicalMaterial`, bIsWeakSpot=true) 할당
-- [ ] `FEPBoneSnapshot` / `FEPHitboxSnapshot` (EPTypes.h)
-- [ ] `AEPCharacter` — `HitBones`, `HitboxHistory`, `SnapshotIntervalSeconds`, `MaxHistoryCount`
-- [ ] `AEPCharacter` — `IsDead()`, `SaveHitboxSnapshot()`, `GetSnapshotAtTime()`
-- [ ] `SaveHitboxSnapshot()` — 서버 Tick에서 호출 (스냅샷 누적)
+
+**EPTypes.h**
+- [ ] `FEPBoneSnapshot` / `FEPHitboxSnapshot`
 - [ ] `EP_TraceChannel_Weapon` 상수 정의
+
+**UEPCombatDeveloperSettings**
+- [ ] `MaxRewindSeconds`, `SnapshotIntervalSeconds`, `BroadPhasePaddingCm`, `DefaultTraceDistanceCm`
+- [ ] 디버그: `bEnableSSRDebugDraw`, `SSRDebugDrawDuration`, `SSRDebugLineThickness`, `bEnableSSRDebugLog`
+
+**UEPServerSideRewindComponent (신규)**
+- [ ] `HitBones` (static const), `HitboxHistory`, `SnapshotAccumulator`, `MaxHistoryCount`
+- [ ] `SaveHitboxSnapshot()` — TickComponent에서 Interval마다 호출
+- [ ] `GetSnapshotAtTime()` — per-bone BlendWith 보간
+- [ ] `GetHitscanCandidates()` — Broad Phase (TActorIterator)
+- [ ] `ConfirmHitscan()` — FEPRewindEntry + FBodyInstance 리와인드/복구 + Narrow Trace + 디버그
+- [ ] `FEPRewindEntry` (파일 스코프)
+
+**AEPCharacter**
+- [ ] `RewindComponent` (`UEPServerSideRewindComponent`) — CreateDefaultSubobject
+- [ ] `GetServerSideRewindComponent()` getter
+- [ ] `IsDead()` inline
+- [ ] `VisibilityBasedAnimTickOption = AlwaysTickPoseAndRefreshBones` (생성자)
+
+**UEPCombatComponent**
 - [ ] `Server_Fire` 시그니처에 `float ClientFireTime` 추가
-- [ ] `RequestFire` — `LocalLastFireTime` 전달
-- [ ] `FEPRewindEntry` (EPCombatComponent.cpp 파일 스코프)
-- [ ] `GetHitscanCandidates` — Broad Phase (TActorIterator)
-- [ ] `HandleHitscanFire` — FBodyInstance 리와인드/복구 + bReturnPhysicalMaterial
-- [ ] `UEPPhysicalMaterial` 신규 클래스
-- [ ] `GetBoneMultiplier` 헬퍼 (EPCombatComponent)
-- [ ] `HandleHitscanFire` Damage Block — BoneName × PM 배율
-- [ ] `TakeDamage` 단순화
+- [ ] `HandleHitscanFire` — SSR `ConfirmHitscan` 위임 + Damage Block
+- [ ] `GetBoneMultiplier` (WeaponDef->BoneDamageMultiplierMap 기반)
+- [ ] `GetMaterialMultiplier` (UEPPhysicalMaterial 캐스트)
+
+**EPCharacter.cpp**
+- [ ] `Input_Fire` — `GS->GetServerWorldTimeSeconds()` 사용
+
+**UEPPhysicalMaterial**
+- [ ] `bIsWeakSpot`, `WeakSpotMultiplier`
+
+**AEPCharacter::TakeDamage**
+- [ ] HP 반영 + 사망 처리만 (배율 계산 없음)
 
 ---
 

@@ -72,4 +72,12 @@ struct FEPHitboxSnapshot
 	TArray<FEPBoneSnapshot> Bones;
 };
 
+UENUM(BlueprintType)
+enum class EEPBallisticType : uint8
+{
+	Hitscan,
+	ProjectileFast,
+	ProjectileSlow
+};
+
 static constexpr ECollisionChannel EP_TraceChannel_Weapon = ECC_GameTraceChannel1;

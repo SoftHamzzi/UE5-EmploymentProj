@@ -2,6 +2,7 @@
 
 
 #include "Data/EPWeaponDefinition.h"
+#include "Combat/EPProjectile.h"
 
 FPrimaryAssetId UEPWeaponDefinition::GetPrimaryAssetId() const
 {

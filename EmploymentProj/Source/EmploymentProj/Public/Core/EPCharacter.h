@@ -3,7 +3,6 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "DataWrappers/ChaosVDParticleDataWrapper.h"
 #include "GameFramework/Character.h"
 #include "EPCharacter.generated.h"
 
@@ -27,7 +26,7 @@ class EMPLOYMENTPROJ_API AEPCharacter : public ACharacter
 public:
 	// 기본 CMC 대신 커스텀 CMC 사용
 	AEPCharacter(const FObjectInitializer& ObjectInitializer);
-	
+
 	// --- Getter/Setter ---
 	bool GetIsSprinting() const;
 	bool GetIsAiming() const;
@@ -119,7 +118,7 @@ protected:
 private:
 	UFUNCTION(NetMulticast, Unreliable)
 	void Multicast_PlayHitReact();
-	
+
 	UFUNCTION(NetMulticast, Unreliable)
 	void Multicast_PlayPainSound();
 	

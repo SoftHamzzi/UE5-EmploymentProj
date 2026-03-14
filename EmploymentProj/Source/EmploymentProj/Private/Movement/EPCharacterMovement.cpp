@@ -3,8 +3,35 @@
 #include "Movement/EPCharacterMovement.h"
 
 #include "GameFramework/Character.h"
+#include "GameFramework/GameStateBase.h"
+
+UEPCharacterMovement::UEPCharacterMovement()
+{
+	NetworkSmoothingMode = ENetworkSmoothingMode::Exponential;
+	
+	NetworkMaxSmoothUpdateDistance = 256.f;
+	NetworkNoSmoothUpdateDistance = 384.f;
+}
 
 // --- CMC 오버라이드 ---
+// 서버가 RPC 묶음(OldMove → PendingMove → NewMove)을 모두 처리한 직후 NewMove에서만 호출됨.
+// 이 시점의 위치·시각을 SSR에 전달 → PostPhysics에서 본 Transform과 함께 스냅샷 저장.
+void UEPCharacterMovement::OnMovementUpdated(
+	float DeltaSeconds, const FVector& OldLocation, const FVector& OldVelocity)
+{
+	Super::OnMovementUpdated(DeltaSeconds, OldLocation, OldVelocity);
+
+	if (!GetOwner()->HasAuthority()) return;
+
+	// NewMove일 때만 저장 — 묶음의 마지막 이동이 완료된 시점
+	const FCharacterNetworkMoveData* MoveData = GetCurrentNetworkMoveData();
+	if (!MoveData || MoveData->NetworkMoveType != FCharacterNetworkMoveData::ENetworkMoveType::NewMove) return;
+
+	const AGameStateBase* GS = GetWorld()->GetGameState<AGameStateBase>();
+	const float T = GS ? GS->GetServerWorldTimeSeconds() : GetWorld()->GetTimeSeconds();
+	OnServerMoveProcessed.Broadcast(T, GetActorLocation());
+}
+
 float UEPCharacterMovement::GetMaxSpeed() const {
 	if (bWantsToSprint && IsMovingOnGround()) return SprintSpeed;
 	if (bWantsToAim) return AimSpeed;
@@ -18,7 +45,7 @@ void UEPCharacterMovement::UpdateFromCompressedFlags(uint8 Flags)
 	bWantsToAim = (Flags & FSavedMove_Character::FLAG_Custom_1) != 0;
 }
 
-// FSavedMove_EPCharacter 클래스
+// FSaedMove_EPCharacter 클래스
 class FSavedMove_EPCharacter : public FSavedMove_Character
 {
 public:
@@ -47,7 +74,7 @@ uint8 FSavedMove_EPCharacter::GetCompressedFlags() const
 {
 	uint8 Result = FSavedMove_Character::GetCompressedFlags();
 	if (bSavedWantsToSprint)
-		Result |= FSavedMove_Character::FLAG_Custom_0; // 왜 FSavedMove_EPCharacter로 안하지?
+		Result |= FSavedMove_Character::FLAG_Custom_0;
 	if (bSavedWantsToAim)
 		Result |= FSavedMove_Character::FLAG_Custom_1;
 	

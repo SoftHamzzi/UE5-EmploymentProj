@@ -13,8 +13,9 @@
 2. **FBodyInstance 사용** — `SetBoneTransformByName`(포즈 변경)이 아닌 물리 바디 직접 이동
 3. **시간 소스 통일** — `GS->GetServerWorldTimeSeconds()` (서버·클라이언트 시계 일치)
 4. **GAS 연결 예약** — Damage Block을 `ApplyPointDamage` 래퍼로 고립
+5. **SSR 분리** — 리와인드 전체를 `UEPServerSideRewindComponent`로 격리
 
-### 하드코딩 금지 원칙 (이번 수정 핵심)
+### 하드코딩 금지 원칙
 
 아래 값들은 코드 리터럴로 두지 않고 설정값으로 관리한다.
 
@@ -39,46 +40,20 @@
 - `Private/Core/EPCharacter.cpp`
 - `Public/Combat/EPCombatComponent.h`
 - `Private/Combat/EPCombatComponent.cpp`
+- `Public/Data/EPWeaponDefinition.h`
 
 **신규:**
+- `Public/Combat/EPServerSideRewindComponent.h`
+- `Private/Combat/EPServerSideRewindComponent.cpp`
+- `Public/Combat/EPCombatDeveloperSettings.h`
+- `Private/Combat/EPCombatDeveloperSettings.cpp`
 - `Public/Combat/EPPhysicalMaterial.h`
 - `Private/Combat/EPPhysicalMaterial.cpp`
 
 **에디터:**
 - Physics Asset — 본 바디 추가 + WeaponTrace Block + PM 할당
 
-### 1-1. 신규 클래스/파일 폴더 가이드
-
-아래 경로를 기준으로 생성한다.
-
-#### A. Physical Material 클래스
-- 헤더: `EmploymentProj/Source/EmploymentProj/Public/Combat/EPPhysicalMaterial.h`
-- 소스: `EmploymentProj/Source/EmploymentProj/Private/Combat/EPPhysicalMaterial.cpp`
-
-이유:
-- 히트 판정/데미지 계산에서 `EPCombatComponent`가 직접 참조한다.
-- 현재 프로젝트 구조상 Combat 도메인에 두는 것이 가장 자연스럽다.
-
-#### B. Combat DeveloperSettings 클래스 (권장)
-- 헤더: `EmploymentProj/Source/EmploymentProj/Public/Combat/EPCombatDeveloperSettings.h`
-- 소스: `EmploymentProj/Source/EmploymentProj/Private/Combat/EPCombatDeveloperSettings.cpp`
-
-이유:
-- `MaxRewindSeconds`, `SnapshotIntervalSeconds`, `BroadPhasePaddingCm` 등
-  전투 공통 튜닝값을 한곳에서 관리하기 위함.
-
-#### C. 데이터 필드 추가 위치
-- 무기별 값 (`TraceDistanceCm`, `BoneDamageMultiplierMap`)은
-  `EmploymentProj/Source/EmploymentProj/Public/Data/EPWeaponDefinition.h`에 추가.
-- 구현이 필요하면 `EmploymentProj/Source/EmploymentProj/Private/Data/EPWeaponDefinition.cpp` 사용.
-
-#### D. 스냅샷 타입 위치
-- `FEPBoneSnapshot`, `FEPHitboxSnapshot`, `EP_TraceChannel_Weapon` 상수는
-  `EmploymentProj/Source/EmploymentProj/Public/Types/EPTypes.h` 유지.
-
 ---
-
---- 
 
 ## Step 0) 트레이스 채널 확인 + EP_TraceChannel_Weapon 상수 정의
 
@@ -105,12 +80,9 @@
 static constexpr ECollisionChannel EP_TraceChannel_Weapon = ECC_GameTraceChannel1;
 ```
 
-> 채널 번호는 DefaultEngine.ini의 `Channel=ECC_GameTraceChannelN`에서 N 확인.
-> 현재 프로젝트는 `ECC_GameTraceChannel1`.
+### 0-3. UEPCombatDeveloperSettings 추가
 
-### 0-3. Combat 설정값 컨테이너 추가 (권장)
-
-하드코딩 제거를 위해 `UDeveloperSettings`를 추가한다.
+파일: `Public/Combat/EPCombatDeveloperSettings.h`
 
 ```cpp
 UCLASS(Config=Game, DefaultConfig)
@@ -119,27 +91,36 @@ class UEPCombatDeveloperSettings : public UDeveloperSettings
     GENERATED_BODY()
 public:
     UPROPERTY(Config, EditAnywhere, Category="LagComp")
-    float MaxRewindSeconds = 0.2f;
+    float MaxRewindSeconds = 0.5f;
 
     UPROPERTY(Config, EditAnywhere, Category="LagComp")
-    float SnapshotIntervalSeconds = 0.05f; // 20Hz
+    float SnapshotIntervalSeconds = 0.03f; // ~33Hz
 
     UPROPERTY(Config, EditAnywhere, Category="Trace")
     float BroadPhasePaddingCm = 50.f;
 
     UPROPERTY(Config, EditAnywhere, Category="Trace")
     float DefaultTraceDistanceCm = 10000.f;
+
+    // --- 디버그 (Shipping/Test 빌드에서 자동 비활성화) ---
+    UPROPERTY(Config, EditAnywhere, Category="Debug|SSR")
+    bool bEnableSSRDebugDraw = false;
+
+    UPROPERTY(Config, EditAnywhere, Category="Debug|SSR", meta=(ClampMin="0.01"))
+    float SSRDebugDrawDuration = 2.0f;
+
+    UPROPERTY(Config, EditAnywhere, Category="Debug|SSR", meta=(ClampMin="0.1"))
+    float SSRDebugLineThickness = 1.5f;
+
+    UPROPERTY(Config, EditAnywhere, Category="Debug|SSR")
+    bool bEnableSSRDebugLog = false;
 };
 ```
 
-또는 무기별 값은 `UEPWeaponDefinition`으로 이동:
+파일: `Private/Combat/EPCombatDeveloperSettings.cpp`
 
 ```cpp
-UPROPERTY(EditDefaultsOnly, Category="Weapon|Trace")
-float TraceDistanceCm = 10000.f;
-
-UPROPERTY(EditDefaultsOnly, Category="Weapon|Damage")
-TMap<FName, float> BoneDamageMultiplierMap;
+#include "Combat/EPCombatDeveloperSettings.h"
 ```
 
 ---
@@ -155,9 +136,11 @@ TMap<FName, float> BoneDamageMultiplierMap;
 | 본 | 형태 | 배율 목적 |
 |----|------|----------|
 | `head` | Sphere | 헤드샷 2.0x |
-| `spine_03`, `spine_01` | Capsule | 상하체 1.0x |
-| `upperarm_l/r`, `lowerarm_l/r` | Capsule | 팔 0.75x |
-| `thigh_l/r`, `calf_l/r` | Capsule | 다리 0.75x |
+| `neck_01` | Capsule | 상체 1.0x |
+| `pelvis`, `spine_04`, `spine_02` | Capsule | 몸통 1.0x |
+| `clavicle_l/r` | Capsule | 어깨 1.0x |
+| `upperarm_l/r`, `lowerarm_l/r`, `hand_l/r` | Capsule | 팔 0.75x |
+| `thigh_l/r`, `calf_l/r`, `foot_l/r` | Capsule | 다리 0.75x |
 
 각 바디: `Physics Type` → **Kinematic** (애니메이션만 따라감, 물리 시뮬레이션 없음)
 
@@ -171,7 +154,7 @@ TMap<FName, float> BoneDamageMultiplierMap;
 ### 1-3. Physics Asset 저장
 
 `File → Save` 또는 `Ctrl+S` — 저장 전 바디 이름이 본 이름과 일치하는지 확인
-(`head`, `spine_03` 등 — Physics Asset이 자동으로 본 이름을 바디 이름으로 사용)
+(`head`, `spine_04` 등 — Physics Asset이 자동으로 본 이름을 바디 이름으로 사용)
 
 ---
 
@@ -183,7 +166,7 @@ TMap<FName, float> BoneDamageMultiplierMap;
 > 전용 서버는 렌더링이 없으므로 기본값을 그대로 두면
 > **서버에서 본 Transform이 갱신되지 않아 스냅샷이 항상 같은 포즈**로 고정된다.
 
-파일: `Private/Core/EPCharacter.cpp` → 생성자(또는 BeginPlay)에 추가
+파일: `Private/Core/EPCharacter.cpp` → 생성자에 추가
 
 ```cpp
 // 서버에서 스켈레탈 메시 애니메이션이 항상 평가되도록 강제
@@ -194,9 +177,6 @@ GetMesh()->VisibilityBasedAnimTickOption =
 
 > **AlwaysTickPoseAndRefreshBones**: 화면에 보이지 않아도 매 프레임 애니메이션 평가 + 본 Transform 갱신.
 > 서버는 렌더링이 없으므로 이 옵션 없이는 본 스냅샷이 정적 포즈로 고정된다.
->
-> 퍼포먼스: 서버에서는 렌더링이 없어 CPU 비용만 발생. 캐릭터 수가 많아지면
-> 부하가 될 수 있으나 현재 프로젝트 규모에서는 문제없다.
 
 ---
 
@@ -233,122 +213,229 @@ struct FEPHitboxSnapshot
 
 ---
 
-## Step 3) EPCharacter.h — 히트박스 관련 선언 추가
+## Step 3) EPServerSideRewindComponent.h — 헤더 작성
 
-파일: `Public/Core/EPCharacter.h`
-
-### 3-1. include 추가 (파일 상단)
+파일: `Public/Combat/EPServerSideRewindComponent.h`
 
 ```cpp
+#pragma once
+
+#include "CoreMinimal.h"
+#include "Components/ActorComponent.h"
 #include "Types/EPTypes.h"
+#include "EPServerSideRewindComponent.generated.h"
+
+class AEPCharacter;
+class AEPWeapon;
+
+UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent))
+class EMPLOYMENTPROJ_API UEPServerSideRewindComponent : public UActorComponent
+{
+    GENERATED_BODY()
+
+public:
+    UEPServerSideRewindComponent();
+
+    // 히트스캔 판정 단일 진입점 — CombatComponent에서 호출
+    bool ConfirmHitscan(
+        AEPCharacter* Shooter,
+        AEPWeapon* EquippedWeapon,
+        const FVector& Origin,
+        const TArray<FVector>& Directions,
+        float ClientFireTime,
+        TArray<FHitResult>& OutConfirmedHits);
+
+    // Broad Phase에서도 사용하므로 public
+    FEPHitboxSnapshot GetSnapshotAtTime(float TargetTime) const;
+
+protected:
+    virtual void BeginPlay() override;
+
+    static const TArray<FName> HitBones; // 기록할 본 목록
+    float SnapshotAccumulator = 0.f;
+    int32 MaxHistoryCount = 0;
+
+    // 시간 오름차순으로 유지 - [0] 오래됨, [Last] 최신
+    // 링버퍼 대신 단순 배열을 통해 GetSnapshotAtTime의 탐색 순서 보장
+    UPROPERTY()
+    TArray<FEPHitboxSnapshot> HitboxHistory;
+
+    void SaveHitboxSnapshot();
+
+    TArray<AEPCharacter*> GetHitscanCandidates(
+        AEPCharacter* Shooter,
+        AEPWeapon* EquippedWeapon,
+        const FVector& Origin,
+        const TArray<FVector>& Directions,
+        float ClientFireTime) const;
+
+public:
+    virtual void TickComponent(
+        float DeltaTime, ELevelTick TickType,
+        FActorComponentTickFunction* ThisTickFunction) override;
+};
 ```
 
-### 3-2. public 섹션에 추가
+---
+
+## Step 4) EPServerSideRewindComponent.cpp — 구현
+
+파일: `Private/Combat/EPServerSideRewindComponent.cpp`
+
+### 4-1. include 목록
 
 ```cpp
-// Lag Compensation — 서버에서 GetSnapshotAtTime 호출
-FEPHitboxSnapshot GetSnapshotAtTime(float TargetTime) const;
+#include "Combat/EPServerSideRewindComponent.h"
 
-// 사망 여부 — Broad Phase에서 이미 죽은 캐릭터 제외
-bool IsDead() const { return HP <= 0; }
+#include "Combat/EPCombatDeveloperSettings.h"
+#include "Combat/EPWeapon.h"
+#include "Components/CapsuleComponent.h"
+#include "Core/EPCharacter.h"
+#include "DrawDebugHelpers.h"
+#include "EngineUtils.h"
+#include "GameFramework/GameStateBase.h"
+#include "PhysicsEngine/AggregateGeom.h"
+#include "PhysicsEngine/BodyInstance.h"
+#include "PhysicsEngine/BodySetup.h"
 ```
 
-### 3-3. protected 섹션에 추가
+### 4-2. FEPRewindEntry (파일 스코프, 클래스 선언 전)
 
 ```cpp
-// 히트박스 스냅샷 히스토리 (서버 전용, 복제 없음)
-static const TArray<FName> HitBones;      // 기록할 본 목록
-float SnapshotAccumulator = 0.f;          // Tick 누적
-
-// 하드코딩 대신 설정값에서 읽는다.
-// 예: CombatSettings->SnapshotIntervalSeconds (기본 0.05f)
-// 예: CombatSettings->MaxRewindSeconds      (기본 0.2f)
-int32 MaxHistoryCount = 0;
-
-// 시간 오름차순으로 유지된다 — [0]이 가장 오래됨, [Last]가 가장 최신
-// 링버퍼 대신 단순 배열을 사용해 GetSnapshotAtTime의 탐색 순서를 보장한다
-TArray<FEPHitboxSnapshot> HitboxHistory;
-
-// 서버 Tick에서 SnapshotInterval마다 호출
-void SaveHitboxSnapshot();
+// AEPCharacter*에 의존하므로 EPTypes.h에 넣지 않는다.
+// 복제 불필요 — 리와인드 중 임시 사용 후 즉시 복구된다.
+struct FEPRewindEntry
+{
+    AEPCharacter* Character = nullptr;
+    TArray<FEPBoneSnapshot> SavedBones;
+};
 ```
 
-### 3-4. BeginPlay에서 MaxHistoryCount 초기화
+### 4-3. 디버그 헬퍼 (파일 스코프)
 
-`MaxHistoryCount`는 반드시 `BeginPlay`에서 계산해 초기화한다.
+Physics Asset `AggGeom` 기반 실제 primitive를 그린다.
+임시 위치 캡슐이 아닌 `FBodyInstance`의 실제 물리 shape를 시각화한다.
 
 ```cpp
-void AEPCharacter::BeginPlay()
+static void DrawBodyAggGeomPrimitives(
+    UWorld* World, const FBodyInstance* Body,
+    const FColor& Color, const float Duration, const float Thickness)
+{
+    if (!World || !Body) return;
+    const UBodySetup* BodySetup = Body->GetBodySetup();
+    if (!BodySetup) return;
+
+    const FTransform BodyWorld = Body->GetUnrealWorldTransform();
+    const FVector Scale3D = BodyWorld.GetScale3D().GetAbs();
+
+    for (const FKSphereElem& Sphere : BodySetup->AggGeom.SphereElems)
+    {
+        const FVector CenterWS = BodyWorld.TransformPosition(Sphere.Center);
+        DrawDebugSphere(World, CenterWS, Sphere.Radius * Scale3D.GetMax(),
+            16, Color, false, Duration, 0, Thickness);
+    }
+    for (const FKSphylElem& Sphyl : BodySetup->AggGeom.SphylElems)
+    {
+        const FVector CenterWS = BodyWorld.TransformPosition(Sphyl.Center);
+        const FQuat RotWS = BodyWorld.GetRotation() * FQuat(Sphyl.Rotation);
+        const float RadiusWS = Sphyl.Radius * FMath::Max(Scale3D.X, Scale3D.Y);
+        const float HalfHeightWS = (Sphyl.Length * 0.5f + Sphyl.Radius) * Scale3D.Z;
+        DrawDebugCapsule(World, CenterWS, HalfHeightWS, RadiusWS,
+            RotWS, Color, false, Duration, 0, Thickness);
+    }
+    for (const FKBoxElem& Box : BodySetup->AggGeom.BoxElems)
+    {
+        const FVector CenterWS = BodyWorld.TransformPosition(Box.Center);
+        const FQuat RotWS = BodyWorld.GetRotation() * FQuat(Box.Rotation);
+        DrawDebugBox(World, CenterWS,
+            FVector(Box.X * 0.5f, Box.Y * 0.5f, Box.Z * 0.5f) * Scale3D,
+            RotWS, Color, false, Duration, 0, Thickness);
+    }
+}
+
+// AEPCharacter의 HitBones 전체를 한 번에 그리는 래퍼.
+// ConfirmHitscan에서 Blue(리와인드 전) / Red(리와인드 후) 시각화에 사용한다.
+static void DrawHitBonesPrimitivesForCharacter(
+    UWorld* World, const AEPCharacter* Char,
+    const TArray<FName>& Bones,
+    const FColor& Color, const float Duration, const float Thickness)
+{
+    if (!World || !Char || !Char->GetMesh()) return;
+
+    for (const FName& BoneName : Bones)
+    {
+        const FBodyInstance* Body = Char->GetMesh()->GetBodyInstance(BoneName);
+        if (!Body) continue;
+        DrawBodyAggGeomPrimitives(World, Body, Color, Duration, Thickness);
+    }
+}
+```
+
+### 4-4. HitBones 정의 + 생성자 + BeginPlay
+
+```cpp
+const TArray<FName> UEPServerSideRewindComponent::HitBones =
+{
+    TEXT("head"),
+    TEXT("neck_01"),
+    TEXT("pelvis"),
+    TEXT("spine_04"), TEXT("spine_02"),
+    TEXT("clavicle_l"), TEXT("clavicle_r"),
+    TEXT("upperarm_l"), TEXT("upperarm_r"),
+    TEXT("lowerarm_l"), TEXT("lowerarm_r"),
+    TEXT("hand_l"),     TEXT("hand_r"),
+    TEXT("thigh_l"),    TEXT("thigh_r"),
+    TEXT("calf_l"),     TEXT("calf_r"),
+    TEXT("foot_l"),     TEXT("foot_r")
+};
+
+UEPServerSideRewindComponent::UEPServerSideRewindComponent()
+{
+    PrimaryComponentTick.bCanEverTick = true;
+    SetIsReplicatedByDefault(false); // 서버 전용 컴포넌트
+}
+
+void UEPServerSideRewindComponent::BeginPlay()
 {
     Super::BeginPlay();
 
     const UEPCombatDeveloperSettings* CombatSettings = GetDefault<UEPCombatDeveloperSettings>();
     const float Interval = FMath::Max(0.01f, CombatSettings->SnapshotIntervalSeconds);
     const float RewindWindow = FMath::Max(0.05f, CombatSettings->MaxRewindSeconds);
-
     // 리와인드 윈도우 + 경계 보간 여유 2프레임
     MaxHistoryCount = FMath::CeilToInt(RewindWindow / Interval) + 2;
 }
 ```
 
----
-
-## Step 4) EPCharacter.cpp — HitBones 정의 + SaveHitboxSnapshot
-
-파일: `Private/Core/EPCharacter.cpp`
-
-### 4-1. include 추가
+### 4-5. TickComponent — 스냅샷 누적
 
 ```cpp
-#include "GameFramework/GameStateBase.h"
-#include "Combat/EPCombatDeveloperSettings.h"
-```
-
-### 4-2. HitBones 정의 (.cpp 상단, 클래스 외부)
-
-```cpp
-const TArray<FName> AEPCharacter::HitBones =
+void UEPServerSideRewindComponent::TickComponent(
+    float DeltaTime, ELevelTick TickType,
+    FActorComponentTickFunction* ThisTickFunction)
 {
-    TEXT("head"),
-    TEXT("spine_03"), TEXT("spine_01"),
-    TEXT("upperarm_l"), TEXT("upperarm_r"),
-    TEXT("lowerarm_l"), TEXT("lowerarm_r"),
-    TEXT("thigh_l"),    TEXT("thigh_r"),
-    TEXT("calf_l"),     TEXT("calf_r")
-};
-```
+    Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
-### 4-3. Tick에서 SaveHitboxSnapshot 호출
-
-기존 `BeginPlay`에 추가하거나 `TickComponent`를 활용:
-
-```cpp
-void AEPCharacter::Tick(float DeltaTime)
-{
-    Super::Tick(DeltaTime);
-
-    // 서버에서만 스냅샷 기록
-    if (!HasAuthority()) return;
+    AEPCharacter* OwnerChar = Cast<AEPCharacter>(GetOwner());
+    if (!OwnerChar || !OwnerChar->HasAuthority()) return;
 
     const UEPCombatDeveloperSettings* CombatSettings = GetDefault<UEPCombatDeveloperSettings>();
     SnapshotAccumulator += DeltaTime;
+    if (SnapshotAccumulator < CombatSettings->SnapshotIntervalSeconds) return;
 
-    if (SnapshotAccumulator >= CombatSettings->SnapshotIntervalSeconds)
-    {
-        SnapshotAccumulator = 0.f;
-        SaveHitboxSnapshot();
-    }
+    SnapshotAccumulator = 0.f;
+    SaveHitboxSnapshot();
 }
 ```
 
-> `Tick`이 기본적으로 켜져 있는지 확인: 생성자에 `PrimaryActorTick.bCanEverTick = true;` 필요.
-> 이미 설정되어 있다면 추가 불필요.
-
-### 4-4. SaveHitboxSnapshot 구현
+### 4-6. SaveHitboxSnapshot
 
 ```cpp
-void AEPCharacter::SaveHitboxSnapshot()
+void UEPServerSideRewindComponent::SaveHitboxSnapshot()
 {
+    AEPCharacter* OwnerChar = Cast<AEPCharacter>(GetOwner());
+    if (!OwnerChar) return;
+
     // 전제: GetMesh()->VisibilityBasedAnimTickOption = AlwaysTickPoseAndRefreshBones
     // 이 설정 없이는 전용 서버에서 본 Transform이 갱신되지 않아
     // 모든 스냅샷이 동일한 정적 포즈로 기록된다.
@@ -359,33 +446,32 @@ void AEPCharacter::SaveHitboxSnapshot()
 
     FEPHitboxSnapshot Snapshot;
     Snapshot.ServerTime = ServerNow;
-    Snapshot.Location   = GetActorLocation();
+    Snapshot.Location   = OwnerChar->GetActorLocation();
 
     for (const FName& BoneName : HitBones)
     {
-        const int32 BoneIndex = GetMesh()->GetBoneIndex(BoneName);
+        const int32 BoneIndex = OwnerChar->GetMesh()->GetBoneIndex(BoneName);
         if (BoneIndex == INDEX_NONE) continue;
 
         FEPBoneSnapshot Bone;
         Bone.BoneName       = BoneName;
-        Bone.WorldTransform = GetMesh()->GetBoneTransform(BoneIndex);
+        Bone.WorldTransform = OwnerChar->GetMesh()->GetBoneTransform(BoneIndex);
         Snapshot.Bones.Add(Bone);
     }
 
     // 시간 오름차순 배열 유지.
-    // MaxHistoryCount = CeilToInt(MaxRewindSeconds / SnapshotIntervalSeconds) + 2 권장.
+    // RemoveAt(0) = 가장 오래된 항목 제거 — GetSnapshotAtTime 탐색 순서 보장.
+    // (링버퍼는 wrap 후 [0]이 오래된 항목이 아니므로 탐색 순서 깨짐)
     if (HitboxHistory.Num() >= MaxHistoryCount)
         HitboxHistory.RemoveAt(0);
     HitboxHistory.Add(Snapshot);
 }
 ```
 
----
-
-## Step 5) EPCharacter.cpp — GetSnapshotAtTime 구현
+### 4-7. GetSnapshotAtTime
 
 ```cpp
-FEPHitboxSnapshot AEPCharacter::GetSnapshotAtTime(float TargetTime) const
+FEPHitboxSnapshot UEPServerSideRewindComponent::GetSnapshotAtTime(float TargetTime) const
 {
     if (HitboxHistory.IsEmpty())
         return FEPHitboxSnapshot{};
@@ -396,7 +482,6 @@ FEPHitboxSnapshot AEPCharacter::GetSnapshotAtTime(float TargetTime) const
     if (TargetTime >= HitboxHistory.Last().ServerTime)
         return HitboxHistory.Last();
 
-    // TargetTime을 감싸는 Before/After 탐색
     const FEPHitboxSnapshot* Before = nullptr;
     const FEPHitboxSnapshot* After  = nullptr;
 
@@ -411,20 +496,19 @@ FEPHitboxSnapshot AEPCharacter::GetSnapshotAtTime(float TargetTime) const
         }
     }
 
-    // 정상적으로는 경계 처리에서 이미 걸러짐. 예외 시 안전 반환.
     if (!Before || !After)
         return HitboxHistory.Last();
 
     const float Denom = After->ServerTime - Before->ServerTime;
     const float Alpha = (Denom > KINDA_SMALL_NUMBER)
-                      ? (TargetTime - Before->ServerTime) / Denom
+                      ? FMath::Clamp((TargetTime - Before->ServerTime) / Denom, 0.f, 1.f)
                       : 0.f;
 
     FEPHitboxSnapshot Result;
     Result.ServerTime = TargetTime;
     Result.Location   = FMath::Lerp(Before->Location, After->Location, Alpha);
 
-    // per-bone Transform 보간
+    // per-bone Transform 보간 — FTransform::BlendWith로 위치/회전/스케일 동시 보간
     const int32 BoneCount = FMath::Min(Before->Bones.Num(), After->Bones.Num());
     Result.Bones.Reserve(BoneCount);
     for (int32 i = 0; i < BoneCount; ++i)
@@ -440,114 +524,32 @@ FEPHitboxSnapshot AEPCharacter::GetSnapshotAtTime(float TargetTime) const
 }
 ```
 
----
-
-## Step 6) EPCombatComponent.h — 새 함수 선언 + Server_Fire 시그니처 변경
-
-파일: `Public/Combat/EPCombatComponent.h`
-
-### 6-1. forward declaration 추가
+### 4-8. GetHitscanCandidates — Broad Phase
 
 ```cpp
-class UEPPhysicalMaterial;
-```
-
-### 6-2. RequestFire 시그니처 변경
-
-```cpp
-// 기존: void RequestFire(const FVector& Origin, const FVector& Direction);
-// 변경: ClientFireTime 추가
-void RequestFire(const FVector& Origin, const FVector& Direction, float ClientFireTime);
-```
-
-### 6-3. Server_Fire 시그니처 변경
-
-```cpp
-// 기존: void Server_Fire(const FVector& Origin, const FVector& Direction);
-// 변경:
-UFUNCTION(Server, Reliable)
-void Server_Fire(const FVector_NetQuantize& Origin,
-                 const FVector_NetQuantizeNormal& Direction,
-                 float ClientFireTime);
-```
-
-> `FVector_NetQuantize` / `FVector_NetQuantizeNormal`으로 교체해 네트워크 대역폭 절약.
-
-### 6-4. private 섹션에 추가
-
-```cpp
-private:
-    // Broad Phase — 총알 경로 근방 후보 선정
-    TArray<AEPCharacter*> GetHitscanCandidates(
-        AEPCharacter*          Owner,
-        const FVector&         Origin,
-        const TArray<FVector>& Directions,
-        float                  ClientFireTime) const;
-
-    // Rewind + Trace + 복구 + 데미지
-    void HandleHitscanFire(
-        AEPCharacter*          Owner,
-        const FVector&         Origin,
-        const TArray<FVector>& Directions,
-        float                  ClientFireTime);
-
-    // 부위 배율
-    float GetBoneMultiplier(const FName& BoneName) const;
-    static float GetMaterialMultiplier(const UPhysicalMaterial* PM);
-```
-
----
-
-## Step 7) EPCombatComponent.cpp — FEPRewindEntry + GetHitscanCandidates
-
-파일: `Private/Combat/EPCombatComponent.cpp`
-
-### 7-1. include 추가
-
-```cpp
-#include "EngineUtils.h"              // TActorIterator
-#include "Components/CapsuleComponent.h"
-#include "PhysicsEngine/BodyInstance.h"
-#include "GameFramework/GameStateBase.h"
-#include "Combat/EPCombatDeveloperSettings.h"
-#include "Combat/EPPhysicalMaterial.h"
-#include "Types/EPTypes.h"
-```
-
-### 7-2. FEPRewindEntry (파일 상단, 클래스 외부)
-
-```cpp
-// AEPCharacter*에 의존하므로 EPTypes.h에 넣지 않는다.
-// 복제 불필요 — 리와인드 중 임시 사용 후 즉시 복구된다.
-struct FEPRewindEntry
-{
-    AEPCharacter*           Character  = nullptr;
-    TArray<FEPBoneSnapshot> SavedBones;
-};
-```
-
-### 7-3. GetHitscanCandidates 구현
-
-```cpp
-TArray<AEPCharacter*> UEPCombatComponent::GetHitscanCandidates(
-    AEPCharacter*          Owner,
-    const FVector&         Origin,
+TArray<AEPCharacter*> UEPServerSideRewindComponent::GetHitscanCandidates(
+    AEPCharacter* Shooter,
+    AEPWeapon* EquippedWeapon,
+    const FVector& Origin,
     const TArray<FVector>& Directions,
-    float                  ClientFireTime) const
+    float ClientFireTime) const
 {
     TArray<AEPCharacter*> Candidates;
+    const UEPCombatDeveloperSettings* CombatSettings = GetDefault<UEPCombatDeveloperSettings>();
 
     for (TActorIterator<AEPCharacter> It(GetWorld()); It; ++It)
     {
         AEPCharacter* Char = *It;
-        if (!Char || Char == Owner) continue;
-        if (Char->IsDead()) continue; // 이미 사망 — 리와인드 대상 제외
+        if (!Char || Char == Shooter) continue;
+        if (Char->IsDead()) continue;
+
+        const UEPServerSideRewindComponent* TargetSSR = Char->GetServerSideRewindComponent();
+        if (!TargetSSR) continue;
 
         // 과거 위치 기준 Broad Phase (현재 위치 기준이면 이동한 대상을 놓침)
-        const FEPHitboxSnapshot Snap = Char->GetSnapshotAtTime(ClientFireTime);
-        const float CapsuleRadius    = Char->GetCapsuleComponent()->GetScaledCapsuleRadius();
-        const UEPCombatDeveloperSettings* CombatSettings = GetDefault<UEPCombatDeveloperSettings>();
-        const float BroadRadius      = CapsuleRadius + CombatSettings->BroadPhasePaddingCm;
+        const FEPHitboxSnapshot Snap = TargetSSR->GetSnapshotAtTime(ClientFireTime);
+        const float CapsuleRadius = Char->GetCapsuleComponent()->GetScaledCapsuleRadius();
+        const float BroadRadius   = CapsuleRadius + CombatSettings->BroadPhasePaddingCm;
 
         for (const FVector& Dir : Directions)
         {
@@ -555,6 +557,7 @@ TArray<AEPCharacter*> UEPCombatComponent::GetHitscanCandidates(
                 ? EquippedWeapon->WeaponDef->TraceDistanceCm
                 : CombatSettings->DefaultTraceDistanceCm;
             const FVector End = Origin + Dir * TraceDistanceCm;
+
             if (FMath::PointDistToSegment(Snap.Location, Origin, End) <= BroadRadius)
             {
                 Candidates.Add(Char);
@@ -567,40 +570,69 @@ TArray<AEPCharacter*> UEPCombatComponent::GetHitscanCandidates(
 }
 ```
 
----
-
-## Step 8) EPCombatComponent.cpp — HandleHitscanFire 구현
+### 4-9. ConfirmHitscan — 리와인드/Narrow Trace/복구/디버그
 
 ```cpp
-void UEPCombatComponent::HandleHitscanFire(
-    AEPCharacter*          Owner,
-    const FVector&         Origin,
+bool UEPServerSideRewindComponent::ConfirmHitscan(
+    AEPCharacter* Shooter,
+    AEPWeapon* EquippedWeapon,
+    const FVector& Origin,
     const TArray<FVector>& Directions,
-    float                  ClientFireTime)
+    float ClientFireTime,
+    TArray<FHitResult>& OutConfirmedHits)
 {
-    // ── [Rewind Block] ────────────────────────────────────────────────────────
-    // 0. 리와인드 윈도우 클램프 (설정값 초과 = 현재 시점으로 클램프)
+    OutConfirmedHits.Reset();
+    if (!Shooter || !EquippedWeapon || !GetWorld()) return false;
+
     const AGameStateBase* GS = GetWorld()->GetGameState<AGameStateBase>();
     const UEPCombatDeveloperSettings* CombatSettings = GetDefault<UEPCombatDeveloperSettings>();
-    const float ServerNow = GS ? GS->GetServerWorldTimeSeconds()
-                               : GetWorld()->GetTimeSeconds();
+    const float ServerNow = GS ? GS->GetServerWorldTimeSeconds() : GetWorld()->GetTimeSeconds();
+
+    // 디버그 플래그 (Shipping/Test에서 강제 off)
+    bool bDebugDraw = CombatSettings->bEnableSSRDebugDraw;
+    bool bDebugLog  = CombatSettings->bEnableSSRDebugLog;
+#if (UE_BUILD_SHIPPING || UE_BUILD_TEST)
+    bDebugDraw = false;
+    bDebugLog  = false;
+#endif
+    const float DebugDuration  = CombatSettings->SSRDebugDrawDuration;
+    const float DebugThickness = CombatSettings->SSRDebugLineThickness;
+
+    // 0. 리와인드 윈도우 클램프
     if (ServerNow - ClientFireTime > CombatSettings->MaxRewindSeconds)
         ClientFireTime = ServerNow;
 
-    // 1. Broad Phase — 총알 경로 근방 후보 선정
-    const TArray<AEPCharacter*> Candidates =
-        GetHitscanCandidates(Owner, Origin, Directions, ClientFireTime);
+    if (bDebugLog)
+        UE_LOG(LogTemp, Log, TEXT("[SSR] ServerNow=%.3f ClientFireTime=%.3f Delta=%.3f"),
+            ServerNow, ClientFireTime, ServerNow - ClientFireTime);
 
-    // 2. 본 단위 리와인드 + 현재 물리 바디 Transform 저장
+    // 1. Broad Phase
+    const TArray<AEPCharacter*> Candidates =
+        GetHitscanCandidates(Shooter, EquippedWeapon, Origin, Directions, ClientFireTime);
+
+    if (bDebugLog)
+        UE_LOG(LogTemp, Log, TEXT("[SSR] Candidates=%d"), Candidates.Num());
+
+    // 후보군 Set (Narrow trace 결과 필터링용)
+    TSet<TObjectPtr<AEPCharacter>> CandidateSet;
+    for (AEPCharacter* Char : Candidates) CandidateSet.Add(Char);
+
+    // 2. 본 단위 리와인드 + 현재 Transform 저장
     TArray<FEPRewindEntry> RewindEntries;
     RewindEntries.Reserve(Candidates.Num());
 
     for (AEPCharacter* Char : Candidates)
     {
+        UEPServerSideRewindComponent* TargetSSR = Char->GetServerSideRewindComponent();
+        if (!TargetSSR) continue;
+
         FEPRewindEntry& Entry = RewindEntries.AddDefaulted_GetRef();
         Entry.Character = Char;
+        const FEPHitboxSnapshot Snap = TargetSSR->GetSnapshotAtTime(ClientFireTime);
 
-        const FEPHitboxSnapshot Snap = Char->GetSnapshotAtTime(ClientFireTime);
+        // Blue: 서버 현재 물리 primitive (리와인드 전)
+        if (bDebugDraw)
+            DrawHitBonesPrimitivesForCharacter(GetWorld(), Char, HitBones, FColor::Blue, DebugDuration, DebugThickness);
 
         for (const FEPBoneSnapshot& Bone : Snap.Bones)
         {
@@ -614,33 +646,54 @@ void UEPCombatComponent::HandleHitscanFire(
 
             Body->SetBodyTransform(Bone.WorldTransform, ETeleportType::TeleportPhysics);
         }
+
+        // Red: 리와인드 후 물리 primitive
+        if (bDebugDraw)
+            DrawHitBonesPrimitivesForCharacter(GetWorld(), Char, HitBones, FColor::Red, DebugDuration, DebugThickness);
     }
 
-    // 3. Narrow Phase — 모든 후보가 과거 위치에 있는 상태에서 N방향 LineTrace
+    // 3. Narrow Phase
     FCollisionQueryParams Params(SCENE_QUERY_STAT(HitscanFire), false);
-    Params.AddIgnoredActor(Owner);
-    if (EquippedWeapon) Params.AddIgnoredActor(EquippedWeapon);
+    Params.AddIgnoredActor(Shooter);
+    Params.AddIgnoredActor(EquippedWeapon);
     Params.bReturnPhysicalMaterial = true; // Hit.PhysMaterial 확보 (약점 PM 판별용)
 
-    TArray<FHitResult> ConfirmedHits;
     for (const FVector& Dir : Directions)
     {
-        const float TraceDistanceCm = EquippedWeapon && EquippedWeapon->WeaponDef
+        const float TraceDistanceCm = EquippedWeapon->WeaponDef
             ? EquippedWeapon->WeaponDef->TraceDistanceCm
             : CombatSettings->DefaultTraceDistanceCm;
         const FVector End = Origin + Dir * TraceDistanceCm;
+
+        // White: 트레이스 궤적
+        if (bDebugDraw)
+            DrawDebugLine(GetWorld(), Origin, End, FColor::White, false, DebugDuration, 0, DebugThickness);
+
         FHitResult Hit;
-        if (GetWorld()->LineTraceSingleByChannel(
-                Hit, Origin, End, EP_TraceChannel_Weapon, Params)
-            && Cast<AEPCharacter>(Hit.GetActor()) != nullptr)
+        if (GetWorld()->LineTraceSingleByChannel(Hit, Origin, End, EP_TraceChannel_Weapon, Params))
         {
-            ConfirmedHits.Add(Hit);
+            AEPCharacter* HitChar = Cast<AEPCharacter>(Hit.GetActor());
+            if (HitChar && CandidateSet.Contains(HitChar)) // 후보군 외 히트 차단
+            {
+                OutConfirmedHits.Add(Hit);
+
+                // Yellow: 확정 히트 지점
+                if (bDebugDraw)
+                    DrawDebugSphere(GetWorld(), Hit.ImpactPoint, 10.f, 12, FColor::Yellow,
+                        false, DebugDuration, 0, DebugThickness);
+
+                if (bDebugLog)
+                    UE_LOG(LogTemp, Log, TEXT("[SSR] Hit Actor=%s Bone=%s PM=%s"),
+                        *GetNameSafe(Hit.GetActor()), *Hit.BoneName.ToString(),
+                        Hit.PhysMaterial.IsValid() ? *Hit.PhysMaterial->GetName() : TEXT("None"));
+            }
         }
     }
 
-    // 4. 일괄 복구 (반드시 Narrow Phase 직후 — 순서 변경 금지)
+    // 4. 복구 — 반드시 Narrow Phase 직후 무조건 실행
     for (const FEPRewindEntry& Entry : RewindEntries)
     {
+        if (!Entry.Character) continue;
         for (const FEPBoneSnapshot& Saved : Entry.SavedBones)
         {
             FBodyInstance* Body = Entry.Character->GetMesh()->GetBodyInstance(Saved.BoneName);
@@ -649,16 +702,152 @@ void UEPCombatComponent::HandleHitscanFire(
         }
     }
 
-    // ── [Damage Block] ────────────────────────────────────────────────────────
+    if (bDebugLog)
+        UE_LOG(LogTemp, Log, TEXT("[SSR] ConfirmedHits=%d"), OutConfirmedHits.Num());
+
+    return OutConfirmedHits.Num() > 0;
+}
+```
+
+---
+
+## Step 5) EPCharacter.h — RewindComponent 선언 추가
+
+파일: `Public/Core/EPCharacter.h`
+
+### 5-1. forward declaration 추가
+
+```cpp
+class UEPServerSideRewindComponent;
+```
+
+### 5-2. public 섹션에 getter 추가
+
+```cpp
+UEPServerSideRewindComponent* GetServerSideRewindComponent() const;
+FORCEINLINE bool IsDead() const { return HP <= 0; }
+```
+
+### 5-3. protected 섹션에 멤버 추가
+
+```cpp
+UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Rewind")
+UEPServerSideRewindComponent* RewindComponent;
+```
+
+---
+
+## Step 6) EPCharacter.cpp — RewindComponent 연결
+
+파일: `Private/Core/EPCharacter.cpp`
+
+### 6-1. include 추가
+
+```cpp
+#include "Combat/EPServerSideRewindComponent.h"
+```
+
+### 6-2. 생성자에 추가
+
+```cpp
+RewindComponent = CreateDefaultSubobject<UEPServerSideRewindComponent>(
+    TEXT("ServerSideRewindComponent"));
+```
+
+### 6-3. GetServerSideRewindComponent 구현
+
+```cpp
+UEPServerSideRewindComponent* AEPCharacter::GetServerSideRewindComponent() const
+{
+    return RewindComponent;
+}
+```
+
+> `AEPCharacter`에는 `HitBones`, `HitboxHistory`, `SnapshotAccumulator`, `MaxHistoryCount`,
+> `SaveHitboxSnapshot`, `GetSnapshotAtTime`이 **없다** — 모두 `UEPServerSideRewindComponent`에 있다.
+
+---
+
+## Step 7) EPCombatComponent.h — 함수 선언 수정
+
+파일: `Public/Combat/EPCombatComponent.h`
+
+### 7-1. forward declaration 추가
+
+```cpp
+class UEPPhysicalMaterial;
+```
+
+### 7-2. RequestFire 시그니처
+
+```cpp
+void RequestFire(const FVector& Origin, const FVector& Direction, float ClientFireTime);
+```
+
+### 7-3. Server_Fire 시그니처
+
+```cpp
+UFUNCTION(Server, Reliable)
+void Server_Fire(const FVector_NetQuantize& Origin,
+                 const FVector_NetQuantizeNormal& Direction,
+                 float ClientFireTime);
+```
+
+### 7-4. private 섹션
+
+`GetHitscanCandidates`는 SSR로 이동했으므로 CombatComponent에는 아래만 남긴다.
+
+```cpp
+private:
+    // SSR에서 반환한 ConfirmedHits에 대해 데미지 계산
+    void HandleHitscanFire(
+        AEPCharacter*          Owner,
+        const FVector&         Origin,
+        const TArray<FVector>& Directions,
+        float                  ClientFireTime);
+
+    float GetBoneMultiplier(const FName& BoneName) const;
+    static float GetMaterialMultiplier(const UPhysicalMaterial* PM);
+```
+
+---
+
+## Step 8) EPCombatComponent.cpp — HandleHitscanFire (SSR 위임)
+
+파일: `Private/Combat/EPCombatComponent.cpp`
+
+### 8-1. include 추가
+
+```cpp
+#include "Combat/EPServerSideRewindComponent.h"
+#include "Combat/EPPhysicalMaterial.h"
+```
+
+### 8-2. HandleHitscanFire 구현
+
+```cpp
+void UEPCombatComponent::HandleHitscanFire(
+    AEPCharacter* Owner, const FVector& Origin,
+    const TArray<FVector>& Directions, float ClientFireTime)
+{
+    if (!Owner || !Owner->GetServerSideRewindComponent()) return;
+
+    // ── [Rewind Block] → SSR 컴포넌트에 위임 ────────────────────────────────
+    // 후보 선정, 리와인드, Narrow Trace, 복구, 디버그 모두 SSR 내부에서 처리한다
+    TArray<FHitResult> ConfirmedHits;
+    Owner->GetServerSideRewindComponent()->ConfirmHitscan(
+        Owner, EquippedWeapon, Origin, Directions, ClientFireTime, ConfirmedHits);
+
+    // ── [Damage Block] ───────────────────────────────────────────────────────
     // GAS 전환 시 GameplayEffectSpec + SetByCaller로 교체
     for (const FHitResult& Hit : ConfirmedHits)
     {
         if (!Hit.GetActor()) continue;
 
-        const float BaseDamage       = EquippedWeapon ? EquippedWeapon->GetDamage() : 0.f;
-        const float BoneMultiplier   = GetBoneMultiplier(Hit.BoneName);
+        const float BaseDamage         = EquippedWeapon ? EquippedWeapon->GetDamage() : 0.f;
+        const float BoneMultiplier     = GetBoneMultiplier(Hit.BoneName);
         const float MaterialMultiplier = GetMaterialMultiplier(Hit.PhysMaterial.Get());
-        const float FinalDamage      = BaseDamage * BoneMultiplier * MaterialMultiplier;
+        const float FinalDamage        = BaseDamage * BoneMultiplier * MaterialMultiplier;
 
         UE_LOG(LogTemp, Log,
             TEXT("[BoneHitbox] Bone=%s PM=%s Base=%.1f Bone×=%.2f Mat×=%.2f Final=%.1f"),
@@ -667,31 +856,25 @@ void UEPCombatComponent::HandleHitscanFire(
             BaseDamage, BoneMultiplier, MaterialMultiplier, FinalDamage);
 
         UGameplayStatics::ApplyPointDamage(
-            Hit.GetActor(),
-            FinalDamage,
-            (Hit.ImpactPoint - Origin).GetSafeNormal(),
-            Hit,
-            Owner->GetController(),
-            Owner,
-            UDamageType::StaticClass()
-        );
+            Hit.GetActor(), FinalDamage,
+            (Hit.ImpactPoint - Origin).GetSafeNormal(), Hit,
+            Owner->GetController(), Owner, UDamageType::StaticClass());
     }
 }
 ```
 
-### GetBoneMultiplier / GetMaterialMultiplier
+### 8-3. GetBoneMultiplier / GetMaterialMultiplier
 
 ```cpp
 float UEPCombatComponent::GetBoneMultiplier(const FName& BoneName) const
 {
-    // 권장: WeaponDefinition 또는 CombatSettings의 맵으로 관리
-    // TMap<FName, float> BoneDamageMultiplierMap;
+    // WeaponDefinition의 BoneDamageMultiplierMap에서 읽는다 (데이터 주도)
     // 예: head=2.0, spine_03=1.0, upperarm_l=0.75 ...
     if (EquippedWeapon && EquippedWeapon->WeaponDef)
         if (const float* Found = EquippedWeapon->WeaponDef->BoneDamageMultiplierMap.Find(BoneName))
             return *Found;
 
-    // 누락 본은 기본 배율 1.0 + 경고 로그
+    // 맵에 없는 본은 기본 배율 1.0 + 경고 로그
     UE_LOG(LogTemp, Verbose, TEXT("[BoneHitbox] Bone multiplier fallback: %s"), *BoneName.ToString());
     return 1.0f;
 }
@@ -712,15 +895,13 @@ float UEPCombatComponent::GetMaterialMultiplier(const UPhysicalMaterial* PM)
 
 ---
 
-## Step 9) EPCombatComponent.cpp — Server_Fire_Implementation 교체
-
-기존 `Server_Fire_Implementation`을 `HandleHitscanFire`를 호출하는 방식으로 교체한다.
+## Step 9) EPCombatComponent.cpp — Server_Fire_Implementation
 
 ```cpp
 void UEPCombatComponent::Server_Fire_Implementation(
-    const FVector_NetQuantize&      Origin,
+    const FVector_NetQuantize&       Origin,
     const FVector_NetQuantizeNormal& Direction,
-    float                           ClientFireTime)
+    float                            ClientFireTime)
 {
     if (!EquippedWeapon || !EquippedWeapon->CanFire()) return;
 
@@ -728,12 +909,12 @@ void UEPCombatComponent::Server_Fire_Implementation(
     EquippedWeapon->Fire(SpreadDir); // 탄약 감소
 
     AEPCharacter* Owner = GetOwnerCharacter();
+    if (!Owner || !Owner->GetServerSideRewindComponent()) return;
 
     // 히트스캔: 방향 배열로 감싸 HandleHitscanFire에 전달 (산탄총 확장 대비)
     const TArray<FVector> Directions = { SpreadDir };
     HandleHitscanFire(Owner, Origin, Directions, ClientFireTime);
 
-    // 이펙트 (판정과 무관하게 발사 시 항상 재생)
     const FVector MuzzleLocation =
         EquippedWeapon->WeaponMesh->DoesSocketExist(TEXT("MuzzleSocket"))
         ? EquippedWeapon->WeaponMesh->GetSocketLocation(TEXT("MuzzleSocket"))
@@ -745,11 +926,9 @@ void UEPCombatComponent::Server_Fire_Implementation(
 
 ---
 
-## Step 10) EPCombatComponent.cpp — RequestFire 업데이트
+## Step 10) RequestFire + Input_Fire 업데이트
 
-파일: `Private/Combat/EPCombatComponent.cpp`
-
-`RequestFire`가 `ClientFireTime`을 서버에 전달하도록 수정한다.
+### 10-1. EPCombatComponent::RequestFire
 
 ```cpp
 void UEPCombatComponent::RequestFire(
@@ -766,11 +945,18 @@ void UEPCombatComponent::RequestFire(
     if (CurrentTime - LocalLastFireTime < FireInterval) return;
     LocalLastFireTime = CurrentTime;
 
-    // ClientFireTime을 서버에 전달
+    if (Owner && Owner->IsLocallyControlled())
+    {
+        const FVector MuzzleLocation =
+            (EquippedWeapon->WeaponMesh && EquippedWeapon->WeaponMesh->DoesSocketExist(TEXT("MuzzleSocket")))
+            ? EquippedWeapon->WeaponMesh->GetSocketLocation(TEXT("MuzzleSocket"))
+            : EquippedWeapon->GetActorLocation();
+        PlayLocalMuzzleEffect(MuzzleLocation);
+    }
+
     Server_Fire(Origin, Direction, ClientFireTime);
 
-    // 로컬 반동
-    if (Owner->IsLocallyControlled())
+    if (Owner && Owner->IsLocallyControlled())
     {
         Owner->AddControllerPitchInput(-EquippedWeapon->GetRecoilPitch());
         Owner->AddControllerYawInput(FMath::RandRange(
@@ -779,7 +965,7 @@ void UEPCombatComponent::RequestFire(
 }
 ```
 
-파일: `Private/Core/EPCharacter.cpp`의 `Input_Fire` 업데이트:
+### 10-2. AEPCharacter::Input_Fire
 
 ```cpp
 void AEPCharacter::Input_Fire(const FInputActionValue& Value)
@@ -817,16 +1003,16 @@ void AEPCharacter::Input_Fire(const FInputActionValue& Value)
 #include "EPPhysicalMaterial.generated.h"
 
 // 약점 여부와 배율을 Physics Asset 바디에 직접 바인딩하기 위한 커스텀 PM.
-// GAS 전환 시 MaterialTags + WeaponDefinition 배율 맵을 사용한다.
+// GAS 전환 시 MaterialTags를 활성화해 GameplayTag 기반 판정으로 교체한다.
 UCLASS()
 class EMPLOYMENTPROJ_API UEPPhysicalMaterial : public UPhysicalMaterial
 {
     GENERATED_BODY()
 
 public:
-    // GAS 확장용: Lyra 방식과 동일하게 바디에 GameplayTag 부여
-    UPROPERTY(EditDefaultsOnly, Category = "Damage")
-    FGameplayTagContainer MaterialTags;
+    // GAS 확장용 (현재 주석 처리 — GAS 단계에서 활성화)
+    // UPROPERTY(EditDefaultsOnly, Category = "Damage")
+    // FGameplayTagContainer MaterialTags;
 
     UPROPERTY(EditDefaultsOnly, Category = "Damage")
     bool bIsWeakSpot = false;
@@ -850,7 +1036,7 @@ public:
 1. `Content Browser` → `Content/Data/` 우클릭 → `Physics → Physical Material`
 2. Parent Class: `EPPhysicalMaterial` 선택
 3. 이름: `PM_WeakSpot`
-4. `bIsWeakSpot = true`, `WeakSpotMultiplier = <설정값>`으로 저장
+4. `bIsWeakSpot = true`, `WeakSpotMultiplier = 2.0f`로 저장
 
 ### 11-4. Physics Asset에 PM 할당 (Step 1 보충)
 
@@ -861,11 +1047,7 @@ Physics Asset `PHA_EPCharacter` 열기 →
 
 ## Step 12) EPCharacter.cpp — TakeDamage 단순화
 
-파일: `Private/Core/EPCharacter.cpp`
-
-배율 계산이 `HandleHitscanFire`로 이전되었으므로 TakeDamage에서 제거한다.
-
-기존 코드를 아래로 교체:
+배율 계산이 `HandleHitscanFire`로 이전되었으므로 `TakeDamage`에서 제거한다.
 
 ```cpp
 float AEPCharacter::TakeDamage(
@@ -890,20 +1072,41 @@ float AEPCharacter::TakeDamage(
 }
 ```
 
+> **GAS 전환 시**: `ApplyPointDamage` → `ApplyGameplayEffectSpecToTarget`으로 교체.
+> 트레이스·배율 계산 코드는 그대로 GAS Execution의 입력값으로 재사용된다.
+
 ---
 
-## Step 13) 빌드 확인
+## Step 13) EPWeaponDefinition.h — TraceDistanceCm + BoneDamageMultiplierMap 추가
+
+파일: `Public/Data/EPWeaponDefinition.h`
+
+```cpp
+// --- 트레이스 ---
+// UPROPERTY 없음 — 에디터에서 수정 불필요한 경우 코드에서 직접 설정
+float TraceDistanceCm = 10000.f;
+
+// 부위별 대미지 (GAS 전환 후 TMap<FGameplayTag,float>으로 교체)
+TMap<FName, float> BoneDamageMultiplierMap;
+```
+
+> `BoneDamageMultiplierMap`은 `UPROPERTY`가 없으므로 에디터 노출 없이 C++ 또는 DataAsset 로직으로 채운다.
+> GAS 전환 시 `TMap<FGameplayTag, float>`으로 교체한다.
+
+---
+
+## Step 14) 빌드 확인
 
 ```bash
 UnrealBuildTool.exe EmploymentProj Win64 Development \
   -project="EmploymentProj/EmploymentProj.uproject"
 ```
 
-오류가 없으면 에디터 실행 후 Step 14로.
+오류가 없으면 에디터 실행 후 Step 15로.
 
 ---
 
-## Step 14) 테스트 절차 + 트러블슈팅
+## Step 15) 테스트 절차 + 트러블슈팅
 
 ### 테스트 환경
 
@@ -917,12 +1120,15 @@ PIE → `New Editor Window (PIE)` → Number of Players: 2 → Dedicated Server 
 
 [ ] 로그 확인: [BoneHitbox] 출력 있음
 [ ] 헤드 히트: Bone=head, Bone×=2.00, Final = BaseDamage × 2.0
-[ ] 몸통 히트: Bone=spine_03, Bone×=1.00, Final = BaseDamage × 1.0
+[ ] 몸통 히트: Bone=spine_04, Bone×=1.00, Final = BaseDamage × 1.0
 [ ] 사지 히트: Bone=upperarm_l 등, Bone×=0.75, Final = BaseDamage × 0.75
 
 [ ] PM=PM_WeakSpot이면 Mat×=2.0 (head에 PM_WeakSpot 할당 시)
 [ ] 리와인드 후 복구 정상 — 발사 후 캐릭터 외형 이상 없음
 [ ] bReturnPhysicalMaterial: Hit.PhysMaterial.IsValid() == true (로그에서 PM 이름 확인)
+
+[ ] bEnableSSRDebugDraw=true → PIE 서버 뷰포트에 Blue/Red/White/Yellow 표시
+[ ] bEnableSSRDebugLog=true → [SSR] 로그 출력
 ```
 
 ### 트러블슈팅
@@ -930,18 +1136,18 @@ PIE → `New Editor Window (PIE)` → Number of Players: 2 → Dedicated Server 
 | 증상 | 원인 | 해결 |
 |------|------|------|
 | `Hit.BoneName`이 항상 None | Physics Asset 바디 이름이 본 이름과 불일치 | PA 에디터에서 바디 이름 확인 |
-| 일부 본만 배율이 안 먹음 | 스켈레톤 본 이름과 BoneDamageMultiplierMap 키 불일치 | 시작 시 본 이름 검증 로그 추가, 누락 키 채우기 |
-| `Hit.PhysMaterial`이 nullptr | `bReturnPhysicalMaterial = false` 또는 PM 미할당 | Step 8 Params 확인, Step 11 PM 할당 |
+| 일부 본만 배율이 안 먹음 | `BoneDamageMultiplierMap` 키 누락 | 누락 키 채우기 |
+| `Hit.PhysMaterial`이 nullptr | `bReturnPhysicalMaterial = false` 또는 PM 미할당 | Step 4-9 Params 확인, Step 11 PM 할당 |
 | 히트 판정 전혀 안됨 | Physics Asset 바디가 WeaponTrace를 Block하지 않음 | Step 1-2 채널 설정 확인 |
 | `FBodyInstance*`가 nullptr | 해당 본에 Physics Asset 바디 없음 | Step 1-1 바디 추가 확인 |
-| 리와인드 후 캐릭터 자세 이상 | 복구 루프 누락 또는 순서 오류 | Step 8 "4. 일괄 복구" 위치 확인 |
-| 데미지가 항상 BaseDamage 그대로 | `GetBoneMultiplier`가 호출 안됨 또는 BoneName이 빈 값 | 로그로 BoneName 확인 |
+| 리와인드 후 캐릭터 자세 이상 | 복구 루프 누락 또는 순서 오류 | Step 4-9 "4. 복구" 위치 확인 |
+| 데미지가 항상 BaseDamage 그대로 | `GetBoneMultiplier`가 1.0만 반환 | BoneDamageMultiplierMap 채워져 있는지 확인 |
 | 헤드샷 배율 2.0이 두 번 적용됨 | TakeDamage에 배율 계산이 남아 있음 | Step 12 TakeDamage 정리 확인 |
-| HitboxHistory 항상 비어 있음 | SaveHitboxSnapshot이 호출 안됨 또는 서버가 아님 | Step 4-3 Tick + HasAuthority 확인 |
+| HitboxHistory 항상 비어 있음 | SaveHitboxSnapshot이 호출 안됨 또는 서버가 아님 | TickComponent + HasAuthority 확인 |
 | 모든 스냅샷 본 Transform이 동일 (T-포즈 고정) | 서버에서 애니메이션 Tick 꺼짐 | Step 1-5 VisibilityBasedAnimTickOption 확인 |
-| 리와인드가 전혀 작동 안 함 (클램프 항상 발동) | ClientFireTime이 클라이언트 로컬 시간으로 전송됨 | Step 10 Input_Fire에서 GS->GetServerWorldTimeSeconds() 확인 |
-| RequestFire 컴파일 오류 | Input_Fire 시그니처 미업데이트 | Step 10 Input_Fire 확인 |
-| 저프레임 서버에서 판정이 불안정 | 히스토리 간격/길이가 프레임 종속으로 설정됨 | SnapshotInterval + MaxHistoryCount를 설정값으로 고정 |
+| 리와인드가 전혀 작동 안 함 (클램프 항상 발동) | ClientFireTime이 클라이언트 로컬 시간으로 전송됨 | Step 10-2 Input_Fire에서 GS->GetServerWorldTimeSeconds() 확인 |
+| Blue/Red primitive 차이가 없음 | 리와인드 윈도우 부족 또는 히스토리 빈 상태 | MaxRewindSeconds, SnapshotIntervalSeconds 확인 |
+| 후보군 외 캐릭터도 히트됨 | CandidateSet 필터 누락 | Step 4-9 "CandidateSet.Contains" 확인 |
 
 ### 구현 완료 기준
 
@@ -951,6 +1157,7 @@ PIE → `New Editor Window (PIE)` → Number of Players: 2 → Dedicated Server 
   - 사지: 37.5 데미지
 - `PM_WeakSpot` PM 할당 부위에서 추가 배율 적용됨
 - 리와인드 → 복구 사이클 후 캐릭터 포즈 이상 없음
+- 200ms 지연 환경에서 이동 타깃 명중률 정상
 
 ---
 
@@ -1035,6 +1242,7 @@ void UEPCombatComponent::Server_Fire_Implementation(
     EquippedWeapon->Fire(SpreadDir);
 
     AEPCharacter* Owner = GetOwnerCharacter();
+    if (!Owner || !Owner->GetServerSideRewindComponent()) return;
 
     // NetPrediction 단계에서 ProjectileFast / ProjectileSlow 케이스를 추가한다.
     switch (EquippedWeapon->WeaponDef->BallisticType)
@@ -1072,7 +1280,7 @@ void UEPCombatComponent::Server_Fire_Implementation(
 ```
 
 완료 후 상태:
-- `HandleHitscanFire` — 완성, 변경 없음
+- `UEPServerSideRewindComponent::ConfirmHitscan` — 완성, 변경 없음
 - `FBodyInstance` 리와인드/복구 — 완성, 변경 없음
 - `FEPHitboxSnapshot` — 완성, 변경 없음
 - NetPrediction은 `switch`의 주석 해제 + 각 핸들러 함수 구현만 하면 된다

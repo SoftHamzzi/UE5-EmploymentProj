@@ -6,9 +6,8 @@
 #include "Data/EPItemDefinition.h"
 #include "EPWeaponDefinition.generated.h"
 
-/**
- * 
- */
+class AEPProjectile;
+
 UCLASS()
 class EMPLOYMENTPROJ_API UEPWeaponDefinition : public UEPItemDefinition
 {
@@ -25,6 +24,13 @@ public:
 	// --- 전투 ---
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Combat")
 	float Damage = 20.f;
+	
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Ballistic")
+	EEPBallisticType BallisticType = EEPBallisticType::Hitscan;
+	
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Ballistic",
+		meta=(EditCondition = "BallisticType != EEPBallisticType::Hitscan"))
+	TSubclassOf<AEPProjectile> ProjectileClass;
 	
 	// 연사 속도 (초당 발수)
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Weapon|Combat")

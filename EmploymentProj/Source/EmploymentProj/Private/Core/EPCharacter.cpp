@@ -14,6 +14,7 @@
 #include "Combat/EPServerSideRewindComponent.h"
 
 // Core
+#include "EngineUtils.h"
 #include "Camera/CameraComponent.h"
 #include "Core/EPPlayerController.h"
 #include "Components/SkeletalMeshComponent.h"
@@ -23,12 +24,15 @@
 #include "Kismet/GameplayStatics.h"
 #include "Net/UnrealNetwork.h"
 #include "GameFramework/GameStateBase.h"
+#include "GameFramework/PlayerState.h"
 
 AEPCharacter::AEPCharacter(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer.SetDefaultSubobjectClass<UEPCharacterMovement>(
 		ACharacter::CharacterMovementComponentName))
 {
 	PrimaryActorTick.bCanEverTick = true;
+	SetNetUpdateFrequency(66.f);
+	SetMinNetUpdateFrequency(33.f);
 	
 	// --- Body Mesh 설정 ---
 	GetMesh()->SetRelativeLocation(FVector(0.f, 0.f, -90.f));
@@ -38,13 +42,12 @@ AEPCharacter::AEPCharacter(const FObjectInitializer& ObjectInitializer)
 	// 메타휴먼
 	FaceMesh = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("Face"));
 	FaceMesh->SetupAttachment(GetMesh());
-	FaceMesh->SetLeaderPoseComponent(GetMesh());
+	FaceMesh->SetLeaderPoseComponent(GetMesh(), false, true);
 	FaceMesh->bOwnerNoSee = true;
 	
 	OutfitMesh = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("Outfit"));
 	OutfitMesh->SetupAttachment(GetMesh());
 	OutfitMesh->SetLeaderPoseComponent(GetMesh());
-	//OutfitMesh->bOwnerNoSee = true;
 	
 	// --- Camera ---
 	FirstPersonCamera = CreateDefaultSubobject<UCameraComponent>("Camera");
@@ -160,7 +163,7 @@ void AEPCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCompone
 	
 	EnhancedInput->BindAction(
 		PC->GetFireAction(),
-		ETriggerEvent::Triggered, this,
+		ETriggerEvent::Started, this,
 		&AEPCharacter::Input_Fire
 	);
 
@@ -335,11 +338,22 @@ void AEPCharacter::Input_Fire(const FInputActionValue& Value)
 	const float ClientFireTime = GS ? GS->GetServerWorldTimeSeconds()
 									: GetWorld()->GetTimeSeconds();
 	
+	#if !(UE_BUILD_SHIPPING || UE_BUILD_TEST)
+    	for (TActorIterator<AEPCharacter> It(GetWorld()); It; ++It)
+    	{
+    		AEPCharacter* Other = *It;
+    		if (Other == this) continue;
+    		UE_LOG(LogTemp, Log, TEXT("[CLIENT_POS] FireTime=%.3f Actor=%s Pos=%s"),
+    			ClientFireTime, *Other->GetName(), *Other->GetActorLocation().ToString());
+    	}
+    #endif
+	
 	CombatComponent->RequestFire(
 		FirstPersonCamera->GetComponentLocation(),
 		FirstPersonCamera->GetForwardVector(),
 		ClientFireTime
 	);
+	
 }
 
 void AEPCharacter::Input_ToggleAutoStrafeTest()
@@ -380,6 +394,16 @@ void AEPCharacter::Multicast_Die_Implementation()
 	GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	GetMesh()->SetCollisionProfileName(TEXT("Ragdoll"));
 	GetMesh()->SetSimulatePhysics(true);
+	GetCharacterMovement()->StopMovementImmediately();
+	GetCharacterMovement()->DisableMovement();
+	
+	if (FaceMesh)
+	{
+		TArray<USceneComponent*> FaceChildren;
+		FaceMesh->GetChildrenComponents(false, FaceChildren);
+		for (USceneComponent* Child : FaceChildren)
+			Child->SetVisibility(false, true);
+	}
 }
 
 void AEPCharacter::Multicast_PlayHitReact_Implementation()
@@ -393,6 +417,7 @@ void AEPCharacter::Multicast_PlayPainSound_Implementation()
 	if (PainSound)
 		UGameplayStatics::PlaySoundAtLocation(this, PainSound, GetActorLocation());
 }
+
 
 void AEPCharacter::GetLifetimeReplicatedProps(TArray<class FLifetimeProperty>& OutLifetimeProps) const
 {

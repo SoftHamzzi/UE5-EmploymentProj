@@ -16,6 +16,7 @@
 #include "Combat/EPServerSideRewindComponent.h"
 #include "Combat/EPWeapon.h"
 #include "Core/EPCharacter.h"
+#include "GameFramework/PlayerState.h"
 
 UEPCombatComponent::UEPCombatComponent()
 {
@@ -173,9 +174,18 @@ void UEPCombatComponent::Server_Fire_Implementation(
 	AEPCharacter* Owner = GetOwnerCharacter();
 	if (!Owner || !Owner->GetServerSideRewindComponent()) return;
 	
-	// 히트스캔: 방향 배열로 감싸 HandleHitscanFire에 전달. 산탄총 확장 대비
-	const TArray<FVector> Directions = { SpreadDir };
-	HandleHitscanFire(Owner, Origin, Directions, ClientFireTime);
+	switch (EquippedWeapon->WeaponDef->BallisticType)
+	{
+	case EEPBallisticType::Hitscan:
+	default:
+		{
+			const TArray<FVector> Directions = { SpreadDir };
+			HandleHitscanFire(Owner, Origin, Directions, ClientFireTime);
+			break;
+		}
+		// case EEPBallisticType::ProjectileFast:
+		// case EEPBallisticType::ProjectileSlow:
+	}
 	
 	// 발사 이펙트 (항상 먼저 재생)
 	const FVector MuzzleLocation =
@@ -184,8 +194,6 @@ void UEPCombatComponent::Server_Fire_Implementation(
 		: EquippedWeapon->GetActorLocation();
 	
 	Multicast_PlayMuzzleEffect(MuzzleLocation);
-	
-	// if (bHit) Multicast_PlayImpactEffect(Hit.ImpactPoint, Hit.ImpactNormal);
 }
 
 void UEPCombatComponent::Server_Reload_Implementation()
