@@ -8,8 +8,8 @@ UE5 C++ multiplayer extraction shooter ("EmploymentProj") - a portfolio project 
 
 - **DOCS/DOCS.md**: Technical roadmap - maps job posting requirements to implementation stages and UE5 architecture decisions
 - **DOCS/GAME.md**: Game design document - gameplay systems, core loop, and scope definitions
-- **DOCS/Mine/**: System design documents (Item.md, Animation.md, MetaHuman.md, CMC.md, Rep.md) - contain architecture decisions and implementation guides
-- **DOCS/Notes/**: Per-stage technical study notes and implementation checklists
+- **DOCS/Mine/**: System design documents (Item.md, Animation.md, MetaHuman.md, CMC.md, Rep.md, Proj.md) - contain architecture decisions and implementation guides
+- **DOCS/Notes/**: Per-stage technical study notes and implementation checklists (03_BoneHitbox, 03_NetPrediction_Implementation, 04_GAS etc.)
 
 ## Architecture
 
@@ -29,9 +29,17 @@ UE5 dedicated server model. All game logic is server-authoritative.
 - All three layers linked by `ItemId` (FName)
 
 **Combat flow:**
-- `AEPCharacter` → input → `UEPCombatComponent` → `Server_Fire` RPC → server raycast → `ApplyDamage`
-- `AEPWeapon` holds `UEPWeaponDefinition` reference (as `WeaponDef`) for weapon stats
-- Fire effects via `Multicast` RPCs (Unreliable)
+- `AEPCharacter` → input → `UEPCombatComponent` → `Server_Fire` RPC → server validation (3 steps: FireRate/CanFire/OriginDrift) → `EEPBallisticType` switch → hitscan or projectile
+- Hitscan: `HandleHitscanFire` → `UEPServerSideRewindComponent::ConfirmHitscan` → `ApplyDamage`
+- Projectile: `HandleProjectileFire` → `SpawnActor<AEPProjectile>` → `AEPProjectile::OnProjectileHit` → `ApplyDamage`
+- `AEPWeapon` holds `UEPWeaponDefinition` reference (as `WeaponDef`) for weapon stats. `Fire()` computes spread via spherical coordinates + `SpreadDistributionCurve`
+- Fire effects via `Multicast` RPCs (Unreliable). Cosmetic projectile spawned locally in `RequestFire` via `SpawnLocalCosmeticProjectile`
+
+**Lag Compensation:**
+- `UEPServerSideRewindComponent` (server-only, `SetIsReplicatedByDefault(false)`): stores per-bone hitbox snapshots in time-ascending array
+- Snapshot saved on `TG_PostPhysics` tick group, triggered by `MarkPositionUpdated()` from `CMC::OnMovementUpdated` — guarantees position is current before snapshot
+- `ConfirmHitscan`: interpolates between two snapshots at `ClientFireTime`, teleports bones via `FBodyInstance::SetBodyTransform(ETeleportType::TeleportPhysics)`, runs narrow trace, restores
+- All timestamps use `GS->GetServerWorldTimeSeconds()` on both client and server (never local `GetTimeSeconds()`)
 
 **Movement:**
 - Custom CMC (`UEPCharacterMovement`) extends `UCharacterMovementComponent`
@@ -58,7 +66,7 @@ UE5-EmploymentProj/          <- Git root
 ├── DOCS/                    <- Design docs & study notes
 │   ├── DOCS.md              <- Technical roadmap
 │   ├── GAME.md              <- Game design document
-│   ├── Mine/                <- System design docs (Item, Animation, MetaHuman, CMC, Rep)
+│   ├── Mine/                <- System design docs (Item, Animation, MetaHuman, CMC, Rep, Proj)
 │   └── Notes/               <- Study notes & implementation checklists per stage
 ├── .claude/                 <- Claude Code config
 └── EmploymentProj/          <- UE5 project root
@@ -100,7 +108,8 @@ This is a **job portfolio project**. Code must be structurally complete, not jus
 - Server RPCs prefixed `Server_`, Client RPCs prefixed `Client_`, Multicast RPCs prefixed `Multicast_`
 - Weapon data accessed via `WeaponDef->` (type: `UEPWeaponDefinition`)
 - Source layout: `Public/` for headers, `Private/` for .cpp, organized by feature (Core/, Combat/, Data/, Movement/, Animation/, Types/)
-- Git branching: `main` (always builds), `feature/*` per system
+- Git branching: `main` (always builds), `feature-*` per system (current: `feature-gas`)
+- `UActorComponent` subclasses cannot call `HasAuthority()` directly — use `GetOwner()->HasAuthority()`
 - Platform: Windows (win32)
 
 ## Agent Rules

@@ -78,13 +78,14 @@
 
 **Hit Validation (서버 권한 검증)**
 - 클라는 "이 시점에 이 방향으로 쐈다"만 전송
-- 서버가 레이캐스트로 판정
 - RPC: `Server_Fire(FVector_NetQuantize Origin, FVector_NetQuantizeNormal Dir, float ClientFireTime)`
+- 서버 독립 검증 3단계: FireRate(LastServerFireTime), 탄약/무기 상태(CanFire), Origin drift(200cm)
+- `EEPBallisticType`으로 히트스캔/투사체 분기 — 데이터로 탄도 방식 결정
 
 **Lag Compensation (서버 리와인드)**
-- 서버에서 각 캐릭터의 과거 위치/회전 캡슐을 링버퍼로 저장 (100ms 간격, 1~2초치)
-- ClientFireTime을 서버 시간으로 환산
-- 해당 시각의 히트박스 복원 -> 레이캐스트 -> 판정 후 원상복구
+- `UEPServerSideRewindComponent`: 본 기반 히트박스 스냅샷을 시간 오름차순 배열로 저장
+- 스냅샷 저장 시점: `CMC::OnMovementUpdated` → `MarkPositionUpdated()` → `TG_PostPhysics`에서 저장 (위치 갱신 보장)
+- `ConfirmHitscan`: ClientFireTime 기준 보간 → 히트박스 복원 → 레이캐스트 → 판정 후 원상복구
 
 **Reconciliation (보정)**
 - 서버에서 확정 이벤트 전송
