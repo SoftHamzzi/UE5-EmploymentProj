@@ -3,25 +3,62 @@
 
 #include "Combat/EPProjectile.h"
 
-// Sets default values
+#include "Components/SphereComponent.h"
+#include "GameFramework/ProjectileMovementComponent.h"
+#include "Kismet/GameplayStatics.h"
+
 AEPProjectile::AEPProjectile()
 {
- 	// Set this actor to call Tick() every frame.  You can turn this off to improve performance if you don't need it.
-	PrimaryActorTick.bCanEverTick = true;
-
-}
-
-// Called when the game starts or when spawned
-void AEPProjectile::BeginPlay()
-{
-	Super::BeginPlay();
+ 	CollisionComp = CreateDefaultSubobject<USphereComponent>(TEXT("CollisionComp"));
+	CollisionComp->InitSphereRadius(5.f);
+	CollisionComp->SetCollisionProfileName(TEXT("Projectile"));
+	CollisionComp->SetNotifyRigidBodyCollision(true);
+	CollisionComp->OnComponentHit.AddDynamic(this, &AEPProjectile::OnProjectileHit);
+	SetRootComponent(CollisionComp);
 	
+	MovementComp = CreateDefaultSubobject<UProjectileMovementComponent>(TEXT("MovementComp"));
+	MovementComp->bRotationFollowsVelocity = true;
+
 }
 
-// Called every frame
-void AEPProjectile::Tick(float DeltaTime)
+void AEPProjectile::Initialize(float InDamage, const FVector& InDirection)
 {
-	Super::Tick(DeltaTime);
-
+	BaseDamage = InDamage;
+	LaunchDir = InDirection.GetSafeNormal();
+	if (AActor* MyInstigator = GetInstigator())
+		CollisionComp->IgnoreActorWhenMoving(MyInstigator, true);
 }
+
+void AEPProjectile::SetCosmeticOnly()
+{
+	bIsCosmeticOnly = true;
+	CollisionComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+}
+
+void AEPProjectile::OnProjectileHit(
+	UPrimitiveComponent* HitComp,
+	AActor* OtherActor,
+	UPrimitiveComponent* OtherComp,
+	FVector NormalImpulse,
+	const FHitResult& Hit)
+{
+	if (bIsCosmeticOnly) return;
+	
+	if (!HasAuthority()) return;
+	if (OtherActor)
+	{
+		UGameplayStatics::ApplyPointDamage(
+			OtherActor, BaseDamage, LaunchDir, Hit,
+			GetInstigatorController(), GetInstigator(),
+			UDamageType::StaticClass());
+	}
+	
+	Destroy();
+}
+
+
+
+
+
+
 

@@ -547,6 +547,7 @@ GA_Shield:
 
 ## 9. EmploymentProj 4단계 구현 체크리스트
 
+### 기반 세팅
 - [ ] GAS 플러그인 활성화 (Build.cs에 모듈 추가)
 - [ ] `UAbilitySystemGlobals::Get().InitGlobalData()` 호출
 - [ ] ASC를 PlayerState에 배치
@@ -558,6 +559,31 @@ GA_Shield:
   - [ ] PreAttributeChange (클램핑)
   - [ ] PostGameplayEffectExecute (데미지 파이프라인)
   - [ ] 복제 등록 (GetLifetimeReplicatedProps)
+
+### 발사/재장전 어빌리티 (현재 CombatComponent → GAS 이전)
+- [ ] `GA_Item_PrimaryUse` 구현 — 현재 `Server_Fire` + `HandleHitscanFire` / `HandleProjectileFire` 대체
+  - [ ] 서버 검증 3단계 → GAS CanActivateAbility + Cooldown GE로 교체
+  - [ ] `LastServerFireTime` 수동 관리 제거 → `CooldownGameplayEffectClass` 사용
+  - [ ] 히트스캔: SSR `ConfirmHitscan` 위임 유지 (서버 권한 히트 판정은 그대로)
+  - [ ] 투사체: `HandleProjectileFire` 로직 이전
+  - [ ] 코스메틱: `SpawnLocalCosmeticProjectile` + `Multicast_SpawnCosmeticProjectile` 완성
+- [ ] `GA_Item_Reload` 구현 — 현재 `StartReload` / `FinishReload` 대체
+  - [ ] 재장전 시간: `WaitDelay` 또는 `PlayMontageAndWait`
+  - [ ] 탄약 보충: Instant GE로 처리
+  - [ ] `State.Reloading` 태그로 발사 차단
+
+### 스프레드 시스템 개선
+- [ ] `AEPWeapon::BuildSpreadCDFTable()` 구현
+  - [ ] BeginPlay에서 `SpreadDistributionCurve`(PDF)를 이산화 → CDF 룩업 테이블 생성
+  - [ ] `Fire()`에서 이진탐색으로 반경 비율 샘플링
+  - [ ] 커브 없을 때 균등 분포 폴백 유지
+
+### 투사체 시스템 재설계
+- [ ] `GA_Item_PrimaryUse` 내에서 투사체 스폰 처리
+  - [ ] `Multicast_SpawnCosmeticProjectile` 활성화 (현재 주석 처리)
+  - [ ] ProjectileSlow 첫 복제 지연 → 클라 로컬 예측 스폰 후 서버 복제 Actor 조율
+
+### 스킬 어빌리티
 - [ ] GA_Dash 구현
   - [ ] Cost GE, Cooldown GE 생성
   - [ ] 이동 로직 (LaunchCharacter 또는 RootMotion)
@@ -568,9 +594,13 @@ GA_Shield:
 - [ ] GA_Shield 구현
   - [ ] Duration GE (State.Shielded 태그)
   - [ ] 데미지 감소 로직 (PostGameplayEffectExecute)
+
+### 태그 체계
 - [ ] 태그 체계 정의
+  - [ ] Ability.Item.PrimaryUse / Reload
   - [ ] Ability.Skill.Dash / Heal / Shield
-  - [ ] State.Dashing / Channeling / Shielded / Dead
+  - [ ] State.Dead / Reloading / UsingItem / ADS / Dashing / Channeling / Shielded
+  - [ ] Cooldown.Item.PrimaryUse / Reload
   - [ ] Cooldown.Dash / Heal / Shield
 
 ---
@@ -701,19 +731,45 @@ Cooldown.Item.Reload
 
 ### 12-1. 현재 구조와의 충돌 지점
 
-- `AEPCharacter`에 사격/재장전 RPC가 직접 존재
-- `AEPWeapon` 내부에 탄약/장전 상태가 집중
-- `Row + ItemDefinition + ItemInstance`가 분리되지 않으면 무기=아이템 모델이 약해짐
+**`UEPCombatComponent`:**
+- `Server_Fire` RPC에 발사 검증 + 히트스캔 + 투사체 분기가 모두 집중
+- `LastServerFireTime` 수동 관리 → Cooldown GE로 교체
+- `HandleHitscanFire` → `GA_Item_PrimaryUse` 내부로 이전. SSR `ConfirmHitscan` 위임은 유지
+- `HandleProjectileFire` → `GA_Item_PrimaryUse` 내부로 이전
+- `Multicast_SpawnCosmeticProjectile` 현재 주석 처리 → GAS 이전 시 활성화
 
-GAS 이전 시 이 세 지점을 먼저 정리해야 한다.
+**`AEPWeapon`:**
+- `CurrentAmmo` / `StartReload` / `FinishReload` → 탄약 상태는 ItemInstance + GE로 이전
+- `Fire()` 내 탄약 차감 로직 → Instant GE (탄약 감소)로 교체
+- `SpreadDistributionCurve` PDF → BeginPlay에서 CDF 룩업 테이블로 이산화 필요
+- `CanFire()` → GAS `ActivationBlockedTags` (State.Reloading 등) + Cooldown GE로 대체
 
-### 12-2. 단계적 이전 원칙
+**`Row + ItemDefinition + ItemInstance`:**
+- `FEPItemData` / `UEPWeaponDefinition` / `UEPWeaponInstance` 3계층은 유지
+- `UEPWeaponDefinition`에 부여할 GA/GE 클래스 참조 추가 필요
+- 장착 시 ItemInstance가 ASC에 Ability Grant, 해제 시 Remove
+
+### 12-2. SSR은 GAS 이후에도 유지
+
+현재 `UEPServerSideRewindComponent`는 서버 권한 히트 판정을 담당.
+GAS로 이전해도 히트스캔 판정 흐름은 동일:
+
+```
+GA_Item_PrimaryUse (서버)
+    → AEPWeapon::Fire() — 스프레드 계산
+    → SSR->ConfirmHitscan() — 래그 보상 + 히트 판정
+    → IncomingDamage GE 적용
+```
+
+SSR 코드 자체는 수정 없이 호출 위치만 CombatComponent → GA로 이동.
+
+### 12-3. 단계적 이전 원칙
 
 1. 기존 RPC를 한 번에 지우지 않는다.
 2. Ability를 먼저 붙이고, 동작이 안정되면 기존 RPC 경로를 제거한다.
 3. "외형/이펙트"보다 "서버 권한 + 상태 태그 + 비용/쿨다운"을 먼저 맞춘다.
 
-### 12-3. 실무에서 많이 터지는 실수
+### 12-4. 실무에서 많이 터지는 실수
 
 - `InitAbilityActorInfo`를 서버/클라 양쪽에서 초기화하지 않음
 - LocalPredicted Ability에서 서버 거부 시 롤백 고려 누락

@@ -31,7 +31,7 @@ public:
 	
 	// --- 인터페이스 ---
 	bool CanFire() const;
-	void Fire(FVector& OutDirection);
+	void Fire(const FVector& AimDir, float ClientFireTime, TArray<FVector>& OutPellets);
 	FVector ApplySpread(const FVector& Direction) const;
 	
 	void StartReload();

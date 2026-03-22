@@ -7,6 +7,7 @@
 #include "EPWeaponDefinition.generated.h"
 
 class AEPProjectile;
+class UCurveFloat;
 
 UCLASS()
 class EMPLOYMENTPROJ_API UEPWeaponDefinition : public UEPItemDefinition
@@ -31,6 +32,10 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Ballistic",
 		meta=(EditCondition = "BallisticType != EEPBallisticType::Hitscan"))
 	TSubclassOf<AEPProjectile> ProjectileClass;
+	
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Ballistic",
+		meta=(EditCondition="BallisticType == EEPBallisticType::Hitscan", ClampMin = 1))
+	int32 PelletCount = 1;
 	
 	// 연사 속도 (초당 발수)
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Weapon|Combat")
@@ -65,6 +70,10 @@ public:
 	
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Spread")
 	float MovingSpreadMultiplier = 1.5f;
+	
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Spread",
+		meta=(EditCondition="BallisticType == EEPBallisticType::Hitscan"))
+	TObjectPtr<UCurveFloat> SpreadDistributionCurve;
 	
 	// --- 반동 ---
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Recoil")

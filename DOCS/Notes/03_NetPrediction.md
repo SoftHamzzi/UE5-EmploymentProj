@@ -106,49 +106,72 @@ CharacterMovementComponent는 이동 예측을 내장하고 있다:
 `Server_Fire`는 `AEPCharacter`가 아닌 `UEPCombatComponent`에 위치한다.
 전투 관련 로직을 Character에서 분리한 설계 의도를 유지.
 
-✅ **BoneHitbox에서 이미 완료된 현재 구현:**
+✅ **현재 구현 (완료):**
 
 ```cpp
-// EPCombatComponent.h (현재)
-UFUNCTION(Server, Reliable)
-void Server_Fire(const FVector_NetQuantize& Origin, const FVector_NetQuantizeNormal& Direction, float ClientFireTime);
-
-// EPCombatComponent.cpp (현재)
 void UEPCombatComponent::Server_Fire_Implementation(
-    const FVector_NetQuantize& Origin,
+    const FVector_NetQuantize&       Origin,
     const FVector_NetQuantizeNormal& Direction,
-    float ClientFireTime)
+    float                            ClientFireTime)
 {
-    // 연사 속도, 탄약 검증
-    if (!EquippedWeapon || !EquippedWeapon->CanFire()) return;
-
-    FVector SpreadDir = Direction;
-    EquippedWeapon->Fire(SpreadDir); // 탄약 차감
+    if (!EquippedWeapon || !EquippedWeapon->WeaponDef) return;
 
     AEPCharacter* Owner = GetOwnerCharacter();
-    if (!Owner || !Owner->GetServerSideRewindComponent()) return;
+    if (!Owner) return;
 
-    // 히트스캔: 방향 배열로 감싸 HandleHitscanFire에 전달. 산탄총 확장 대비
-    const TArray<FVector> Directions = { SpreadDir };
-    HandleHitscanFire(Owner, Origin, Directions, ClientFireTime);
+    // 1. FireRate: 클라 RPC 스팸 차단 (LastServerFireTime은 서버 전용 — 조작 불가)
+    const AGameStateBase* GS = GetWorld()->GetGameState<AGameStateBase>();
+    const float ServerNow = GS
+        ? GS->GetServerWorldTimeSeconds()
+        : GetWorld()->GetTimeSeconds();
+    const float FireInterval = 1.f / EquippedWeapon->WeaponDef->FireRate;
+    if (ServerNow - LastServerFireTime < FireInterval) return;
+    LastServerFireTime = ServerNow;
+
+    // 2. 탄약 + 무기 상태
+    if (!EquippedWeapon->CanFire()) return;
+
+    // 3. Origin 위치 검증: 벽 너머 조작 방지 (200cm 여유)
+    constexpr float MaxOriginDrift = 200.f;
+    if (FVector::DistSquared(Origin, Owner->GetActorLocation()) > FMath::Square(MaxOriginDrift))
+        return;
+
+    switch (EquippedWeapon->WeaponDef->BallisticType)
+    {
+    case EEPBallisticType::Hitscan:
+    default:
+        {
+            TArray<FVector> PelletDirs;
+            EquippedWeapon->Fire(Direction, ClientFireTime, PelletDirs);
+            HandleHitscanFire(Owner, Origin, PelletDirs, ClientFireTime);
+            break;
+        }
+    case EEPBallisticType::ProjectileFast:
+    case EEPBallisticType::ProjectileSlow:
+        {
+            FVector SpreadDir = Direction;
+            TArray<FVector> DiscardedPellets;
+            EquippedWeapon->Fire(SpreadDir, ClientFireTime, DiscardedPellets);
+            HandleProjectileFire(Owner, Origin, SpreadDir);
+            break;
+        }
+    }
 
     const FVector MuzzleLocation =
-        EquippedWeapon && EquippedWeapon->WeaponMesh->DoesSocketExist(TEXT("MuzzleSocket"))
+        (EquippedWeapon->WeaponMesh && EquippedWeapon->WeaponMesh->DoesSocketExist(TEXT("MuzzleSocket")))
         ? EquippedWeapon->WeaponMesh->GetSocketLocation(TEXT("MuzzleSocket"))
         : EquippedWeapon->GetActorLocation();
 
     Multicast_PlayMuzzleEffect(MuzzleLocation);
-    // ImpactEffect는 HandleHitscanFire 내부 ConfirmedHits 루프에서 호출됨
 }
 ```
 
-**3단계에서 추가할 내용 (아직 미완):**
-- ✅ `FVector_NetQuantize` / `FVector_NetQuantizeNormal` (BoneHitbox 완료)
-- ✅ `ClientFireTime` 파라미터 + SSR `ConfirmHitscan` 위임 (BoneHitbox 완료)
-- ✅ `HandleHitscanFire` 분리 + `ApplyPointDamage` + 부위 배율 (BoneHitbox 완료)
-- `LastServerFireTime` 서버 검증 추가 (이번 단계)
-- Origin 위치 검증 추가 (이번 단계)
-- `EEPBallisticType` switch + `HandleProjectileFire` 분기 (이번 단계)
+- ✅ `FVector_NetQuantize` / `FVector_NetQuantizeNormal`
+- ✅ `ClientFireTime` 파라미터 + SSR `ConfirmHitscan` 위임
+- ✅ `HandleHitscanFire` 분리 + `ApplyPointDamage` + 부위 배율
+- ✅ `LastServerFireTime` 서버 검증 3단계
+- ✅ Origin 위치 검증
+- ✅ `EEPBallisticType` switch + `HandleProjectileFire` 분기
 
 ### FVector_NetQuantize / FVector_NetQuantizeNormal
 
@@ -263,22 +286,17 @@ void UEPCombatComponent::Server_Fire_Implementation(
 }
 ```
 
-> **산탄총 펠릿 생성 — 결정론적 RNG 방식:**
-> 서버는 `ClientFireTime`을 시드로 삼아 스프레드 배열을 재생성한다.
-> 클라이언트도 동일 시드로 N개 펠릿 방향을 생성하여 로컬 이펙트를 표시한다.
+> **산탄총 펠릿 생성 — 서버 독립 생성 방식:**
 > RPC로 클라이언트의 펠릿 방향을 그대로 수신하는 방식은
 > **핵 클라이언트가 모든 펠릿을 조준점으로 보내는 것을 막을 수 없어** 사용하지 않는다.
+> 서버가 독립적으로 펠릿 방향을 생성한다.
 >
-> **시드 변환:** `ClientFireTime`은 float(초 단위)이므로 `FRandomStream` 시드(int32)로 변환한다.
-> ```cpp
-> // 밀리초 단위 정수로 변환 — 클라/서버 동일 연산으로 동일 시드 보장
-> const int32 Seed = FMath::FloorToInt(ClientFireTime * 1000.f);
-> FRandomStream RandStream(Seed);
-> // 128Hz 틱: 연속 두 틱 차이 = 7.8ms → 시드 7 이상 차이 보장 (같은 발사에서 충돌 없음)
-> ```
+> **스프레드 방식:** `FMath::VRandCone(AimDir, HalfAngleRad)`
+> — 원뿔 내부 균등 분포. `HalfAngleRad`는 반각(전체 스프레드의 절반).
+> 서버 단독 판정이므로 클라와 방향이 다소 달라도 비주얼 차이에 그친다.
 >
 > **구현 포인트:** `AEPWeapon::Fire(const FVector& AimDir, float ClientFireTime, TArray<FVector>& OutPellets)`
-> — `WeaponDef->PelletCount`, `WeaponDef->BaseSpread`, `FRandomStream(Seed)`로 N개 방향 생성.
+> — `WeaponDef->PelletCount`, `WeaponDef->BaseSpread`로 N개 방향 생성.
 > 단일 펠릿 무기는 `PelletCount = 1`로 설정하면 동일 함수를 공유한다.
 
 **RequestFire (클라이언트 측):**
@@ -326,7 +344,7 @@ void UEPCombatComponent::RequestFire(const FVector& Origin, const FVector& Direc
 > `ClientFireTime`은 `AEPCharacter::Input_Fire`에서 `GS->GetServerWorldTimeSeconds()`로 획득해 전달한다.
 > HitboxHistory 기록도 동일 기준(`GetServerWorldTimeSeconds()`)을 쓰므로 리와인드 시각이 정확하다.
 
-**추가 필요 (이번 단계 — EEPBallisticType switch 이후):**
+✅ **ProjectileFast 코스메틱 즉시 스폰 (완료):**
 
 ```cpp
     // ProjectileFast: 발사자는 Multicast 왕복을 기다리지 않고 즉시 코스메틱 스폰.
@@ -336,20 +354,19 @@ void UEPCombatComponent::RequestFire(const FVector& Origin, const FVector& Direc
         && EquippedWeapon->WeaponDef->ProjectileClass)
     {
         const FVector MuzzleLoc =
-            EquippedWeapon->WeaponMesh->DoesSocketExist(TEXT("MuzzleSocket"))
+            (EquippedWeapon->WeaponMesh && EquippedWeapon->WeaponMesh->DoesSocketExist(TEXT("MuzzleSocket")))
             ? EquippedWeapon->WeaponMesh->GetSocketLocation(TEXT("MuzzleSocket"))
             : Origin;
-        AEPProjectile* Cosmetic = GetWorld()->SpawnActor<AEPProjectile>(
-            EquippedWeapon->WeaponDef->ProjectileClass,
-            MuzzleLoc, Direction.GetSafeNormal().Rotation());
-        if (Cosmetic)
-            Cosmetic->SetCosmeticOnly();
+        SpawnLocalCosmeticProjectile(MuzzleLoc, Direction);
     }
 ```
 
+`SpawnLocalCosmeticProjectile`은 코스메틱 스폰 로직을 분리한 함수.
+`Multicast_SpawnCosmeticProjectile`도 내부적으로 이 함수를 호출한다.
+
 `HandleHitscanFire`를 독립 함수로 추출하는 이유:
 **GAS 어빌리티의 히트스캔 스킬도 동일 함수를 호출**할 수 있어야 하기 때문이다.
-랙 보상 인프라(`GetSnapshotAtTime`, 링버퍼)는 무기·스킬 구분 없이 공유된다.
+랙 보상 인프라(`GetSnapshotAtTime`, 히스토리 배열)는 무기·스킬 구분 없이 공유된다.
 
 ---
 
@@ -582,7 +599,7 @@ void UEPCombatComponent::HandleProjectileFire(
     if (!EquippedWeapon->WeaponDef || !EquippedWeapon->WeaponDef->ProjectileClass) return;
 
     const FVector MuzzleLoc =
-        EquippedWeapon->WeaponMesh->DoesSocketExist(TEXT("MuzzleSocket"))
+        (EquippedWeapon->WeaponMesh && EquippedWeapon->WeaponMesh->DoesSocketExist(TEXT("MuzzleSocket")))
         ? EquippedWeapon->WeaponMesh->GetSocketLocation(TEXT("MuzzleSocket"))
         : Origin;
 
@@ -625,7 +642,8 @@ void UEPCombatComponent::Multicast_SpawnCosmeticProjectile_Implementation(
 {
     // 서버는 실제 Actor 보유. 발사자(AutonomousProxy)는 RequestFire에서 이미 스폰.
     // 두 경우 모두 여기서 다시 스폰하면 중복 → early return
-    if (HasAuthority()) return;
+    // UActorComponent는 HasAuthority() 없음 → GetOwner()를 통해 접근
+    if (GetOwner()->HasAuthority()) return;
     ACharacter* OwnerChar = Cast<ACharacter>(GetOwner());
     if (OwnerChar && OwnerChar->IsLocallyControlled()) return;
 
@@ -661,15 +679,15 @@ void AEPProjectile::OnProjectileHit(
     UPrimitiveComponent*, AActor* OtherActor,
     UPrimitiveComponent*, FVector, const FHitResult& Hit)
 {
-    if (!HasAuthority()) return; // 서버만 데미지 처리 (코스메틱 인스턴스는 여기 진입 안 함)
+    if (bIsCosmeticOnly) return; // 코스메틱 인스턴스는 즉시 차단
+    if (!HasAuthority()) return; // 서버만 데미지 처리
 
-    // 리와인드 불필요 — 투사체 이동 시간이 지연을 흡수
     // [Chapter 4 GAS 전환 포인트] ApplyPointDamage → GameplayEffectSpec
     if (OtherActor)
     {
         UGameplayStatics::ApplyPointDamage(
             OtherActor, BaseDamage,
-            LaunchDir, // Initialize(float, FVector)로 주입받은 발사 방향
+            LaunchDir,
             Hit, GetInstigatorController(), GetInstigator(),
             UDamageType::StaticClass());
     }
@@ -678,11 +696,29 @@ void AEPProjectile::OnProjectileHit(
 }
 ```
 
-> **ProjectileSlow 클라이언트 예측 gap (Chapter 3 범위 밖):**
+`Initialize()`에서 발사자 본인을 충돌 무시 목록에 추가한다:
+```cpp
+void AEPProjectile::Initialize(float InDamage, const FVector& InDirection)
+{
+    BaseDamage = InDamage;
+    LaunchDir  = InDirection.GetSafeNormal();
+
+    // 발사자 본인 충돌 무시
+    if (AActor* MyInstigator = GetInstigator())
+        CollisionComp->IgnoreActorWhenMoving(MyInstigator, true);
+}
+```
+
+> **투사체 Hit Reg 개선 (GAS 이후):**
+> 현재는 서버 현재 시각 기준으로 물리 충돌 판정한다.
+> GAS 단계에서 `Predicted Projectile Path` 방식으로 개선 예정:
+> ClientFireTime 기반 리와인드 구간 LineTrace + 이후 정방향 시뮬레이션.
+> 자세한 내용: `DOCS/Mine/Proj.md`
+
+> **ProjectileSlow 클라이언트 예측 gap (GAS 이후):**
 > 서버 스폰 Actor가 클라이언트에 처음 복제될 때, 스폰 이후 경과 시간만큼
 > 궤적이 앞으로 점프한 것처럼 보인다 (망령 문제).
-> 실무에서는 클라이언트도 로컬 예측 스폰 후 서버 복제 Actor와 조율하지만,
-> 이 처리는 Chapter 3 범위 밖이며 언급만 한다.
+> GAS 단계에서 Predicted Projectile Path와 함께 처리 예정.
 
 ---
 
@@ -704,38 +740,42 @@ Lag Compensation은 UE5가 범용으로 제공하지 않는다.
 
 ## 7. EmploymentProj 3단계 구현 체크리스트
 
-- [ ] 탄도 방식 분리
-  - [ ] `EEPBallisticType` enum 추가 (Hitscan / ProjectileFast / ProjectileSlow)
-  - [ ] `WeaponDefinition`에 `BallisticType` + `ProjectileClass` + `PelletCount` 추가
-  - [ ] `Server_Fire`에서 `HandleHitscanFire` / `HandleProjectileFire` 분기 (switch 구조)
-- [ ] Hit Validation (히트스캔)
-  - [x] `Server_Fire` RPC 시그니처: `FVector_NetQuantize` + `FVector_NetQuantizeNormal` + `ClientFireTime` ✅ BoneHitbox
-  - [ ] `Server_Fire` 서버 검증 3단계: FireRate(`LastServerFireTime`) → CanFire → Origin drift
-  - [ ] `LastServerFireTime` 멤버 추가 (서버 전용, 발사 속도 검증용)
-  - [ ] `AEPWeapon::Fire` 오버로드: `Fire(AimDir, ClientFireTime, OutPellets)` — 결정론적 RNG 펠릿 생성
-  - [x] `HandleHitscanFire` 구현 (SSR::ConfirmHitscan 위임 + Damage Block) ✅ BoneHitbox
-  - [x] `GetHitscanCandidates()` 구현 (SSR 내부, Broad Phase, 사망 필터) ✅ BoneHitbox
-  - [x] 입력 검증은 구현부 내부 조건문으로 처리 ✅ BoneHitbox
-- [ ] Lag Compensation
-  - [x] `FEPHitboxSnapshot` / `FEPBoneSnapshot` 구조체 (EPTypes.h) ✅ BoneHitbox
-  - [x] `FEPRewindEntry` (SSR::ConfirmHitscan 내부, SavedBones 배열) ✅ BoneHitbox
-  - [x] 서버에서 SnapshotInterval마다 히스토리 기록 (SSR::TickComponent) ✅ BoneHitbox
-  - [x] `GetSnapshotAtTime()` per-bone 보간 (SSR 내부, FTransform::BlendWith) ✅ BoneHitbox
-  - [x] 리와인드(FBodyInstance::SetBodyTransform) → Narrow Trace → 복구 흐름 ✅ BoneHitbox
-  - [x] `GetHitscanCandidates()` Directions 배열 지원 — 산탄총/단일 공용 ✅ BoneHitbox
-  - [x] `HandleHitscanFire()` 다중 펠릿 지원 — 1회 리와인드, N회 LineTrace, 1회 복구 ✅ BoneHitbox
-- [ ] 투사체 지원
-  - [ ] `AEPProjectile` 클래스 추가 (`UProjectileMovementComponent`, `SetCosmeticOnly()`)
-  - [ ] `HandleProjectileFire` 구현 (ProjectileFast/Slow 분기)
-  - [ ] `Multicast_SpawnCosmeticProjectile` RPC (ProjectileFast 클라 렌더링)
-  - [ ] `OnProjectileHit`에서 서버 권한 데미지 처리 (`HasAuthority()` 보장)
-  - [ ] `RequestFire`에 ProjectileFast 코스메틱 즉시 스폰 추가
+- [x] 탄도 방식 분리
+  - [x] `EEPBallisticType` enum 추가 (Hitscan / ProjectileFast / ProjectileSlow)
+  - [x] `WeaponDefinition`에 `BallisticType` + `ProjectileClass` + `PelletCount` + `SpreadDistributionCurve` 추가
+  - [x] `Server_Fire`에서 `HandleHitscanFire` / `HandleProjectileFire` 분기 (switch 구조)
+- [x] Hit Validation (히트스캔)
+  - [x] `Server_Fire` RPC 시그니처: `FVector_NetQuantize` + `FVector_NetQuantizeNormal` + `ClientFireTime`
+  - [x] `Server_Fire` 서버 검증 3단계: FireRate(`LastServerFireTime`) → CanFire → Origin drift
+  - [x] `LastServerFireTime` 멤버 추가 (서버 전용, 발사 속도 검증용)
+  - [x] `AEPWeapon::Fire` 오버로드: `Fire(AimDir, ClientFireTime, OutPellets)` — UCurveFloat + FindBestAxisVectors + 구면좌표
+  - [x] `HandleHitscanFire` 구현 (SSR::ConfirmHitscan 위임 + Damage Block)
+  - [x] `GetHitscanCandidates()` 구현 (SSR 내부, Broad Phase, 사망 필터)
+- [x] Lag Compensation
+  - [x] `FEPHitboxSnapshot` / `FEPBoneSnapshot` 구조체 (EPTypes.h)
+  - [x] `FEPRewindEntry` (SSR::ConfirmHitscan 내부, SavedBones 배열)
+  - [x] CMC 델리게이트 + PostPhysics pending 패턴으로 히스토리 기록 (SSR::TickComponent)
+  - [x] `GetSnapshotAtTime()` per-bone 보간 (SSR 내부, FTransform::BlendWith)
+  - [x] 리와인드(FBodyInstance::SetBodyTransform) → Narrow Trace → 복구 흐름
+  - [x] `GetHitscanCandidates()` Directions 배열 지원 — 산탄총/단일 공용
+  - [x] `HandleHitscanFire()` 다중 펠릿 지원 — 1회 리와인드, N회 LineTrace, 1회 복구
+- [x] 투사체 지원
+  - [x] `AEPProjectile` 클래스 추가 (`UProjectileMovementComponent`, `SetCosmeticOnly()`, `IgnoreActorWhenMoving`)
+  - [x] `HandleProjectileFire` 구현 (ProjectileFast/Slow 분기)
+  - [x] `SpawnLocalCosmeticProjectile` 함수 (코스메틱 스폰 로직 분리)
+  - [x] `Multicast_SpawnCosmeticProjectile` RPC (ProjectileFast 다른 클라이언트 렌더링)
+  - [x] `OnProjectileHit`에서 서버 권한 데미지 처리 (`bIsCosmeticOnly` + `HasAuthority()`)
+  - [x] `RequestFire`에 ProjectileFast 코스메틱 즉시 스폰
 - [ ] Reconciliation (사격 결과 피드백)
-  - [ ] `Client_OnHitConfirmed` RPC로 히트 결과 전달
+  - [ ] `Client_OnHitConfirmed` RPC로 히트 결과 전달 (GAS 단계)
   - [ ] 히트마커/데미지 숫자 UI 표시 (GAS 단계)
+- [ ] 투사체 Hit Reg 개선 (GAS 이후)
+  - [ ] `ClientFireTime` 기반 리와인드 구간 LineTrace
+  - [ ] 이후 정방향 시뮬레이션 + CMC 업데이트 시 충돌 체크
+  - [ ] 자세한 내용: `DOCS/Mine/Proj.md`
 - [x] Multicast 이펙트
-  - [x] `Multicast_PlayMuzzleEffect` (발사자 즉시 예측 + IsLocallyControlled 중복 방지) ✅ BoneHitbox
-  - [x] `Multicast_PlayImpactEffect` (HandleHitscanFire 내부 확정 히트마다 호출) ✅ BoneHitbox
+  - [x] `Multicast_PlayMuzzleEffect` (발사자 즉시 예측 + IsLocallyControlled 중복 방지)
+  - [x] `Multicast_PlayImpactEffect` (HandleHitscanFire 내부 확정 히트마다 호출)
 
 ---
 

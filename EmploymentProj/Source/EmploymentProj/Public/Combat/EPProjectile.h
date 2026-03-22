@@ -6,21 +6,45 @@
 #include "GameFramework/Actor.h"
 #include "EPProjectile.generated.h"
 
+class USphereComponent;
+class UProjectileMovementComponent;
+
 UCLASS()
 class EMPLOYMENTPROJ_API AEPProjectile : public AActor
 {
 	GENERATED_BODY()
 	
-public:	
-	// Sets default values for this actor's properties
+public:
+	// === 변수 ===
+	
+	// === 함수 ===
 	AEPProjectile();
-
+	
+	void Initialize(float InDamage, const FVector& InDirection);
+	void SetCosmeticOnly();
+	
 protected:
-	// Called when the game starts or when spawned
-	virtual void BeginPlay() override;
+	// === 변수 ===
+	UPROPERTY(VisibleAnywhere, Category = "Projectile")
+	TObjectPtr<USphereComponent> CollisionComp;
+	
+	UPROPERTY(VisibleAnywhere, Category = "Projectile")
+	TObjectPtr<UProjectileMovementComponent> MovementComp;
+	
+	// === 함수 ===
 
-public:	
-	// Called every frame
-	virtual void Tick(float DeltaTime) override;
-
+private:
+	// === 변수 ===
+	float BaseDamage = 0.f;
+	FVector LaunchDir = FVector::ForwardVector;
+	bool bIsCosmeticOnly = false;
+	
+	// === 함수 ===
+	UFUNCTION()
+	void OnProjectileHit(
+		UPrimitiveComponent* HitComp,
+		AActor* OtherActor,
+		UPrimitiveComponent* OtherComp,
+		FVector NormalImpulse,
+		const FHitResult& Hit);
 };

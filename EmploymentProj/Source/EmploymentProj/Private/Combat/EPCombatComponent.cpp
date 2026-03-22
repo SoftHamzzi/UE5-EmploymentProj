@@ -17,6 +17,8 @@
 #include "Combat/EPWeapon.h"
 #include "Core/EPCharacter.h"
 #include "GameFramework/PlayerState.h"
+#include "Combat/EPProjectile.h"
+#include "GameFramework/GameStateBase.h"
 
 UEPCombatComponent::UEPCombatComponent()
 {
@@ -79,6 +81,29 @@ void UEPCombatComponent::RequestFire(const FVector& Origin, const FVector& Direc
 		Owner->AddControllerPitchInput(-Pitch);
 		Owner->AddControllerYawInput(Yaw);
 	}
+	
+	if (Owner && Owner->IsLocallyControlled()
+		&& EquippedWeapon->WeaponDef->BallisticType == EEPBallisticType::ProjectileFast
+		&& EquippedWeapon->WeaponDef->ProjectileClass)
+	{
+		const FVector MuzzleLoc =
+			(EquippedWeapon->WeaponMesh && EquippedWeapon->WeaponMesh->DoesSocketExist(TEXT("MuzzleSocket")))
+			? EquippedWeapon->WeaponMesh->GetSocketLocation(TEXT("MuzzleSocket"))
+			: Origin;
+		SpawnLocalCosmeticProjectile(MuzzleLoc, Direction);
+	}
+}
+
+void UEPCombatComponent::SpawnLocalCosmeticProjectile(const FVector& MuzzleLocation, const FVector& Direction)
+{
+	if (!EquippedWeapon || !EquippedWeapon->WeaponDef || !EquippedWeapon->WeaponDef->ProjectileClass) return;
+
+	AEPProjectile* Cosmetic = GetWorld()->SpawnActor<AEPProjectile>(
+		EquippedWeapon->WeaponDef->ProjectileClass,
+		MuzzleLocation, Direction.GetSafeNormal().Rotation());
+
+	if (Cosmetic)
+		Cosmetic->SetCosmeticOnly();
 }
 
 void UEPCombatComponent::PlayLocalMuzzleEffect(const FVector& MuzzleLocation)
@@ -166,25 +191,46 @@ void UEPCombatComponent::Server_Fire_Implementation(
 	const FVector_NetQuantize& Origin, const FVector_NetQuantizeNormal& Direction, float ClientFireTime)
 {
 	// 연사 속도, 탄약 검증
-	if (!EquippedWeapon || !EquippedWeapon->CanFire()) return;
-	
-	FVector SpreadDir = Direction;
-	EquippedWeapon->Fire(SpreadDir);
+	if (!EquippedWeapon || !EquippedWeapon->WeaponDef) return;
 	
 	AEPCharacter* Owner = GetOwnerCharacter();
-	if (!Owner || !Owner->GetServerSideRewindComponent()) return;
+	if (!Owner) return;
 	
+	// --- 서버 사이드 검증 ---
+	const AGameStateBase* GS = GetWorld()->GetGameState<AGameStateBase>();
+	const float ServerNow = GS
+		? GS->GetServerWorldTimeSeconds()
+		: GetWorld()->GetTimeSeconds();
+	const float FireInterval = 1.f / EquippedWeapon->WeaponDef->FireRate;
+	if (ServerNow - LastServerFireTime < FireInterval) return;
+	LastServerFireTime = ServerNow;
+	
+	if (!EquippedWeapon->CanFire()) return;
+	
+	constexpr float MaxOriginDrift = 200.f;
+	if (FVector::DistSquared(Origin, Owner->GetActorLocation()) > FMath::Square(MaxOriginDrift))
+		return;
+	
+	// --- 탄도 분기 ---
 	switch (EquippedWeapon->WeaponDef->BallisticType)
 	{
 	case EEPBallisticType::Hitscan:
 	default:
 		{
-			const TArray<FVector> Directions = { SpreadDir };
-			HandleHitscanFire(Owner, Origin, Directions, ClientFireTime);
+			TArray<FVector> PelletDirs;
+			EquippedWeapon->Fire(Direction, ClientFireTime, PelletDirs);
+			HandleHitscanFire(Owner, Origin, PelletDirs, ClientFireTime);
 			break;
 		}
-		// case EEPBallisticType::ProjectileFast:
-		// case EEPBallisticType::ProjectileSlow:
+		case EEPBallisticType::ProjectileFast:
+		case EEPBallisticType::ProjectileSlow:
+		{
+			FVector SpreadDir = Direction;
+			TArray<FVector> DiscardedPellets;
+			EquippedWeapon->Fire(SpreadDir, ClientFireTime, DiscardedPellets);
+			HandleProjectileFire(Owner, Origin, SpreadDir);
+			break;
+		}
 	}
 	
 	// 발사 이펙트 (항상 먼저 재생)
@@ -220,6 +266,18 @@ void UEPCombatComponent::GetLifetimeReplicatedProps(TArray<class FLifetimeProper
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 	
 	DOREPLIFETIME(UEPCombatComponent, EquippedWeapon);
+}
+
+void UEPCombatComponent::Multicast_SpawnCosmeticProjectile_Implementation(const FVector_NetQuantize& MuzzleLocation,
+	const FVector_NetQuantizeNormal& Direction)
+{
+	if (GetOwner()->HasAuthority()) return;
+
+	// 발사한 본인은 RequestFire에서 이미 스폰했으므로 스킵
+	ACharacter* OwnerChar = Cast<ACharacter>(GetOwner());
+	if (OwnerChar && OwnerChar->IsLocallyControlled()) return;
+
+	SpawnLocalCosmeticProjectile(MuzzleLocation, Direction);
 }
 
 void UEPCombatComponent::HandleHitscanFire(
@@ -261,6 +319,34 @@ void UEPCombatComponent::HandleHitscanFire(
 		
 		Multicast_PlayImpactEffect(Hit.ImpactPoint, Hit.ImpactNormal);
 	}
+}
+
+void UEPCombatComponent::HandleProjectileFire(
+	AEPCharacter* Owner,
+	const FVector& Origin,
+	const FVector& Direction)
+{
+	if (!EquippedWeapon->WeaponDef || !EquippedWeapon->WeaponDef->ProjectileClass) return;
+	
+	const FVector MuzzleLoc =
+		(EquippedWeapon->WeaponMesh && EquippedWeapon->WeaponMesh->DoesSocketExist(TEXT("MuzzleSocket")))
+		? EquippedWeapon->WeaponMesh->GetSocketLocation(TEXT("MuzzleSocket"))
+		: Origin;
+	
+	FActorSpawnParameters SpawnParams;
+	SpawnParams.Owner = Owner;
+	SpawnParams.Instigator = Owner;
+	
+	AEPProjectile* Proj = GetWorld()->SpawnActor<AEPProjectile>(
+		EquippedWeapon->WeaponDef->ProjectileClass,
+		MuzzleLoc, Direction.GetSafeNormal().Rotation(), SpawnParams);
+	
+	if (!Proj) return;
+	
+	Proj->Initialize(EquippedWeapon->GetDamage(), Direction);
+	
+	// if (EquippedWeapon->WeaponDef->BallisticType == EEPBallisticType::ProjectileFast)
+		// Multicast_SpawnCosmeticProjectile(MuzzleLoc, Direction.GetSafeNormal());
 }
 
 float UEPCombatComponent::GetBoneMultiplier(const FName& BoneName) const

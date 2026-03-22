@@ -4,7 +4,14 @@
       "WebFetch(domain:velog.io)",
       "WebFetch(domain:dev.epicgames.com)",
       "Bash(find \"C:/Program Files/Epic Games/UE_5.7/Engine/Source/Runtime/Engine/Private/\" -name \"*.cpp\" | xargs grep -l \"TickDispatch\" 2>/dev/null | head -5)",
-      "Bash(xargs grep:*)"
+      "Bash(xargs grep:*)",
+      "WebSearch",
+      "WebFetch(domain:medium.com)",
+      "WebFetch(domain:www.ea.com)",
+      "WebFetch(domain:forums.unrealengine.com)",
+      "WebFetch(domain:forums.ea.com)",
+      "WebFetch(domain:sreitich.github.io)",
+      "WebFetch(domain:snapnet.dev)"
     ]
   }
 }

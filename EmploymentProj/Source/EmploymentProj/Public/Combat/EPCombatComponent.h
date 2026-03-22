@@ -11,6 +11,7 @@ class USoundBase;
 class AEPCharacter;
 class AEPWeapon;
 class UEPPhysicalMaterial;
+class AEPProjectile;
 
 UCLASS( ClassGroup=(Custom), meta=(BlueprintSpawnableComponent) )
 class EMPLOYMENTPROJ_API UEPCombatComponent : public UActorComponent
@@ -32,10 +33,10 @@ public:
 	// Request 이관 함수
 	void RequestFire(const FVector& Origin, const FVector& Direction, float ClientFireTime);
 	
-protected:
-	// Called when the game starts
-	virtual void BeginPlay() override;
+	// Called every frame
+	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 
+protected:
 	// === 변수 ===
 	float LocalLastFireTime = 0.f;
 	
@@ -53,12 +54,20 @@ protected:
 	TObjectPtr<USoundBase> ImpactSFX = nullptr;
 	
 	// === 함수 ===
+	// --- 오버라이드 ---
+	// Called when the game starts
+	virtual void BeginPlay() override;
+	
+	virtual void GetLifetimeReplicatedProps(TArray<class FLifetimeProperty>& OutLifetimeProps) const override;
+	
 	// --- 선언 ---
 	UFUNCTION()
 	void PlayLocalMuzzleEffect(const FVector& MuzzleLocation);
-	
+
 	UFUNCTION()
 	void PlayLocalImpactEffect(const FVector& ImpactPoint, const FVector& ImpactNormal);
+
+	void SpawnLocalCosmeticProjectile(const FVector& MuzzleLocation, const FVector& Direction);
 	
 	// --- 동기화 ---
 	UFUNCTION()
@@ -74,10 +83,13 @@ protected:
 	void Multicast_PlayMuzzleEffect(const FVector_NetQuantize& MuzzleLocation);
 	UFUNCTION(NetMulticast, Unreliable)
 	void Multicast_PlayImpactEffect(const FVector_NetQuantize& ImpactPoint, const FVector_NetQuantize& ImpactNormal);
-	
-	virtual void GetLifetimeReplicatedProps(TArray<class FLifetimeProperty>& OutLifetimeProps) const override;
+	UFUNCTION(NetMulticast, Unreliable)
+	void Multicast_SpawnCosmeticProjectile(
+		const FVector_NetQuantize& MuzzleLocation,
+		const FVector_NetQuantizeNormal& Direction);
 
 private:
+	float LastServerFireTime = -999.f;
 	
 	void HandleHitscanFire(
 		AEPCharacter*	Owner,
@@ -86,12 +98,12 @@ private:
 		float	ClientFireTime
 	);
 	
+	void HandleProjectileFire(
+		AEPCharacter* Owner,
+		const FVector& Origin,
+		const FVector& Direction
+	);
+	
 	float GetBoneMultiplier(const FName& BoneName) const;
 	static float GetMaterialMultiplier(const UPhysicalMaterial* PM);
-
-public:	
-	// Called every frame
-	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
-
-		
 };
