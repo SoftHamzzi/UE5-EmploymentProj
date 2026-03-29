@@ -9,7 +9,7 @@ UE5 C++ multiplayer extraction shooter ("EmploymentProj") - a portfolio project 
 - **DOCS/DOCS.md**: Technical roadmap - maps job posting requirements to implementation stages and UE5 architecture decisions
 - **DOCS/GAME.md**: Game design document - gameplay systems, core loop, and scope definitions
 - **DOCS/Mine/**: System design documents (Item.md, Animation.md, MetaHuman.md, CMC.md, Rep.md, Proj.md) - contain architecture decisions and implementation guides
-- **DOCS/Notes/**: Per-stage technical study notes and implementation checklists (03_BoneHitbox, 03_NetPrediction_Implementation, 04_GAS etc.)
+- **DOCS/Notes/**: Per-stage technical study notes and implementation checklists (03_BoneHitbox, 04_GAS etc.)
 
 ## Architecture
 
@@ -28,26 +28,28 @@ UE5 dedicated server model. All game logic is server-authoritative.
 - `UEPItemInstance` (UObject): runtime state (ammo, durability). Subclassed per type (`UEPWeaponInstance`)
 - All three layers linked by `ItemId` (FName)
 
-**Combat flow:**
-- `AEPCharacter` → input → `UEPCombatComponent` → `Server_Fire` RPC → server validation (3 steps: FireRate/CanFire/OriginDrift) → `EEPBallisticType` switch → hitscan or projectile
-- Hitscan: `HandleHitscanFire` → `UEPServerSideRewindComponent::ConfirmHitscan` → `ApplyDamage`
+**Combat flow (current — pre-GAS):**
+- `AEPCharacter` → input → `UEPCombatComponent::RequestFire` → `Server_Fire` RPC → server validation (3 steps: FireRate/CanFire/OriginDrift) → `EEPBallisticType` switch → hitscan or projectile
+- Hitscan: `HandleHitscanFire` → `UEPServerSideRewindComponent::ConfirmHitscan` → `UGameplayStatics::ApplyPointDamage` → `AEPCharacter::TakeDamage`
 - Projectile: `HandleProjectileFire` → `SpawnActor<AEPProjectile>` → `AEPProjectile::OnProjectileHit` → `ApplyDamage`
 - `AEPWeapon` holds `UEPWeaponDefinition` reference (as `WeaponDef`) for weapon stats. `Fire()` computes spread via spherical coordinates + `SpreadDistributionCurve`
 - Fire effects via `Multicast` RPCs (Unreliable). Cosmetic projectile spawned locally in `RequestFire` via `SpawnLocalCosmeticProjectile`
+- Hit zone damage: `UEPPhysicalMaterial` (subclass of `UPhysicalMaterial`) carries `bIsWeakSpot`/`WeakSpotMultiplier`. `GetMaterialMultiplier()` reads this on hit. `BoneDamageMultiplierMap` (TMap<FName,float>, no UPROPERTY) in `WeaponDefinition` for bone-based multipliers
 
 **Lag Compensation:**
 - `UEPServerSideRewindComponent` (server-only, `SetIsReplicatedByDefault(false)`): stores per-bone hitbox snapshots in time-ascending array
 - Snapshot saved on `TG_PostPhysics` tick group, triggered by `MarkPositionUpdated()` from `CMC::OnMovementUpdated` — guarantees position is current before snapshot
 - `ConfirmHitscan`: interpolates between two snapshots at `ClientFireTime`, teleports bones via `FBodyInstance::SetBodyTransform(ETeleportType::TeleportPhysics)`, runs narrow trace, restores
 - All timestamps use `GS->GetServerWorldTimeSeconds()` on both client and server (never local `GetTimeSeconds()`)
+- Debug settings in `UEPCombatDeveloperSettings` (CDO-based): `bEnableSSRDebugDraw`, draw duration/thickness, `bEnableSSRDebugLog`. Guarded by `#if !(UE_BUILD_SHIPPING || UE_BUILD_TEST)`
 
 **Movement:**
 - Custom CMC (`UEPCharacterMovement`) extends `UCharacterMovementComponent`
 - Sprint/ADS via `CompressedFlags` in `FSavedMove` (not Server RPCs) for prediction-accurate sync
 
-**Death:**
-- Character self-ragdoll via `Multicast_Die()` — no separate Corpse actor spawning
-- Capsule collision disabled, Body mesh set to Ragdoll profile with physics
+**Death and Corpse:**
+- On death: `AEPCharacter::Multicast_Die()` disables capsule collision and enables ragdoll physics on the body mesh
+- `AEPCorpse` (separate replicated Actor) is spawned server-side via `InitializeFromCharacter()` for looting interaction — carries body/face/outfit mesh references replicated to clients
 
 **Animation (Lyra-style Linked Anim Layer, DOCS/Mine/Animation.md):**
 - `UEPAnimInstance`: main AnimBP C++ backend
@@ -58,6 +60,21 @@ UE5 dedicated server model. All game logic is server-authoritative.
 **MetaHuman integration (DOCS/Mine/MetaHuman.md):**
 - Body = `GetMesh()`, Face/Outfit = additional `USkeletalMeshComponent` with `SetLeaderPoseComponent`
 
+## GAS Migration State (feature-gas branch)
+
+The `feature-gas` branch currently contains **planning documents only** — the source code still uses the pre-GAS RPC structure above. Master spec: `DOCS/Notes/04/04_GAS_DOCS.md`. Implementation order:
+
+1. Foundation (ASC + AttributeSet) — `DOCS/Notes/04/04_GAS_01_Foundation.md`
+2. Damage/HP pipeline — `04_GAS_02_DamagePipeline.md`
+3. `GA_Item_PrimaryUse` (replaces `Server_Fire`) — `04_GAS_03_PrimaryUse.md`
+4. `GA_Item_Reload` (replaces `Server_Reload`) — `04_GAS_04_Reload.md`
+5. Spread CDF table — `04_GAS_05_Spread.md`
+6. Hit zone damage tag system — `04_GAS_06_HitZoneDamage.md`
+
+Key pending removals once migration is complete: `Server_Fire`/`Server_Reload` RPCs, `AEPCharacter::HP`/`TakeDamage()`, `AEPWeapon::CurrentAmmo`/`StartReload`/`FinishReload`, `BoneDamageMultiplierMap`.
+
+NativeGameplayTags are defined in `Public/GAS/EPNativeGameplayTags.h` (`namespace EmpGameplayTags`). GAS concept reference: `DOCS/Notes/04/04_GAS_00_Reference.md`.
+
 ## Project Structure
 
 ```
@@ -66,7 +83,7 @@ UE5-EmploymentProj/          <- Git root
 ├── DOCS/                    <- Design docs & study notes
 │   ├── DOCS.md              <- Technical roadmap
 │   ├── GAME.md              <- Game design document
-│   ├── Mine/                <- System design docs (Item, Animation, MetaHuman, CMC, Rep, Proj)
+│   ├── Mine/                <- System design docs (Item, Animation, MetaHuman, CMC, Rep, Proj, GAS_Migration)
 │   └── Notes/               <- Study notes & implementation checklists per stage
 ├── .claude/                 <- Claude Code config
 └── EmploymentProj/          <- UE5 project root

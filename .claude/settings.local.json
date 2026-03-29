@@ -11,7 +11,12 @@
       "WebFetch(domain:forums.unrealengine.com)",
       "WebFetch(domain:forums.ea.com)",
       "WebFetch(domain:sreitich.github.io)",
-      "WebFetch(domain:snapnet.dev)"
+      "WebFetch(domain:snapnet.dev)",
+      "Bash(mv 04_GAS_Foundation.md 04_GAS_01_Foundation.md)",
+      "Bash(mv 04_GAS_DamagePipeline.md 04_GAS_02_DamagePipeline.md)",
+      "Bash(mv 04_GAS_PrimaryUse.md 04_GAS_03_PrimaryUse.md)",
+      "Bash(mv 04_GAS_Reload.md 04_GAS_04_Reload.md)",
+      "Bash(mv 04_GAS_Spread.md 04_GAS_05_Spread.md)"
     ]
   }
 }

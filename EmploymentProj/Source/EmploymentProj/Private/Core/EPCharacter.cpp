@@ -21,10 +21,17 @@
 #include "Components/CapsuleComponent.h"
 #include "InputCoreTypes.h"
 #include "Core/EPGameMode.h"
+#include "Engine/SceneCapture2D.h"
 #include "Kismet/GameplayStatics.h"
 #include "Net/UnrealNetwork.h"
 #include "GameFramework/GameStateBase.h"
 #include "GameFramework/PlayerState.h"
+
+// GAS
+#include "AbilitySystemComponent.h"
+#include "Core/EPPlayerState.h"
+#include "GAS/EPAttributeSet.h"
+#include "GAS/EPNativeGameplayTags.h"
 
 AEPCharacter::AEPCharacter(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer.SetDefaultSubobjectClass<UEPCharacterMovement>(
@@ -70,6 +77,11 @@ AEPCharacter::AEPCharacter(const FObjectInitializer& ObjectInitializer)
 	
 }
 
+UAbilitySystemComponent* AEPCharacter::GetAbilitySystemComponent() const
+{
+	return ASC;
+}
+
 void AEPCharacter::BeginPlay()
 {
 	Super::BeginPlay();
@@ -93,6 +105,39 @@ void AEPCharacter::Tick(float DeltaSeconds)
 	Super::Tick(DeltaSeconds);
 
 	TickAutoStrafeInputTest(DeltaSeconds);
+}
+
+void AEPCharacter::PossessedBy(AController* NewController)
+{
+	Super::PossessedBy(NewController);
+	
+	if (AEPPlayerState* PS = GetPlayerState<AEPPlayerState>())
+	{
+		ASC = PS->GetAbilitySystemComponent();
+		InitASC();
+		
+		if (UEPAttributeSet* AS = PS->GetAttributeSet())
+		{
+			AS->InitHealth(100.f);
+			AS->InitMaxHealth(100.f);
+		}
+		
+		ASC->SetTagMapCount(EmpGameplayTags::TAG_State_Dead, 0);
+		
+		// 기본 Ability 부여
+		// AddCharacterAbilities();
+	}
+}
+
+void AEPCharacter::OnRep_PlayerState()
+{
+	Super::OnRep_PlayerState();
+	
+	if (AEPPlayerState* PS = GetPlayerState<AEPPlayerState>())
+	{
+		ASC = PS->GetAbilitySystemComponent();
+		InitASC();
+	}
 }
 
 // Enhanced Input 바인딩
@@ -424,4 +469,12 @@ void AEPCharacter::GetLifetimeReplicatedProps(TArray<class FLifetimeProperty>& O
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 	
 	DOREPLIFETIME_CONDITION(AEPCharacter, HP, COND_OwnerOnly);
+}
+
+void AEPCharacter::InitASC()
+{
+	AEPPlayerState* PS = GetPlayerState<AEPPlayerState>();
+	if (!PS || !ASC) return;
+	
+	ASC->InitAbilityActorInfo(PS, this);
 }

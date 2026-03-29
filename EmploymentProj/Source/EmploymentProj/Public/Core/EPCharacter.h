@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Character.h"
+#include "AbilitySystemInterface.h"
 #include "EPCharacter.generated.h"
 
 // --- 카메라 ---
@@ -18,16 +19,21 @@ struct FInputActionValue;
 // --- 메타 휴먼 ---
 class UGroomComponent;
 
+// --- GAS ---
+class UAbilitySystemComponent;
+
 UCLASS()
-class EMPLOYMENTPROJ_API AEPCharacter : public ACharacter
+class EMPLOYMENTPROJ_API AEPCharacter : public ACharacter, public IAbilitySystemInterface
 {
 	GENERATED_BODY()
 
 public:
+	// === 변수 ===
+	// === 함수 ===
 	// 기본 CMC 대신 커스텀 CMC 사용
 	AEPCharacter(const FObjectInitializer& ObjectInitializer);
 
-	// --- Getter/Setter ---
+	virtual UAbilitySystemComponent* GetAbilitySystemComponent() const override;
 	bool GetIsSprinting() const;
 	bool GetIsAiming() const;
 	UCameraComponent* GetCameraComponent() const;
@@ -46,15 +52,6 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Rewind")
 	UEPServerSideRewindComponent* RewindComponent;
 	
-	void TickAutoStrafeInputTest(float DeltaSeconds);
-	
-	
-	// --- 메타 휴먼 ---
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "MetaHuman")
-	TObjectPtr<USkeletalMeshComponent> FaceMesh;
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "MetaHuman")
-	TObjectPtr<USkeletalMeshComponent> OutfitMesh;
-	
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Camera")
 	FVector FirstPersonCameraOffset = FVector(2.8f, 5.9f, 0.0f);
 	UPROPERTY(ReplicatedUsing = OnRep_HP, BlueprintReadOnly, Category = "Stat")
@@ -62,10 +59,18 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Stat")
 	int32 MaxHP = 100;
 	
+	// --- 메타 휴먼 ---
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "MetaHuman")
+	TObjectPtr<USkeletalMeshComponent> FaceMesh;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "MetaHuman")
+	TObjectPtr<USkeletalMeshComponent> OutfitMesh;
+	
 	// === 함수 ===
-	// --- 오버라이드 ---
 	virtual void BeginPlay() override;
 	virtual void Tick(float DeltaSeconds) override;
+	
+	virtual void PossessedBy(AController* NewController) override;
+	virtual void OnRep_PlayerState() override;
 	
 	// Enhanced Input 바인딩
 	virtual void SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent) override;
@@ -75,7 +80,9 @@ protected:
 		float DamageAmount, struct FDamageEvent const& DamageEvent,
 		class AController* EventInstigator, AActor* DamageCause) override;
 	
-	// --- 선언 ---
+	// 테스트용
+	void TickAutoStrafeInputTest(float DeltaSeconds);
+	
 	void Die(AController* Killer);
 	
 	// --- 입력 핸들러 ---
@@ -116,18 +123,16 @@ protected:
 	virtual void GetLifetimeReplicatedProps(TArray<class FLifetimeProperty>& OutLifetimeProps) const override;
 	
 private:
-	UFUNCTION(NetMulticast, Unreliable)
-	void Multicast_PlayHitReact();
-
-	UFUNCTION(NetMulticast, Unreliable)
-	void Multicast_PlayPainSound();
-	
+	// === 변수 ===
 	UPROPERTY(EditDefaultsOnly, Category = "Combat")
 	TObjectPtr<UAnimMontage> HitReactMontage;
 	
 	UPROPERTY(EditDefaultsOnly, Category = "Combat")
 	TObjectPtr<USoundBase> PainSound;
-
+	
+	UPROPERTY()
+	TObjectPtr<UAbilitySystemComponent> ASC;
+	
 	// --- 테스트: 로컬 입력 기반 자동 좌우 이동 ---
 	// T 키로 토글. 클라이언트 입력 -> 서버 검증 경로를 그대로 사용한다.
 	UPROPERTY(EditAnywhere, Category = "Debug|NetPrediction")
@@ -141,4 +146,14 @@ private:
 
 	float AutoStrafeElapsed = 0.f;
 	float AutoStrafeDirectionSign = 1.f;
+	
+	// === 함수 ===
+	void InitASC();
+	
+	UFUNCTION(NetMulticast, Unreliable)
+	void Multicast_PlayHitReact();
+
+	UFUNCTION(NetMulticast, Unreliable)
+	void Multicast_PlayPainSound();
+	
 };
