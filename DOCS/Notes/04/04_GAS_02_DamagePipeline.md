@@ -63,11 +63,7 @@ Content/Data/GAS/GE_Damage (GameplayEffect Blueprint):
     DataTag:      Data.Damage
 ```
 
-> `Data.Damage` 태그를 NativeGameplayTags에 추가:
-> ```cpp
-> UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Data_Damage)
-> UE_DEFINE_GAMEPLAY_TAG(TAG_Data_Damage, "Data.Damage")
-> ```
+> `TAG_Data_Damage`는 Foundation(Step 6, EPNativeGameplayTags.h)에서 이미 정의됨 — 별도 추가 불필요.
 
 ### Step 2 — ApplyGEDamage 헬퍼 구현
 
@@ -199,9 +195,13 @@ void UGA_Death::ActivateAbility(
 }
 ```
 
-> **GA_Death Grant 위치**: `AEPPlayerState::PossessedBy` 또는 Character BeginPlay 서버측에서
-> `ASC->GiveAbility(FGameplayAbilitySpec(UGA_Death::StaticClass(), 1))` 호출.
-> 무기 장착/해제와 무관하게 항상 활성화되어야 하므로 PlayerState에서 한 번만 Grant.
+> **GA_Death Grant 위치**: `AEPCharacter::PossessedBy` 서버측.
+> Foundation 코드의 `// AddCharacterAbilities();` 주석 위치에서 호출:
+> ```cpp
+> ASC->GiveAbility(FGameplayAbilitySpec(UGA_Death::StaticClass(), 1));
+> ```
+> 무기 장착/해제와 무관하게 항상 필요하므로 GA_PrimaryUse/GA_Reload(무기 Grant)와 달리
+> Character Possess 시점에 한 번만 Grant. 리스폰 시 ASC는 PlayerState에 유지되므로 재Grant 불필요.
 
 ### Step 6 — EPCharacter HP 코드 제거
 
