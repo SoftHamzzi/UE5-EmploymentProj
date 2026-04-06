@@ -12,6 +12,7 @@
 #include "Sound/SoundBase.h"
 
 // Components
+#include "AbilitySystemComponent.h"
 #include "Combat/EPPhysicalMaterial.h"
 #include "Combat/EPServerSideRewindComponent.h"
 #include "Combat/EPWeapon.h"
@@ -19,6 +20,10 @@
 #include "GameFramework/PlayerState.h"
 #include "Combat/EPProjectile.h"
 #include "GameFramework/GameStateBase.h"
+#include "GAS/EPNativeGameplayTags.h"
+
+// GAS
+#include "GameplayEffect.h"
 
 UEPCombatComponent::UEPCombatComponent()
 {
@@ -280,6 +285,29 @@ void UEPCombatComponent::Multicast_SpawnCosmeticProjectile_Implementation(const 
 	SpawnLocalCosmeticProjectile(MuzzleLocation, Direction);
 }
 
+void UEPCombatComponent::ApplyGEDamage(AActor* Target, AActor* Instigator, TSubclassOf<UGameplayEffect> GEClass,
+	float FinalDamage)
+{
+	if (!Target || !GEClass) return;
+	
+	IAbilitySystemInterface* TargetIF = Cast<IAbilitySystemInterface>(Target);
+	UAbilitySystemComponent* TargetASC = TargetIF ? TargetIF->GetAbilitySystemComponent() : nullptr;
+	
+	IAbilitySystemInterface* InstigatorIF = Cast<IAbilitySystemInterface>(Instigator);
+	UAbilitySystemComponent* InstigatorASC = InstigatorIF ? InstigatorIF->GetAbilitySystemComponent() : nullptr;
+	if (!TargetASC || !InstigatorASC) return;
+	
+	FGameplayEffectContextHandle Context = InstigatorASC->MakeEffectContext();
+	Context.AddInstigator(Instigator, Instigator);
+	
+	FGameplayEffectSpecHandle Spec = InstigatorASC->MakeOutgoingSpec(GEClass, 1.f, Context);
+	if (!Spec.IsValid()) return;
+	
+	Spec.Data->SetSetByCallerMagnitude(EmpGameplayTags::TAG_Data_Damage, FinalDamage);
+	
+	InstigatorASC->ApplyGameplayEffectSpecToTarget(*Spec.Data, TargetASC);
+}
+
 void UEPCombatComponent::HandleHitscanFire(
 	AEPCharacter* Owner,
 	const FVector& Origin,
@@ -307,15 +335,17 @@ void UEPCombatComponent::HandleHitscanFire(
 			Hit.PhysMaterial.IsValid() ? *Hit.PhysMaterial->GetName() : TEXT("None"),
 			BaseDamage, BoneMultiplier, MaterialMultiplier, FinalDamage);
 		
-		UGameplayStatics::ApplyPointDamage(
-			Hit.GetActor(),
-			FinalDamage,
-			(Hit.ImpactPoint - Origin).GetSafeNormal(),
-			Hit,
-			Owner->GetController(),
-			Owner,
-			UDamageType::StaticClass()
-		);
+		ApplyGEDamage(Hit.GetActor(), Owner, GE_DamageClass, FinalDamage);
+		
+		// UGameplayStatics::ApplyPointDamage(
+		// 	Hit.GetActor(),
+		// 	FinalDamage,
+		// 	(Hit.ImpactPoint - Origin).GetSafeNormal(),
+		// 	Hit,
+		// 	Owner->GetController(),
+		// 	Owner,
+		// 	UDamageType::StaticClass()
+		// );
 		
 		Multicast_PlayImpactEffect(Hit.ImpactPoint, Hit.ImpactNormal);
 	}
@@ -343,7 +373,7 @@ void UEPCombatComponent::HandleProjectileFire(
 	
 	if (!Proj) return;
 	
-	Proj->Initialize(EquippedWeapon->GetDamage(), Direction);
+	Proj->Initialize(EquippedWeapon->GetDamage(), Direction, GE_DamageClass);
 	
 	// if (EquippedWeapon->WeaponDef->BallisticType == EEPBallisticType::ProjectileFast)
 		// Multicast_SpawnCosmeticProjectile(MuzzleLoc, Direction.GetSafeNormal());

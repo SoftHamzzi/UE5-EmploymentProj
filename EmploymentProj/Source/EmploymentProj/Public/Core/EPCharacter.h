@@ -21,6 +21,7 @@ class UGroomComponent;
 
 // --- GAS ---
 class UAbilitySystemComponent;
+class UGameplayAbility;
 
 UCLASS()
 class EMPLOYMENTPROJ_API AEPCharacter : public ACharacter, public IAbilitySystemInterface
@@ -40,8 +41,11 @@ public:
 	UEPCombatComponent* GetCombatComponent() const;
 	FORCEINLINE USkeletalMeshComponent* GetFaceMesh() const { return FaceMesh; }
 	FORCEINLINE USkeletalMeshComponent* GetOutfitMesh() const { return OutfitMesh; }
-	FORCEINLINE bool IsDead() const { return HP <= 0; }
+	bool IsDead() const;
 	UEPServerSideRewindComponent* GetServerSideRewindComponent() const;
+
+	UFUNCTION(NetMulticast, Reliable)
+	void Multicast_Die();
 
 protected:
 	// === 변수 ===
@@ -52,12 +56,15 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Rewind")
 	UEPServerSideRewindComponent* RewindComponent;
 	
+	UPROPERTY(EditDefaultsOnly, Category = "GAS")
+	TArray<TSubclassOf<UGameplayAbility>> DefaultAbilities;
+	
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Camera")
 	FVector FirstPersonCameraOffset = FVector(2.8f, 5.9f, 0.0f);
-	UPROPERTY(ReplicatedUsing = OnRep_HP, BlueprintReadOnly, Category = "Stat")
-	int32 HP = 100;
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Stat")
-	int32 MaxHP = 100;
+	// UPROPERTY(ReplicatedUsing = OnRep_HP, BlueprintReadOnly, Category = "Stat")
+	// int32 HP = 100;
+	// UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Stat")
+	// int32 MaxHP = 100;
 	
 	// --- 메타 휴먼 ---
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "MetaHuman")
@@ -75,15 +82,15 @@ protected:
 	// Enhanced Input 바인딩
 	virtual void SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent) override;
 	
-	// 피격
-	virtual float TakeDamage(
-		float DamageAmount, struct FDamageEvent const& DamageEvent,
-		class AController* EventInstigator, AActor* DamageCause) override;
+	// // 피격
+	// virtual float TakeDamage(
+	// 	float DamageAmount, struct FDamageEvent const& DamageEvent,
+	// 	class AController* EventInstigator, AActor* DamageCause) override;
 	
 	// 테스트용
 	void TickAutoStrafeInputTest(float DeltaSeconds);
 	
-	void Die(AController* Killer);
+	// void Die(AController* Killer);
 	
 	// --- 입력 핸들러 ---
 	// 이동 (WASD)
@@ -112,12 +119,9 @@ protected:
 	void Input_Fire(const FInputActionValue& Value);
 	void Input_ToggleAutoStrafeTest();
 	
-	// OnRep
-	UFUNCTION()
-	void OnRep_HP();
-	
-	UFUNCTION(NetMulticast, Reliable)
-	void Multicast_Die();
+	// // OnRep
+	// UFUNCTION()
+	// void OnRep_HP();
 	
 	// 동기화
 	virtual void GetLifetimeReplicatedProps(TArray<class FLifetimeProperty>& OutLifetimeProps) const override;

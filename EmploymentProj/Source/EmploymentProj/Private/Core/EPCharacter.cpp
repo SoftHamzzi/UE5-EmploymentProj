@@ -21,7 +21,6 @@
 #include "Components/CapsuleComponent.h"
 #include "InputCoreTypes.h"
 #include "Core/EPGameMode.h"
-#include "Engine/SceneCapture2D.h"
 #include "Kismet/GameplayStatics.h"
 #include "Net/UnrealNetwork.h"
 #include "GameFramework/GameStateBase.h"
@@ -31,6 +30,7 @@
 #include "AbilitySystemComponent.h"
 #include "Core/EPPlayerState.h"
 #include "GAS/EPAttributeSet.h"
+#include "Abilities/GameplayAbility.h"
 #include "GAS/EPNativeGameplayTags.h"
 
 AEPCharacter::AEPCharacter(const FObjectInitializer& ObjectInitializer)
@@ -125,7 +125,9 @@ void AEPCharacter::PossessedBy(AController* NewController)
 		ASC->SetTagMapCount(EmpGameplayTags::TAG_State_Dead, 0);
 		
 		// 기본 Ability 부여
-		// AddCharacterAbilities();
+		for (const TSubclassOf<UGameplayAbility>& AbilityClass : DefaultAbilities)
+			if (AbilityClass)
+				ASC->GiveAbility(FGameplayAbilitySpec(AbilityClass, 1));
 	}
 }
 
@@ -222,52 +224,59 @@ UEPCombatComponent* AEPCharacter::GetCombatComponent() const
 	return CombatComponent;
 }
 
+bool AEPCharacter::IsDead() const
+{
+	if (ASC)
+		return ASC->HasMatchingGameplayTag(EmpGameplayTags::TAG_State_Dead);
+	return false;
+}
+
 UEPServerSideRewindComponent* AEPCharacter::GetServerSideRewindComponent() const
 {
 	return RewindComponent;
 }
 
-float AEPCharacter::TakeDamage(
-	float DamageAmount, struct FDamageEvent const& DamageEvent,
-	class AController* EventInstigator, AActor* DamageCause)
-{
-	if (!HasAuthority()) return 0.f;
-
-	HP = FMath::Clamp(HP - DamageAmount, 0.f, static_cast<float>(MaxHP));
-
-	Multicast_PlayHitReact();
-	Multicast_PlayPainSound();
-
-	if (AEPPlayerController* InstigatorPC = Cast<AEPPlayerController>(EventInstigator))
-		InstigatorPC->Client_PlayHitConfirmSound();
-
-	if (HP <= 0.f) Die(EventInstigator);
-
-	ForceNetUpdate();
-	return DamageAmount;
-}
-
-void AEPCharacter::Die(AController* Killer)
-{
-	if (!HasAuthority()) return;
-	
-	AController* VictimController = GetController();
-	
-	// 무기 처리                                                                                                                                                                                                                                                                                                  
-	if (CombatComponent && CombatComponent->GetEquippedWeapon())
-	{
-		CombatComponent->GetEquippedWeapon()->SetActorHiddenInGame(true);
-		CombatComponent->GetEquippedWeapon()->SetActorEnableCollision(false);
-	}
-	
-	if (AEPGameMode* GM = GetWorld()->GetAuthGameMode<AEPGameMode>())
-		GM->OnPlayerKilled(Killer, GetController());
-	
-	Multicast_Die();
-	
-	if (VictimController)
-		VictimController->UnPossess();
-}
+// float AEPCharacter::TakeDamage(
+// 	float DamageAmount, struct FDamageEvent const& DamageEvent,
+// 	class AController* EventInstigator, AActor* DamageCause)
+// {
+// 	if (!HasAuthority()) return 0.f;
+//
+// 	HP = FMath::Clamp(HP - DamageAmount, 0.f, static_cast<float>(MaxHP));
+//
+// 	Multicast_PlayHitReact();
+// 	Multicast_PlayPainSound();
+//
+// 	if (AEPPlayerController* InstigatorPC = Cast<AEPPlayerController>(EventInstigator))
+// 		InstigatorPC->Client_PlayHitConfirmSound();
+//
+// 	if (HP <= 0.f) Die(EventInstigator);
+//
+// 	ForceNetUpdate();
+// 	return DamageAmount;
+// }
+//
+// void AEPCharacter::Die(AController* Killer)
+// {
+// 	if (!HasAuthority()) return;
+// 	
+// 	AController* VictimController = GetController();
+// 	
+// 	// 무기 처리                                                                                                                                                                                                                                                                                                  
+// 	if (CombatComponent && CombatComponent->GetEquippedWeapon())
+// 	{
+// 		CombatComponent->GetEquippedWeapon()->SetActorHiddenInGame(true);
+// 		CombatComponent->GetEquippedWeapon()->SetActorEnableCollision(false);
+// 	}
+// 	
+// 	if (AEPGameMode* GM = GetWorld()->GetAuthGameMode<AEPGameMode>())
+// 		GM->OnPlayerKilled(Killer, GetController());
+// 	
+// 	Multicast_Die();
+// 	
+// 	if (VictimController)
+// 		VictimController->UnPossess();
+// }
 
 // --- 입력 핸들러 ---
 // 이동 (WASD)
@@ -429,10 +438,10 @@ void AEPCharacter::TickAutoStrafeInputTest(float DeltaSeconds)
 	AddMovementInput(GetActorRightVector(), AutoStrafeDirectionSign * AutoStrafeInputScale);
 }
 
-void AEPCharacter::OnRep_HP()
-{
-	UE_LOG(LogTemp, Warning, TEXT("Current HP: %d"), HP);
-}
+// void AEPCharacter::OnRep_HP()
+// {
+// 	UE_LOG(LogTemp, Warning, TEXT("Current HP: %d"), HP);
+// }
 
 void AEPCharacter::Multicast_Die_Implementation()
 {
@@ -468,7 +477,7 @@ void AEPCharacter::GetLifetimeReplicatedProps(TArray<class FLifetimeProperty>& O
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 	
-	DOREPLIFETIME_CONDITION(AEPCharacter, HP, COND_OwnerOnly);
+	// DOREPLIFETIME_CONDITION(AEPCharacter, HP, COND_OwnerOnly);
 }
 
 void AEPCharacter::InitASC()
@@ -477,4 +486,11 @@ void AEPCharacter::InitASC()
 	if (!PS || !ASC) return;
 	
 	ASC->InitAbilityActorInfo(PS, this);
+	
+	// if (IsLocallyControlled())
+	// {
+	// 	ASC->GetGameplayAttributeValueChangeDelegate(
+	// 		UEPAttributeSet::GetHealthAttribute()
+	// 	).AddUObject(this, &AEPCharacter::OnHealthChanged);
+	// }
 }

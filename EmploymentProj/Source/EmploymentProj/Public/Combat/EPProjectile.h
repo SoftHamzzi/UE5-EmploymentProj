@@ -8,6 +8,7 @@
 
 class USphereComponent;
 class UProjectileMovementComponent;
+class UGameplayEffect;
 
 UCLASS()
 class EMPLOYMENTPROJ_API AEPProjectile : public AActor
@@ -20,7 +21,7 @@ public:
 	// === 함수 ===
 	AEPProjectile();
 	
-	void Initialize(float InDamage, const FVector& InDirection);
+	void Initialize(float InDamage, const FVector& InDirection, TSubclassOf<UGameplayEffect> InGEClass);
 	void SetCosmeticOnly();
 	
 protected:
@@ -30,7 +31,6 @@ protected:
 	
 	UPROPERTY(VisibleAnywhere, Category = "Projectile")
 	TObjectPtr<UProjectileMovementComponent> MovementComp;
-	
 	// === 함수 ===
 
 private:
@@ -38,6 +38,9 @@ private:
 	float BaseDamage = 0.f;
 	FVector LaunchDir = FVector::ForwardVector;
 	bool bIsCosmeticOnly = false;
+	
+	UPROPERTY()
+	TSubclassOf<UGameplayEffect> GE_DamageClass;
 	
 	// === 함수 ===
 	UFUNCTION()

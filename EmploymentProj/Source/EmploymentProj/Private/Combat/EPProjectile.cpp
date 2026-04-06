@@ -3,6 +3,7 @@
 
 #include "Combat/EPProjectile.h"
 
+#include "Combat/EPCombatComponent.h"
 #include "Components/SphereComponent.h"
 #include "GameFramework/ProjectileMovementComponent.h"
 #include "Kismet/GameplayStatics.h"
@@ -21,10 +22,11 @@ AEPProjectile::AEPProjectile()
 
 }
 
-void AEPProjectile::Initialize(float InDamage, const FVector& InDirection)
+void AEPProjectile::Initialize(float InDamage, const FVector& InDirection, TSubclassOf<UGameplayEffect> InGEClass)
 {
 	BaseDamage = InDamage;
 	LaunchDir = InDirection.GetSafeNormal();
+	GE_DamageClass = InGEClass;
 	if (AActor* MyInstigator = GetInstigator())
 		CollisionComp->IgnoreActorWhenMoving(MyInstigator, true);
 }
@@ -47,10 +49,11 @@ void AEPProjectile::OnProjectileHit(
 	if (!HasAuthority()) return;
 	if (OtherActor)
 	{
-		UGameplayStatics::ApplyPointDamage(
-			OtherActor, BaseDamage, LaunchDir, Hit,
-			GetInstigatorController(), GetInstigator(),
-			UDamageType::StaticClass());
+		UEPCombatComponent::ApplyGEDamage(OtherActor, GetInstigator(), GE_DamageClass, BaseDamage);
+		// UGameplayStatics::ApplyPointDamage(
+		// 	OtherActor, BaseDamage, LaunchDir, Hit,
+		// 	GetInstigatorController(), GetInstigator(),
+		// 	UDamageType::StaticClass());
 	}
 	
 	Destroy();

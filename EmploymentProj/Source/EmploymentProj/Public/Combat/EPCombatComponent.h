@@ -12,6 +12,7 @@ class AEPCharacter;
 class AEPWeapon;
 class UEPPhysicalMaterial;
 class AEPProjectile;
+class UGameplayEffect;
 
 UCLASS( ClassGroup=(Custom), meta=(BlueprintSpawnableComponent) )
 class EMPLOYMENTPROJ_API UEPCombatComponent : public UActorComponent
@@ -19,10 +20,10 @@ class EMPLOYMENTPROJ_API UEPCombatComponent : public UActorComponent
 	GENERATED_BODY()
 
 public:
-	
-	UEPCombatComponent();
+	// === 변수 ===
 	
 	// === 함수 ===
+	UEPCombatComponent();
 	// --- Getter/Setter ---
 	void EquipWeapon(AEPWeapon* NewWeapon);
 	void UnequipWeapon();
@@ -33,12 +34,21 @@ public:
 	// Request 이관 함수
 	void RequestFire(const FVector& Origin, const FVector& Direction, float ClientFireTime);
 	
+	static void ApplyGEDamage(
+		AActor* Target,
+		AActor* Instigator,
+		TSubclassOf<UGameplayEffect> GEClass,
+		float FinalDamage);
+	
 	// Called every frame
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 
 protected:
 	// === 변수 ===
 	float LocalLastFireTime = 0.f;
+	
+	UPROPERTY(EditDefaultsOnly, Category = "GAS")
+	TSubclassOf<UGameplayEffect> GE_DamageClass;
 	
 	UPROPERTY(ReplicatedUsing = OnRep_EquippedWeapon, BlueprintReadOnly, Category = "Combat")
 	TObjectPtr<AEPWeapon> EquippedWeapon;
@@ -89,7 +99,10 @@ protected:
 		const FVector_NetQuantizeNormal& Direction);
 
 private:
+	// === 변수 ===
 	float LastServerFireTime = -999.f;
+	
+	// === 함수 ===
 	
 	void HandleHitscanFire(
 		AEPCharacter*	Owner,
