@@ -354,7 +354,7 @@ MaxHealth Attribute 추가는 이후 확장 시 진행.
         → GM->OnPlayerKilled() (킬 크레딧)
         → Multicast_Die() (래그돌)
         → Controller->UnPossess()
-        → EndAbility()
+        → EndAbility() 
 ```
 
 ---
