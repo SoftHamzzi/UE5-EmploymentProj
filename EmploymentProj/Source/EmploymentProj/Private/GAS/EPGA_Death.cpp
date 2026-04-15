@@ -6,6 +6,7 @@
 #include "Combat/EPCombatComponent.h"
 #include "Combat/EPWeapon.h"
 #include "Core/EPCharacter.h"
+#include "Core/EPGameMode.h"
 #include "GAS/EPNativeGameplayTags.h"
 
 UEPGA_Death::UEPGA_Death()
@@ -46,6 +47,8 @@ void UEPGA_Death::ActivateAbility(const FGameplayAbilitySpecHandle Handle, const
 		
 		const AActor* Killer = TriggerEventData ? TriggerEventData->Instigator.Get() : nullptr;
 		AController* KillerController = Killer ? Killer->GetInstigatorController() : nullptr;
+		if (AEPGameMode* GM = Char->GetWorld()->GetAuthGameMode<AEPGameMode>())
+			GM->OnPlayerKilled(KillerController, Char->GetController());
 		
 		// 래그돌
 		Char->Multicast_Die();
