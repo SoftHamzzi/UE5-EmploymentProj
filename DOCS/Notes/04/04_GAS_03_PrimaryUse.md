@@ -249,6 +249,12 @@ float LastServerFireTime;                             // Cooldown GE가 대체
 void RequestFire(...);                                // Input_Fire → TryActivateAbilitiesByTag로 대체
 ```
 
+> **`AEPWeapon::CanFire()` FireRate 체크 제거 필요**
+> `CanFire()`는 현재 `CurrentTime - LastFireTime < FireInterval` 체크를 포함하고 있다.
+> GA 이관 후 FireRate는 GAS Cooldown GE가 관리하므로 이 체크는 중복이다.
+> `CanFire()`에서 `LastFireTime` 관련 로직을 제거하고, WeaponState와 Ammo 체크만 남긴다.
+> 제거하지 않으면 GAS Cooldown이 풀렸어도 무기의 `LastFireTime`이 블록하는 상황이 발생할 수 있다.
+
 **`Server_Fire_Implementation`의 내용을 `HandleServerFire`로 이전 (public):**
 ```cpp
 // EPCombatComponent.h — public
@@ -454,6 +460,7 @@ if (FGameplayAbilitySpec* Spec = ASC->FindAbilitySpecFromHandle(GrantedHandle))
 - [ ] `GE_FireCooldown` Blueprint 에셋 생성 (Cooldown.Weapon.PrimaryUse 태그 포함)
 - [ ] `EPCombatComponent::EquipWeapon / UnequipWeapon`에 GA Grant/Remove 추가
 - [ ] `Server_Fire` RPC / `LastServerFireTime` / `RequestFire` 제거 후 컴파일
+- [ ] `AEPWeapon::CanFire()`에서 `LastFireTime` FireRate 체크 제거
 - [ ] `HandleServerFire` public 메서드 추가
 - [ ] `Input_Fire` → `TryActivateAbilitiesByTag` 교체
 - [ ] PIE: 발사 입력 → GA 활성화 로그 확인
@@ -479,3 +486,5 @@ if (FGameplayAbilitySpec* Spec = ASC->FindAbilitySpecFromHandle(GrantedHandle))
 | 발사 후 GA 종료 안 됨 | `EndAbility` 누락 | ActivateAbility 모든 경로에서 `EndAbility` 호출 확인 |
 | `TryActivateAbilitiesByTag` 실패 | `AbilityTags`에 TAG 누락 | 생성자에 `AbilityTags.AddTag(TAG_Ability_Item_PrimaryUse)` 확인 |
 | 발사 후 예측 롤백 발생 | `CanFire` 체크를 `ActivateAbility`에서 함 | `CanActivateAbility` 오버라이드로 이전 |
+| GA 이관 후 FireRate 무시됨 | `CanFire()`의 `LastFireTime` 체크가 GAS Cooldown과 이중으로 존재 | `CanFire()`에서 `LastFireTime` 체크 제거 — WeaponState + Ammo 체크만 유지 |
+| 재장전 중 발사 차단 안 됨 | `WeaponState`가 복제 안 됨 → 클라이언트 `CanFire()`는 WeaponState 항상 Idle | GA_Reload 구현 시 `TAG_State_Reloading` GE로 부여해야 `ActivationBlockedTags` 동작. 그 전까지는 서버 `CanFire()` 체크에만 의존 |
