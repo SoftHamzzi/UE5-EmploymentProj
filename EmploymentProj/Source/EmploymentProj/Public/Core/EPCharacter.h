@@ -82,15 +82,8 @@ protected:
 	// Enhanced Input 바인딩
 	virtual void SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent) override;
 	
-	// // 피격
-	// virtual float TakeDamage(
-	// 	float DamageAmount, struct FDamageEvent const& DamageEvent,
-	// 	class AController* EventInstigator, AActor* DamageCause) override;
-	
 	// 테스트용
 	void TickAutoStrafeInputTest(float DeltaSeconds);
-	
-	// void Die(AController* Killer);
 	
 	// --- 입력 핸들러 ---
 	// 이동 (WASD)
@@ -118,10 +111,6 @@ protected:
 	// 발사
 	void Input_Fire(const FInputActionValue& Value);
 	void Input_ToggleAutoStrafeTest();
-	
-	// // OnRep
-	// UFUNCTION()
-	// void OnRep_HP();
 	
 	// 동기화
 	virtual void GetLifetimeReplicatedProps(TArray<class FLifetimeProperty>& OutLifetimeProps) const override;

@@ -236,48 +236,6 @@ UEPServerSideRewindComponent* AEPCharacter::GetServerSideRewindComponent() const
 	return RewindComponent;
 }
 
-// float AEPCharacter::TakeDamage(
-// 	float DamageAmount, struct FDamageEvent const& DamageEvent,
-// 	class AController* EventInstigator, AActor* DamageCause)
-// {
-// 	if (!HasAuthority()) return 0.f;
-//
-// 	HP = FMath::Clamp(HP - DamageAmount, 0.f, static_cast<float>(MaxHP));
-//
-// 	Multicast_PlayHitReact();
-// 	Multicast_PlayPainSound();
-//
-// 	if (AEPPlayerController* InstigatorPC = Cast<AEPPlayerController>(EventInstigator))
-// 		InstigatorPC->Client_PlayHitConfirmSound();
-//
-// 	if (HP <= 0.f) Die(EventInstigator);
-//
-// 	ForceNetUpdate();
-// 	return DamageAmount;
-// }
-//
-// void AEPCharacter::Die(AController* Killer)
-// {
-// 	if (!HasAuthority()) return;
-// 	
-// 	AController* VictimController = GetController();
-// 	
-// 	// 무기 처리                                                                                                                                                                                                                                                                                                  
-// 	if (CombatComponent && CombatComponent->GetEquippedWeapon())
-// 	{
-// 		CombatComponent->GetEquippedWeapon()->SetActorHiddenInGame(true);
-// 		CombatComponent->GetEquippedWeapon()->SetActorEnableCollision(false);
-// 	}
-// 	
-// 	if (AEPGameMode* GM = GetWorld()->GetAuthGameMode<AEPGameMode>())
-// 		GM->OnPlayerKilled(Killer, GetController());
-// 	
-// 	Multicast_Die();
-// 	
-// 	if (VictimController)
-// 		VictimController->UnPossess();
-// }
-
 // --- 입력 핸들러 ---
 // 이동 (WASD)
 void AEPCharacter::Input_Move(const FInputActionValue& Value)
@@ -388,26 +346,11 @@ void AEPCharacter::Input_Fire(const FInputActionValue& Value)
 {
 	if (!CombatComponent) return;
 	
-	const AGameStateBase* GS = GetWorld()->GetGameState<AGameStateBase>();
-	const float ClientFireTime = GS ? GS->GetServerWorldTimeSeconds()
-									: GetWorld()->GetTimeSeconds();
-	
-	#if !(UE_BUILD_SHIPPING || UE_BUILD_TEST)
-    	for (TActorIterator<AEPCharacter> It(GetWorld()); It; ++It)
-    	{
-    		AEPCharacter* Other = *It;
-    		if (Other == this) continue;
-    		UE_LOG(LogTemp, Log, TEXT("[CLIENT_POS] FireTime=%.3f Actor=%s Pos=%s"),
-    			ClientFireTime, *Other->GetName(), *Other->GetActorLocation().ToString());
-    	}
-    #endif
-	
-	CombatComponent->RequestFire(
-		FirstPersonCamera->GetComponentLocation(),
-		FirstPersonCamera->GetForwardVector(),
-		ClientFireTime
-	);
-	
+	if (ASC)
+	{
+		ASC->TryActivateAbilitiesByTag(
+			FGameplayTagContainer(EmpGameplayTags::TAG_Ability_Item_PrimaryUse));
+	}
 }
 
 void AEPCharacter::Input_ToggleAutoStrafeTest()
@@ -437,11 +380,6 @@ void AEPCharacter::TickAutoStrafeInputTest(float DeltaSeconds)
 
 	AddMovementInput(GetActorRightVector(), AutoStrafeDirectionSign * AutoStrafeInputScale);
 }
-
-// void AEPCharacter::OnRep_HP()
-// {
-// 	UE_LOG(LogTemp, Warning, TEXT("Current HP: %d"), HP);
-// }
 
 void AEPCharacter::Multicast_Die_Implementation()
 {

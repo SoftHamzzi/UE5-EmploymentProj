@@ -64,11 +64,6 @@ bool AEPWeapon::CanFire() const
 	if (CurrentAmmo <= 0) return false;
 	if (!WeaponDef) return false;
 	
-	// 연사 속도 체크
-	float FireInterval = 1.f / WeaponDef->FireRate;
-	float CurrentTime = GetWorld()->GetTimeSeconds();
-	if (CurrentTime - LastFireTime < FireInterval) return false;
-	
 	return true;
 }
 

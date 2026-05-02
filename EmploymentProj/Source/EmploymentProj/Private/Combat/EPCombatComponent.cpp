@@ -24,6 +24,7 @@
 
 // GAS
 #include "GameplayEffect.h"
+#include "GAS/EPGA_Item_PrimaryUse.h"
 
 UEPCombatComponent::UEPCombatComponent()
 {
@@ -51,52 +52,49 @@ AEPWeapon* UEPCombatComponent::GetEquippedWeapon() const
 	return EquippedWeapon;
 }
 
-void UEPCombatComponent::RequestFire(const FVector& Origin, const FVector& Direction, float ClientFireTime)
+void UEPCombatComponent::HandleServerFire(const FVector& Origin, const FVector& Direction, float ClientFireTime)
 {
+	// 연사 속도, 탄약 검증
 	if (!EquippedWeapon || !EquippedWeapon->WeaponDef) return;
 	
-	// --- 클라이언트 사전 검증 ---
-	if (EquippedWeapon->CurrentAmmo <= 0) return;
-	
-	// 연사속도 체크
-	float FireInterval = 1.f / EquippedWeapon->WeaponDef->FireRate;
-	float CurrentTime = GetWorld()->GetTimeSeconds();
-	if (CurrentTime - LocalLastFireTime < FireInterval) return;
-	LocalLastFireTime = CurrentTime;
-	
 	AEPCharacter* Owner = GetOwnerCharacter();
-	if (Owner && Owner->IsLocallyControlled())
+	if (!Owner) return;
+	
+	constexpr float MaxOriginDrift = 200.f;
+	if (FVector::DistSquared(Origin, Owner->GetActorLocation()) > FMath::Square(MaxOriginDrift))
+		return;
+	
+	if (!EquippedWeapon->CanFire()) return;
+	
+	// --- 탄도 분기 ---
+	switch (EquippedWeapon->WeaponDef->BallisticType)
 	{
-		const FVector MuzzleLocation =
-			(EquippedWeapon->WeaponMesh && EquippedWeapon->WeaponMesh->DoesSocketExist(TEXT("MuzzleSocket")))
-			? EquippedWeapon->WeaponMesh->GetSocketLocation(TEXT("MuzzleSocket"))
-			: EquippedWeapon->GetActorLocation();
-		
-		PlayLocalMuzzleEffect(MuzzleLocation);
+	case EEPBallisticType::Hitscan:
+	default:
+		{
+			TArray<FVector> PelletDirs;
+			EquippedWeapon->Fire(Direction, ClientFireTime, PelletDirs);
+			HandleHitscanFire(Owner, Origin, PelletDirs, ClientFireTime);
+			break;
+		}
+	case EEPBallisticType::ProjectileFast:
+	case EEPBallisticType::ProjectileSlow:
+		{
+			FVector SpreadDir = Direction;
+			TArray<FVector> DiscardedPellets;
+			EquippedWeapon->Fire(SpreadDir, ClientFireTime, DiscardedPellets);
+			HandleProjectileFire(Owner, Origin, SpreadDir);
+			break;
+		}
 	}
 	
-	Server_Fire(Origin, Direction, ClientFireTime);
+	// 발사 이펙트 (항상 먼저 재생)
+	const FVector MuzzleLocation =
+		EquippedWeapon && EquippedWeapon->WeaponMesh->DoesSocketExist(TEXT("MuzzleSocket"))
+		? EquippedWeapon->WeaponMesh->GetSocketLocation(TEXT("MuzzleSocket"))
+		: EquippedWeapon->GetActorLocation();
 	
-	if (Owner && Owner->IsLocallyControlled())
-	{
-		float Pitch = EquippedWeapon->GetRecoilPitch();
-		float Yaw = FMath::RandRange(
-			-EquippedWeapon->GetRecoilYaw(),
-			EquippedWeapon->GetRecoilYaw());
-		Owner->AddControllerPitchInput(-Pitch);
-		Owner->AddControllerYawInput(Yaw);
-	}
-	
-	if (Owner && Owner->IsLocallyControlled()
-		&& EquippedWeapon->WeaponDef->BallisticType == EEPBallisticType::ProjectileFast
-		&& EquippedWeapon->WeaponDef->ProjectileClass)
-	{
-		const FVector MuzzleLoc =
-			(EquippedWeapon->WeaponMesh && EquippedWeapon->WeaponMesh->DoesSocketExist(TEXT("MuzzleSocket")))
-			? EquippedWeapon->WeaponMesh->GetSocketLocation(TEXT("MuzzleSocket"))
-			: Origin;
-		SpawnLocalCosmeticProjectile(MuzzleLoc, Direction);
-	}
+	Multicast_PlayMuzzleEffect(MuzzleLocation);
 }
 
 void UEPCombatComponent::SpawnLocalCosmeticProjectile(const FVector& MuzzleLocation, const FVector& Direction)
@@ -177,6 +175,20 @@ void UEPCombatComponent::EquipWeapon(AEPWeapon* NewWeapon)
 	{
 		Owner->GetMesh()->LinkAnimClassLayers(NewWeapon->WeaponDef->WeaponAnimLayer);
 	}
+	
+	if (GetOwner()->HasAuthority() && Owner && NewWeapon->WeaponDef
+		&& NewWeapon->WeaponDef->PrimaryUseAbilityClass)
+	{
+		if (UAbilitySystemComponent* ASC = Owner->GetAbilitySystemComponent())
+		{
+			if (GrantedPrimaryUseHandle.IsValid())
+				ASC->ClearAbility(GrantedPrimaryUseHandle);
+			
+			FGameplayAbilitySpec Spec(NewWeapon->WeaponDef->PrimaryUseAbilityClass, 1);
+			Spec.GetDynamicSpecSourceTags().AddTag(EmpGameplayTags::TAG_Ability_Item_PrimaryUse);
+			GrantedPrimaryUseHandle = ASC->GiveAbility(Spec);
+		}
+	}
 }
 
 // 서버 전용
@@ -190,61 +202,13 @@ void UEPCombatComponent::UnequipWeapon()
 	
 	EquippedWeapon->DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
 	EquippedWeapon = nullptr;
-}
-
-void UEPCombatComponent::Server_Fire_Implementation(
-	const FVector_NetQuantize& Origin, const FVector_NetQuantizeNormal& Direction, float ClientFireTime)
-{
-	// 연사 속도, 탄약 검증
-	if (!EquippedWeapon || !EquippedWeapon->WeaponDef) return;
 	
-	AEPCharacter* Owner = GetOwnerCharacter();
-	if (!Owner) return;
-	
-	// --- 서버 사이드 검증 ---
-	const AGameStateBase* GS = GetWorld()->GetGameState<AGameStateBase>();
-	const float ServerNow = GS
-		? GS->GetServerWorldTimeSeconds()
-		: GetWorld()->GetTimeSeconds();
-	const float FireInterval = 1.f / EquippedWeapon->WeaponDef->FireRate;
-	if (ServerNow - LastServerFireTime < FireInterval) return;
-	LastServerFireTime = ServerNow;
-	
-	if (!EquippedWeapon->CanFire()) return;
-	
-	constexpr float MaxOriginDrift = 200.f;
-	if (FVector::DistSquared(Origin, Owner->GetActorLocation()) > FMath::Square(MaxOriginDrift))
-		return;
-	
-	// --- 탄도 분기 ---
-	switch (EquippedWeapon->WeaponDef->BallisticType)
+	if (GetOwner()->HasAuthority() && Owner)
 	{
-	case EEPBallisticType::Hitscan:
-	default:
-		{
-			TArray<FVector> PelletDirs;
-			EquippedWeapon->Fire(Direction, ClientFireTime, PelletDirs);
-			HandleHitscanFire(Owner, Origin, PelletDirs, ClientFireTime);
-			break;
-		}
-		case EEPBallisticType::ProjectileFast:
-		case EEPBallisticType::ProjectileSlow:
-		{
-			FVector SpreadDir = Direction;
-			TArray<FVector> DiscardedPellets;
-			EquippedWeapon->Fire(SpreadDir, ClientFireTime, DiscardedPellets);
-			HandleProjectileFire(Owner, Origin, SpreadDir);
-			break;
-		}
+		if (UAbilitySystemComponent* ASC = Owner->GetAbilitySystemComponent())
+			ASC->ClearAbility(GrantedPrimaryUseHandle);
 	}
-	
-	// 발사 이펙트 (항상 먼저 재생)
-	const FVector MuzzleLocation =
-		EquippedWeapon && EquippedWeapon->WeaponMesh->DoesSocketExist(TEXT("MuzzleSocket"))
-		? EquippedWeapon->WeaponMesh->GetSocketLocation(TEXT("MuzzleSocket"))
-		: EquippedWeapon->GetActorLocation();
-	
-	Multicast_PlayMuzzleEffect(MuzzleLocation);
+	GrantedPrimaryUseHandle = FGameplayAbilitySpecHandle();
 }
 
 void UEPCombatComponent::Server_Reload_Implementation()

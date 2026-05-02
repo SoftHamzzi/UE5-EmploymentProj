@@ -3,9 +3,11 @@
 
 #include "GAS/EPGA_Item_PrimaryUse.h"
 
+#include "Camera/CameraComponent.h"
 #include "Combat/EPCombatComponent.h"
 #include "Combat/EPWeapon.h"
 #include "Core/EPCharacter.h"
+#include "GameFramework/GameStateBase.h"
 #include "GAS/EPNativeGameplayTags.h"
 
 UEPGA_Item_PrimaryUse::UEPGA_Item_PrimaryUse()
@@ -21,6 +23,66 @@ UEPGA_Item_PrimaryUse::UEPGA_Item_PrimaryUse()
 	
 	ActivationBlockedTags.AddTag(EmpGameplayTags::TAG_State_Dead);
 	ActivationBlockedTags.AddTag(EmpGameplayTags::TAG_State_Reloading);
+}
+
+void UEPGA_Item_PrimaryUse::ActivateAbility(const FGameplayAbilitySpecHandle Handle,
+	const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo,
+	const FGameplayEventData* TriggerEventData)
+{
+	Super::ActivateAbility(Handle, ActorInfo, ActivationInfo, TriggerEventData);
+	
+	AEPCharacter* Char = Cast<AEPCharacter>(ActorInfo->AvatarActor.Get());
+	AEPWeapon* Weapon = Char ? Char->GetCombatComponent()->GetEquippedWeapon() : nullptr;
+	if (!Char || !Weapon)
+	{
+		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
+		return;
+	}
+	
+	if (!CommitAbility(Handle, ActorInfo, ActivationInfo))
+	{
+		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
+		return;
+	}
+	
+	const FVector Origin = Char->GetCameraComponent()->GetComponentLocation();
+	const AGameStateBase* GS = Char->GetWorld()->GetGameState<AGameStateBase>();
+	const float ClientTime = GS ? GS->GetServerWorldTimeSeconds()
+		: Char->GetWorld()->GetTimeSeconds();
+	
+	if (ActorInfo->IsNetAuthority())
+	{
+		UEPCombatComponent* Combat = Char->GetCombatComponent();
+		Combat->HandleServerFire(Origin, Char->GetControlRotation().Vector(), ClientTime);
+	}
+	
+	if (!ActorInfo->IsNetAuthority())
+	{
+		UEPCombatComponent* Combat = Char->GetCombatComponent();
+		if (Combat)
+		{
+			Combat->PlayLocalMuzzleEffect(Origin);
+			
+			if (Weapon->WeaponDef->BallisticType == EEPBallisticType::ProjectileFast)
+				Combat->SpawnLocalCosmeticProjectile(Origin, Char->GetControlRotation().Vector());
+		}
+	}
+	
+	EndAbility(Handle, ActorInfo, ActivationInfo, false, false);
+	
+}
+
+bool UEPGA_Item_PrimaryUse::CanActivateAbility(const FGameplayAbilitySpecHandle Handle,
+                                               const FGameplayAbilityActorInfo* ActorInfo, const FGameplayTagContainer* SourceTags,
+                                               const FGameplayTagContainer* TargetTags, FGameplayTagContainer* OptionalRelevantTags) const
+{
+	if (!Super::CanActivateAbility(Handle, ActorInfo, SourceTags, TargetTags, OptionalRelevantTags))
+		return false;
+	
+	const AEPCharacter* Char = Cast<AEPCharacter>(ActorInfo->AvatarActor.Get());
+	const AEPWeapon* Weapon = Char ? Char->GetCombatComponent()->GetEquippedWeapon() : nullptr;
+	
+	return Char && Weapon && Weapon->CanFire();
 }
 
 const FGameplayTagContainer* UEPGA_Item_PrimaryUse::GetCooldownTags() const

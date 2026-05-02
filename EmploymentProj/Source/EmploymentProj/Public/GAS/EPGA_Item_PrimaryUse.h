@@ -25,7 +25,7 @@ public:
 		const FGameplayAbilityActorInfo* ActorInfo,
 		const FGameplayTagContainer* SourceTags = nullptr,
 		const FGameplayTagContainer* TargetTags = nullptr,
-		FGameplayTagContainer* OptionalRelevantTagsa = nullptr) const override;
+		FGameplayTagContainer* OptionalRelevantTags = nullptr) const override;
 	
 	virtual const FGameplayTagContainer* GetCooldownTags() const override;
 	virtual void ApplyCooldown(
