@@ -24,6 +24,8 @@
 
 // GAS
 #include "GameplayEffect.h"
+#include "Core/EPPlayerState.h"
+#include "GAS/EPAttributeSet.h"
 #include "GAS/EPGA_Item_PrimaryUse.h"
 
 UEPCombatComponent::UEPCombatComponent()
@@ -63,8 +65,6 @@ void UEPCombatComponent::HandleServerFire(const FVector& Origin, const FVector& 
 	constexpr float MaxOriginDrift = 200.f;
 	if (FVector::DistSquared(Origin, Owner->GetActorLocation()) > FMath::Square(MaxOriginDrift))
 		return;
-	
-	if (!EquippedWeapon->CanFire()) return;
 	
 	// --- 탄도 분기 ---
 	switch (EquippedWeapon->WeaponDef->BallisticType)
@@ -166,6 +166,16 @@ void UEPCombatComponent::EquipWeapon(AEPWeapon* NewWeapon)
 	EquippedWeapon = NewWeapon;
 	
 	AEPCharacter* Owner = GetOwnerCharacter();
+	AEPPlayerState* PS = Owner? Owner->GetPlayerState<AEPPlayerState>() : nullptr;
+	if (PS)
+	{
+		if (UEPAttributeSet* AS = PS->GetAttributeSet())
+		{
+			AS->InitAmmo(static_cast<float>(NewWeapon->WeaponDef->MaxAmmo));
+			AS->InitMaxAmmo(static_cast<float>(NewWeapon->WeaponDef->MaxAmmo));
+		}
+	}
+	
 	NewWeapon->AttachToComponent(
 		Owner->GetMesh(),
 		FAttachmentTransformRules::SnapToTargetNotIncludingScale,
@@ -176,17 +186,21 @@ void UEPCombatComponent::EquipWeapon(AEPWeapon* NewWeapon)
 		Owner->GetMesh()->LinkAnimClassLayers(NewWeapon->WeaponDef->WeaponAnimLayer);
 	}
 	
-	if (GetOwner()->HasAuthority() && Owner && NewWeapon->WeaponDef
-		&& NewWeapon->WeaponDef->PrimaryUseAbilityClass)
+	if (GetOwner()->HasAuthority() && Owner && NewWeapon->WeaponDef)
 	{
 		if (UAbilitySystemComponent* ASC = Owner->GetAbilitySystemComponent())
 		{
-			if (GrantedPrimaryUseHandle.IsValid())
-				ASC->ClearAbility(GrantedPrimaryUseHandle);
+			for (const FGameplayAbilitySpecHandle& Handle : GrantedWeaponAbilityHandles)
+				if (Handle.IsValid())
+					ASC->ClearAbility(Handle);
+			GrantedWeaponAbilityHandles.Reset();
 			
-			FGameplayAbilitySpec Spec(NewWeapon->WeaponDef->PrimaryUseAbilityClass, 1);
-			Spec.GetDynamicSpecSourceTags().AddTag(EmpGameplayTags::TAG_Ability_Item_PrimaryUse);
-			GrantedPrimaryUseHandle = ASC->GiveAbility(Spec);
+			for (const TSubclassOf<UGameplayAbility>& AbilityClass : NewWeapon->WeaponDef->WeaponAbilities)
+			{
+				if (!AbilityClass) continue;
+				FGameplayAbilitySpec Spec(AbilityClass, 1);
+				GrantedWeaponAbilityHandles.Add(ASC->GiveAbility(Spec));
+			}
 		}
 	}
 }
@@ -206,15 +220,11 @@ void UEPCombatComponent::UnequipWeapon()
 	if (GetOwner()->HasAuthority() && Owner)
 	{
 		if (UAbilitySystemComponent* ASC = Owner->GetAbilitySystemComponent())
-			ASC->ClearAbility(GrantedPrimaryUseHandle);
+			for (const FGameplayAbilitySpecHandle& Handle : GrantedWeaponAbilityHandles)
+				if (Handle.IsValid())
+					ASC->ClearAbility(Handle);
 	}
-	GrantedPrimaryUseHandle = FGameplayAbilitySpecHandle();
-}
-
-void UEPCombatComponent::Server_Reload_Implementation()
-{
-	if (!EquippedWeapon) return;
-	EquippedWeapon->StartReload();
+	GrantedWeaponAbilityHandles.Reset();
 }
 
 void UEPCombatComponent::Multicast_PlayMuzzleEffect_Implementation(const FVector_NetQuantize& MuzzleLocation)

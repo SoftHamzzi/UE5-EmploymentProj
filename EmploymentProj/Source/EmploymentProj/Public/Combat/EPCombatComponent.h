@@ -82,8 +82,6 @@ protected:
 	void OnRep_EquippedWeapon();
 	
 	// --- RPC ---
-	UFUNCTION(Server, Reliable)
-	void Server_Reload();
 	
 	UFUNCTION(NetMulticast, Unreliable)
 	void Multicast_PlayMuzzleEffect(const FVector_NetQuantize& MuzzleLocation);
@@ -96,8 +94,7 @@ protected:
 
 private:
 	// === 변수 ===
-	
-	FGameplayAbilitySpecHandle GrantedPrimaryUseHandle;
+	TArray<FGameplayAbilitySpecHandle> GrantedWeaponAbilityHandles;
 	
 	// === 함수 ===
 	void HandleHitscanFire(

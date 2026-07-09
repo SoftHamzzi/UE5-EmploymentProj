@@ -112,6 +112,9 @@ protected:
 	void Input_Fire(const FInputActionValue& Value);
 	void Input_ToggleAutoStrafeTest();
 	
+	// 장전
+	void Input_Reload(const FInputActionValue& Value);
+	
 	// 동기화
 	virtual void GetLifetimeReplicatedProps(TArray<class FLifetimeProperty>& OutLifetimeProps) const override;
 	

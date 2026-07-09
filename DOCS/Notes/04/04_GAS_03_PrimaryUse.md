@@ -331,8 +331,40 @@ void SpawnLocalCosmeticProjectile(...);
 ```
 
 **탄약 감소 위치:**  
-현재 `AEPWeapon::Fire()` 내부에서 `CurrentAmmo--`가 처리된다고 가정.  
-GA_Reload 단계에서 탄약을 GAS Attribute로 이관할 예정이므로, 이관 전까지는 기존 방식 유지.
+`AEPWeapon::CurrentAmmo`는 GAS 이관으로 삭제됨. 탄약 소모는 `GE_ConsumeAmmo` (Instant GE, Ammo Add -1)로 처리한다.
+
+적용 방법: GAS 표준 Cost GE 패턴 사용.
+
+```
+GE_ConsumeAmmo Blueprint 에셋:
+- DurationPolicy: Instant
+- Modifier: Ammo / Add / -1 (ScalableFloat)
+```
+
+GA Blueprint에서:
+- `CostGameplayEffectClass` = GE_ConsumeAmmo
+
+`CommitAbility`가 Cooldown과 Cost를 동시에 처리하므로 코드 추가 불필요.
+
+> **탄약 부족 시 발사 차단**: `CheckCost`는 자동 차단하지 않음 (Ammo가 0이면 -1을 적용해도 `PreAttributeChange`에서 0으로 클램핑될 뿐).
+> `CanFire()`에서 Ammo > 0 체크를 추가해야 차단됨.
+> `CanFire()`는 이미 `CanActivateAbility`에서 호출되므로 그 안에서 처리.
+
+```cpp
+// EPWeapon.cpp — CanFire()
+bool AEPWeapon::CanFire() const
+{
+    if (!WeaponDef) return false;
+
+    // AttributeSet Ammo 체크 — ASC는 오너(EPCharacter)에서 가져옴
+    if (AEPCharacter* EPOwner = Cast<AEPCharacter>(GetOwner()))
+        if (UAbilitySystemComponent* ASC = EPOwner->GetAbilitySystemComponent())
+            if (UEPAttributeSet* AS = Cast<UEPAttributeSet>(ASC->GetAttributeSet(UEPAttributeSet::StaticClass())))
+                if (AS->GetAmmo() <= 0.f) return false;
+
+    return true;
+}
+```
 
 ### Step 4 — CombatComponent: GA Grant / Remove
 
@@ -468,7 +500,11 @@ if (FGameplayAbilitySpec* Spec = ASC->FindAbilitySpecFromHandle(GrantedHandle))
 - [ ] PIE: `State.Dead` 중 발사 차단 확인
 - [ ] PIE: `State.Reloading` 중 발사 차단 확인
 - [ ] PIE: 히트스캔 / 투사체 정상 판정 확인
+- [ ] `GE_ConsumeAmmo` Blueprint 에셋 생성 (Instant, Ammo Add -1)
+- [ ] GA Blueprint `CostGameplayEffectClass` = GE_ConsumeAmmo 설정
+- [ ] `CanFire()`에 AttributeSet Ammo > 0 체크 추가
 - [ ] PIE: `CanFire() = false` 상태에서 발사 차단 확인 (`CanActivateAbility` 경로)
+- [ ] PIE: 탄약 소모 확인 (`showdebug abilitysystem` → Ammo Attribute 감소)
 - [ ] 무기 교체 → GA Grant/Remove 누수 없음 확인
 - [ ] 무기 재장착 → 중복 Grant 없음 확인 (로그: `showdebug abilitysystem`)
 
@@ -487,4 +523,6 @@ if (FGameplayAbilitySpec* Spec = ASC->FindAbilitySpecFromHandle(GrantedHandle))
 | `TryActivateAbilitiesByTag` 실패 | `AbilityTags`에 TAG 누락 | 생성자에 `AbilityTags.AddTag(TAG_Ability_Item_PrimaryUse)` 확인 |
 | 발사 후 예측 롤백 발생 | `CanFire` 체크를 `ActivateAbility`에서 함 | `CanActivateAbility` 오버라이드로 이전 |
 | GA 이관 후 FireRate 무시됨 | `CanFire()`의 `LastFireTime` 체크가 GAS Cooldown과 이중으로 존재 | `CanFire()`에서 `LastFireTime` 체크 제거 — WeaponState + Ammo 체크만 유지 |
+| 발사해도 Ammo 안 줄어듦 | `CostGameplayEffectClass` 미설정 또는 `CanFire()` Ammo 체크 누락 | GA Blueprint에 GE_ConsumeAmmo 연결 + `CanFire()`에 Ammo > 0 체크 추가 |
+| Ammo 0인데 발사 가능 | `CheckCost`가 클램핑만 할 뿐 차단 안 함 | `CanFire()`에서 명시적으로 `AS->GetAmmo() <= 0.f` 체크 |
 | 재장전 중 발사 차단 안 됨 | `WeaponState`가 복제 안 됨 → 클라이언트 `CanFire()`는 WeaponState 항상 Idle | GA_Reload 구현 시 `TAG_State_Reloading` GE로 부여해야 `ActivationBlockedTags` 동작. 그 전까지는 서버 `CanFire()` 체크에만 의존 |

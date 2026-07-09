@@ -213,6 +213,12 @@ void AEPCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCompone
 		ETriggerEvent::Started, this,
 		&AEPCharacter::Input_Fire
 	);
+	
+	EnhancedInput->BindAction(
+		PC->GetReloadAction(),
+		ETriggerEvent::Started, this,
+		&AEPCharacter::Input_Reload
+	);
 
 	PlayerInputComponent->BindKey(EKeys::T, IE_Pressed, this, &AEPCharacter::Input_ToggleAutoStrafeTest);
 }
@@ -362,6 +368,16 @@ void AEPCharacter::Input_ToggleAutoStrafeTest()
 	AutoStrafeDirectionSign = 1.f;
 
 	UE_LOG(LogTemp, Log, TEXT("[AutoStrafeTest] %s"), bEnableAutoStrafeInputTest ? TEXT("ON") : TEXT("OFF"));
+}
+
+void AEPCharacter::Input_Reload(const FInputActionValue& Value)
+{
+	if (ASC)
+	{
+		bool bResult = ASC->TryActivateAbilitiesByTag(                                                                                                                                                                                                                                                            
+			  FGameplayTagContainer(EmpGameplayTags::TAG_Ability_Item_Reload));                                                                                                                                                                                                                         
+		UE_LOG(LogTemp, Warning, TEXT("TryActivateReload: %d"), bResult);
+	}
 }
 
 void AEPCharacter::TickAutoStrafeInputTest(float DeltaSeconds)

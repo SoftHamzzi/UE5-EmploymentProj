@@ -9,6 +9,7 @@
 class AEPProjectile;
 class UCurveFloat;
 class UEPGA_Item_PrimaryUse;
+class UGameplayAbility;
 
 UCLASS()
 class EMPLOYMENTPROJ_API UEPWeaponDefinition : public UEPItemDefinition
@@ -18,7 +19,7 @@ class EMPLOYMENTPROJ_API UEPWeaponDefinition : public UEPItemDefinition
 public:
 	// --- GAS ---
 	UPROPERTY(EditDefaultsOnly, Category = "GAS")
-	TSubclassOf<UEPGA_Item_PrimaryUse> PrimaryUseAbilityClass;
+	TArray<TSubclassOf<UGameplayAbility>> WeaponAbilities;
 	
 	// --- 기본 ---
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon")

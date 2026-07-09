@@ -9,6 +9,7 @@ namespace EmpGameplayTags
 	UE_DEFINE_GAMEPLAY_TAG(TAG_State_Dead,                 "State.Dead")
 	UE_DEFINE_GAMEPLAY_TAG(TAG_State_Reloading,            "State.Reloading")
 	UE_DEFINE_GAMEPLAY_TAG(TAG_State_UsingItem,            "State.UsingItem")
+	UE_DEFINE_GAMEPLAY_TAG(TAG_State_FireCooldown,         "State.FireCooldown")
 
 	// Event
 	UE_DEFINE_GAMEPLAY_TAG(TAG_Event_Death,                "Event.Death")

@@ -81,11 +81,17 @@ if (Attribute == GetAmmoAttribute())
 
 무기 장착 시 `InitAmmo` / `InitMaxAmmo` 호출:
 ```cpp
-// AEPWeapon::EquipWeapon 서버측 — Attribute 초기화
-if (UEPAttributeSet* AS = PS->GetAttributeSet())
+// UEPCombatComponent::EquipWeapon 서버측 — Attribute 초기화
+// (AEPWeapon에는 EquipWeapon이 없음 — Step 5 참고)
+// PS는 컴포넌트 스코프에 없으므로 Owner(AEPCharacter*)를 통해 얻어야 함
+AEPCharacter* Owner = GetOwnerCharacter();
+if (AEPPlayerState* PS = Owner ? Owner->GetPlayerState<AEPPlayerState>() : nullptr)
 {
-    AS->InitAmmo(static_cast<float>(Weapon->WeaponDef->MaxAmmo));
-    AS->InitMaxAmmo(static_cast<float>(Weapon->WeaponDef->MaxAmmo));
+    if (UEPAttributeSet* AS = PS->GetAttributeSet())
+    {
+        AS->InitAmmo(static_cast<float>(NewWeapon->WeaponDef->MaxAmmo));
+        AS->InitMaxAmmo(static_cast<float>(NewWeapon->WeaponDef->MaxAmmo));
+    }
 }
 ```
 
@@ -149,18 +155,16 @@ protected:
 
 private:
     FActiveGameplayEffectHandle ReloadingEffectHandle;
-    FTimerHandle ReloadTimerHandle;
 
     UFUNCTION()
-    void OnReloadComplete(
-        const FGameplayAbilitySpecHandle Handle,
-        const FGameplayAbilityActorInfo* ActorInfo,
-        const FGameplayAbilityActivationInfo ActivationInfo);
+    void OnReloadComplete_Task();
 };
 ```
 
 ```cpp
 // GAS/GA_Item_Reload.cpp
+// #include "Abilities/Tasks/AbilityTask_WaitDelay.h" 추가 필요
+
 UGA_Item_Reload::UGA_Item_Reload()
 {
     NetExecutionPolicy = EGameplayAbilityNetExecutionPolicy::LocalPredicted;
@@ -252,10 +256,10 @@ void UGA_Item_Reload::EndAbility(
 > `SetTimer` + 람다는 GA 생명주기와 분리되어 GA 취소 시 타이머가 남을 수 있음.
 > C++에서는 `ReadyForActivation()` 수동 호출 필수 (Blueprint는 자동 호출).
 
-### Step 5 — AEPWeapon: GA Grant + 기존 코드 제거
+### Step 5 — AEPWeapon 기존 코드 제거 + CombatComponent: GA Grant 일반화
 
 ```cpp
-// 제거
+// AEPWeapon.h에서 제거
 void StartReload();
 void FinishReload();
 FTimerHandle ReloadTimerHandle;
@@ -263,37 +267,81 @@ EEPWeaponState WeaponState;
 UPROPERTY(ReplicatedUsing = OnRep_CurrentAmmo) uint8 CurrentAmmo;
 UPROPERTY(Replicated) uint8 MaxAmmo;
 void OnRep_CurrentAmmo();
+```
 
-// 장착 시 GA_Reload도 Grant
-FGameplayAbilitySpecHandle GrantedReloadHandle; // private
+> **주의**: GA Grant는 `AEPWeapon`이 아니라 `UEPCombatComponent::EquipWeapon/UnequipWeapon`에서 처리한다
+> (PrimaryUse 기획서에서 확정된 위치 — `AEPWeapon`에는 `EquipWeapon` 메서드 자체가 없음).
 
-void AEPWeapon::EquipWeapon(AEPCharacter* NewOwner)
+> **개선 — 핸들 1개씩 늘리는 방식 대신 배열로 일반화**
+> PrimaryUse 구현 당시 `GrantedPrimaryUseHandle` 단일 핸들 + `PrimaryUseAbilityClass` 단일 필드로 처리했다.
+> Reload GA가 추가되며 같은 패턴을 반복하면 어빌리티가 늘어날 때마다 핸들/필드가 계속 늘어난다.
+> Lyra의 `UAbilitySet` + `FAbilitySet_GrantedHandles` 패턴처럼 **배열로 일반화**하는 것이 더 낫다:
+
+```cpp
+// EPWeaponDefinition.h
+// 기존 PrimaryUseAbilityClass(TSubclassOf<UEPGA_Item_PrimaryUse>) 제거하고 아래로 통합
+UPROPERTY(EditDefaultsOnly, Category = "GAS")
+TArray<TSubclassOf<UGameplayAbility>> WeaponAbilities; // PrimaryUse, Reload, ...
+```
+
+```cpp
+// EPCombatComponent.h
+// 기존 GrantedPrimaryUseHandle(단일 핸들) 제거하고 아래로 통합
+TArray<FGameplayAbilitySpecHandle> GrantedWeaponAbilityHandles; // private
+```
+
+```cpp
+// EPCombatComponent.cpp
+void UEPCombatComponent::EquipWeapon(AEPWeapon* NewWeapon)
 {
-    // ... GA_PrimaryUse Grant (PrimaryUse 기획서 참조)
+    // ... 기존 장착 로직 ...
 
-    if (GetOwner() && GetOwner()->HasAuthority())
+    AEPCharacter* Owner = GetOwnerCharacter();
+    if (GetOwner()->HasAuthority() && Owner && NewWeapon->WeaponDef)
     {
-        if (UAbilitySystemComponent* ASC = NewOwner->GetAbilitySystemComponent())
+        if (UAbilitySystemComponent* ASC = Owner->GetAbilitySystemComponent())
         {
-            FGameplayAbilitySpec ReloadSpec(UGA_Item_Reload::StaticClass(), 1);
-            ReloadSpec.DynamicAbilityTags.AddTag(EmpGameplayTags::TAG_Ability_Item_Reload);
-            GrantedReloadHandle = ASC->GiveAbility(ReloadSpec);
+            // 재장착 시 이전 핸들 일괄 제거 — 중복 Grant 방지
+            for (const FGameplayAbilitySpecHandle& Handle : GrantedWeaponAbilityHandles)
+                if (Handle.IsValid())
+                    ASC->ClearAbility(Handle);
+            GrantedWeaponAbilityHandles.Reset();
+
+            for (const TSubclassOf<UGameplayAbility>& AbilityClass : NewWeapon->WeaponDef->WeaponAbilities)
+            {
+                if (!AbilityClass) continue;
+
+                FGameplayAbilitySpec Spec(AbilityClass, 1);
+                GrantedWeaponAbilityHandles.Add(ASC->GiveAbility(Spec));
+            }
         }
     }
 }
 
-void AEPWeapon::UnequipWeapon()
+void UEPCombatComponent::UnequipWeapon()
 {
-    if (GetOwner() && GetOwner()->HasAuthority())
+    // ... 기존 해제 로직 ...
+
+    AEPCharacter* Owner = GetOwnerCharacter();
+    if (GetOwner()->HasAuthority() && Owner)
     {
-        if (UAbilitySystemComponent* ASC = ...)
-        {
-            ASC->ClearAbility(GrantedPrimaryUseHandle);
-            ASC->ClearAbility(GrantedReloadHandle);
-        }
+        if (UAbilitySystemComponent* ASC = Owner->GetAbilitySystemComponent())
+            for (const FGameplayAbilitySpecHandle& Handle : GrantedWeaponAbilityHandles)
+                if (Handle.IsValid())
+                    ASC->ClearAbility(Handle);
     }
+    GrantedWeaponAbilityHandles.Reset();
 }
 ```
+
+> **AbilityTags 식별은 GA 생성자에서 처리**: 배열 방식에서는 `Spec`에 `DynamicAbilityTags`를 추가하지 않는다.
+> 대신 각 GA의 생성자에서 `SetAssetTags()`로 `TAG_Ability_Item_PrimaryUse` / `TAG_Ability_Item_Reload`를 직접 설정한다
+> (PrimaryUse 구현 패턴과 동일). `TryActivateAbilitiesByTag`는 이 태그로 GA를 찾는다.
+
+> **마이그레이션 비용**: 이 변경은 이미 구현된 PrimaryUse Grant 로직(`GrantedPrimaryUseHandle`, `PrimaryUseAbilityClass`)도
+> 함께 배열 방식으로 옮겨야 함을 의미한다. 어빌리티가 PrimaryUse + Reload 2개뿐이라면 굳이 리팩토링하지 않고
+> `GrantedReloadHandle` + `ReloadAbilityClass`를 PrimaryUse와 동일한 패턴으로 하나 더 추가하는 것도 충분하다.
+> 향후 무기별 어빌리티가 3개 이상으로 늘어날 가능성이 있을 때 배열 방식으로 리팩토링 권장.
 
 ### Step 6 — 입력 연동
 

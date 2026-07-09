@@ -1,133 +1,152 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Behavioral guidelines to reduce common LLM coding mistakes. Merge with project-specific instructions as needed.
+
+**Tradeoff:** These guidelines bias toward caution over speed. For trivial tasks, use judgment.
+
+## 1. Think Before Coding
+
+**Don't assume. Don't hide confusion. Surface tradeoffs.**
+
+Before implementing:
+- State your assumptions explicitly. If uncertain, ask.
+- If multiple interpretations exist, present them - don't pick silently.
+- If a simpler approach exists, say so. Push back when warranted.
+- If something is unclear, stop. Name what's confusing. Ask.
+
+## 2. Simplicity First
+
+**Minimum code that solves the problem. Nothing speculative.**
+
+- No features beyond what was asked.
+- No abstractions for single-use code.
+- No "flexibility" or "configurability" that wasn't requested.
+- No error handling for impossible scenarios.
+- If you write 200 lines and it could be 50, rewrite it.
+
+Ask yourself: "Would a senior engineer say this is overcomplicated?" If yes, simplify.
+
+## 3. Surgical Changes
+
+**Touch only what you must. Clean up only your own mess.**
+
+When editing existing code:
+- Don't "improve" adjacent code, comments, or formatting.
+- Don't refactor things that aren't broken.
+- Match existing style, even if you'd do it differently.
+- If you notice unrelated dead code, mention it - don't delete it.
+
+When your changes create orphans:
+- Remove imports/variables/functions that YOUR changes made unused.
+- Don't remove pre-existing dead code unless asked.
+
+The test: Every changed line should trace directly to the user's request.
+
+## 4. Goal-Driven Execution
+
+**Define success criteria. Loop until verified.**
+
+Transform tasks into verifiable goals:
+- "Add validation" → "Write tests for invalid inputs, then make them pass"
+- "Fix the bug" → "Write a test that reproduces it, then make it pass"
+- "Refactor X" → "Ensure tests pass before and after"
+
+For multi-step tasks, state a brief plan:
+```
+1. [Step] → verify: [check]
+2. [Step] → verify: [check]
+3. [Step] → verify: [check]
+```
+
+Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
+
+---
+
+**These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
+
+---
 
 ## Project Overview
 
-UE5 C++ multiplayer extraction shooter ("EmploymentProj") - a portfolio project demonstrating UE5 gameplay programming, networking/replication, and GAS. All documentation is in Korean.
+UE5 C++ multiplayer extraction shooter ("EmploymentProj") - portfolio project. All documentation is in Korean.
 
-- **DOCS/DOCS.md**: Technical roadmap - maps job posting requirements to implementation stages and UE5 architecture decisions
-- **DOCS/GAME.md**: Game design document - gameplay systems, core loop, and scope definitions
-- **DOCS/Mine/**: System design documents (Item.md, Animation.md, MetaHuman.md, CMC.md, Rep.md, Proj.md) - contain architecture decisions and implementation guides
-- **DOCS/Notes/**: Per-stage technical study notes and implementation checklists (03_BoneHitbox, 04_GAS etc.)
+- **DOCS/DOCS.md**: Technical roadmap
+- **DOCS/GAME.md**: Game design document
+- **DOCS/Mine/**: System design docs (Item, Animation, MetaHuman, CMC, Rep, Proj)
+- **DOCS/Notes/**: Per-stage study notes and implementation checklists (03_BoneHitbox, 04_GAS etc.)
 
 ## Architecture
 
 UE5 dedicated server model. All game logic is server-authoritative.
 
-**Gameplay Framework layout:**
-- GameMode (server only): match state machine (Waiting→Playing→Ended), spawn rules, extraction/vending machine judgments
-- GameState (replicated): round timer, player count, match state
-- PlayerController (owning client): input, UI, server RPC requests
-- PlayerState (replicated): kills, extraction status, quest progress
-- Character (replicated): movement, animation, weapons, GAS abilities
+**Item 3-tier:** `FEPItemData` (DataTable) → `UEPItemDefinition` (DataAsset, subclassed as `UEPWeaponDefinition`) → `UEPItemInstance` (runtime state). Linked by `ItemId` (FName).
 
-**Item 3-tier architecture (DOCS/Mine/Item.md):**
-- `FEPItemData` (FTableRowBase): DataTable row for balance/operational data (price, stack, slot, rarity)
-- `UEPItemDefinition` (UPrimaryDataAsset): static asset references (mesh, icon, FX). Subclassed per type (`UEPWeaponDefinition`)
-- `UEPItemInstance` (UObject): runtime state (ammo, durability). Subclassed per type (`UEPWeaponInstance`)
-- All three layers linked by `ItemId` (FName)
+**Combat flow:** Input → `UEPCombatComponent` → `HandleServerFire` → SSR `ConfirmHitscan` → GE damage apply. Fire effects via Multicast RPCs (Unreliable).
 
-**Combat flow (current — pre-GAS):**
-- `AEPCharacter` → input → `UEPCombatComponent::RequestFire` → `Server_Fire` RPC → server validation (3 steps: FireRate/CanFire/OriginDrift) → `EEPBallisticType` switch → hitscan or projectile
-- Hitscan: `HandleHitscanFire` → `UEPServerSideRewindComponent::ConfirmHitscan` → `UGameplayStatics::ApplyPointDamage` → `AEPCharacter::TakeDamage`
-- Projectile: `HandleProjectileFire` → `SpawnActor<AEPProjectile>` → `AEPProjectile::OnProjectileHit` → `ApplyDamage`
-- `AEPWeapon` holds `UEPWeaponDefinition` reference (as `WeaponDef`) for weapon stats. `Fire()` computes spread via spherical coordinates + `SpreadDistributionCurve`
-- Fire effects via `Multicast` RPCs (Unreliable). Cosmetic projectile spawned locally in `RequestFire` via `SpawnLocalCosmeticProjectile`
-- Hit zone damage: `UEPPhysicalMaterial` (subclass of `UPhysicalMaterial`) carries `bIsWeakSpot`/`WeakSpotMultiplier`. `GetMaterialMultiplier()` reads this on hit. `BoneDamageMultiplierMap` (TMap<FName,float>, no UPROPERTY) in `WeaponDefinition` for bone-based multipliers
+**Lag Compensation:** `UEPServerSideRewindComponent` (server-only). Snapshot on `TG_PostPhysics` after `CMC::OnMovementUpdated`. Timestamps use `GS->GetServerWorldTimeSeconds()` on both sides.
 
-**Lag Compensation:**
-- `UEPServerSideRewindComponent` (server-only, `SetIsReplicatedByDefault(false)`): stores per-bone hitbox snapshots in time-ascending array
-- Snapshot saved on `TG_PostPhysics` tick group, triggered by `MarkPositionUpdated()` from `CMC::OnMovementUpdated` — guarantees position is current before snapshot
-- `ConfirmHitscan`: interpolates between two snapshots at `ClientFireTime`, teleports bones via `FBodyInstance::SetBodyTransform(ETeleportType::TeleportPhysics)`, runs narrow trace, restores
-- All timestamps use `GS->GetServerWorldTimeSeconds()` on both client and server (never local `GetTimeSeconds()`)
-- Debug settings in `UEPCombatDeveloperSettings` (CDO-based): `bEnableSSRDebugDraw`, draw duration/thickness, `bEnableSSRDebugLog`. Guarded by `#if !(UE_BUILD_SHIPPING || UE_BUILD_TEST)`
-
-**Movement:**
-- Custom CMC (`UEPCharacterMovement`) extends `UCharacterMovementComponent`
-- Sprint/ADS via `CompressedFlags` in `FSavedMove` (not Server RPCs) for prediction-accurate sync
-
-**Death and Corpse:**
-- On death: `AEPCharacter::Multicast_Die()` disables capsule collision and enables ragdoll physics on the body mesh
-- `AEPCorpse` (separate replicated Actor) is spawned server-side via `InitializeFromCharacter()` for looting interaction — carries body/face/outfit mesh references replicated to clients
-
-**Animation (Lyra-style Linked Anim Layer, DOCS/Mine/Animation.md):**
-- `UEPAnimInstance`: main AnimBP C++ backend
-- `UEPWeaponAnimInstance`: per-weapon AnimBP base
-- `ALI_EPWeapon`: Animation Layer Interface with layer functions
-- `LinkAnimClassLayers()` swaps weapon animations at runtime via `WeaponDef->WeaponAnimLayer`
-
-**MetaHuman integration (DOCS/Mine/MetaHuman.md):**
-- Body = `GetMesh()`, Face/Outfit = additional `USkeletalMeshComponent` with `SetLeaderPoseComponent`
+**Animation:** Lyra-style Linked Anim Layer. `LinkAnimClassLayers()` swaps weapon anim at runtime via `WeaponDef->WeaponAnimLayer`.
 
 ## GAS Migration State (feature-gas branch)
 
-The `feature-gas` branch currently contains **planning documents only** — the source code still uses the pre-GAS RPC structure above. Master spec: `DOCS/Notes/04/04_GAS_DOCS.md`. Implementation order:
+Master spec: `DOCS/Notes/04/04_GAS_DOCS.md`. Implementation order:
 
-1. Foundation (ASC + AttributeSet) — `DOCS/Notes/04/04_GAS_01_Foundation.md`
+1. Foundation (ASC + AttributeSet) — `04_GAS_01_Foundation.md`
 2. Damage/HP pipeline — `04_GAS_02_DamagePipeline.md`
 3. `GA_Item_PrimaryUse` (replaces `Server_Fire`) — `04_GAS_03_PrimaryUse.md`
 4. `GA_Item_Reload` (replaces `Server_Reload`) — `04_GAS_04_Reload.md`
 5. Spread CDF table — `04_GAS_05_Spread.md`
 6. Hit zone damage tag system — `04_GAS_06_HitZoneDamage.md`
 
-Key pending removals once migration is complete: `Server_Fire`/`Server_Reload` RPCs, `AEPCharacter::HP`/`TakeDamage()`, `AEPWeapon::CurrentAmmo`/`StartReload`/`FinishReload`, `BoneDamageMultiplierMap`.
+**진행 상태의 진실의 원천은 STATUS 파일이다, 단계 문서가 아니다.**
+- `DOCS/Notes/04/GAS_STATUS.md` — 전체 단계 진행 상황
+- `DOCS/Notes/04/04_GAS_0X_XXX_STATUS.md` — 단계별 상세 (Step 완료 여부, 버그, 미완료 항목)
+- 단계 문서(`04_GAS_0X_XXX.md`)는 예정 코드를 보여줄 뿐 실제 구현 여부를 보장하지 않음 — 항상 STATUS 파일로 확인할 것
 
-NativeGameplayTags are defined in `Public/GAS/EPNativeGameplayTags.h` (`namespace EmpGameplayTags`). GAS concept reference: `DOCS/Notes/04/04_GAS_00_Reference.md`.
+NativeGameplayTags: `Public/GAS/EPNativeGameplayTags.h` (`namespace EmpGameplayTags`).
+
+Key pending removals: `Server_Fire`/`Server_Reload` RPCs, `AEPCharacter::HP`/`TakeDamage()`, `AEPWeapon::CurrentAmmo`/`StartReload`/`FinishReload`, `BoneDamageMultiplierMap`.
 
 ## Project Structure
 
 ```
-UE5-EmploymentProj/          <- Git root
+UE5-EmploymentProj/
 ├── CLAUDE.md
-├── DOCS/                    <- Design docs & study notes
-│   ├── DOCS.md              <- Technical roadmap
-│   ├── GAME.md              <- Game design document
-│   ├── Mine/                <- System design docs (Item, Animation, MetaHuman, CMC, Rep, Proj, GAS_Migration)
-│   └── Notes/               <- Study notes & implementation checklists per stage
-├── .claude/                 <- Claude Code config
-└── EmploymentProj/          <- UE5 project root
+├── DOCS/
+└── EmploymentProj/
     ├── Source/EmploymentProj/
-    │   ├── Public/           <- Headers by feature (Core/, Combat/, Data/, Movement/, Animation/, Types/)
-    │   └── Private/          <- Implementations mirroring Public/ structure
-    ├── Content/Data/         <- DataAssets, DataTables (DA_AK74, DT_Items)
-    └── Config/
+    │   ├── Public/    <- Headers by feature (Core/, Combat/, Data/, Movement/, Animation/, GAS/)
+    │   └── Private/   <- Implementations mirroring Public/
+    └── Content/Data/  <- DataAssets, DataTables
 ```
 
 ## Build Commands
 
 ```bash
-# Generate VS project files (Windows)
+# Generate VS project files
 UnrealBuildTool.exe -projectfiles -project="EmploymentProj/EmploymentProj.uproject" -game -engine
 
 # Build (Development Editor)
 UnrealBuildTool.exe EmploymentProj Win64 Development -project="EmploymentProj/EmploymentProj.uproject"
-
-# Build (Development Server - for dedicated server)
-UnrealBuildTool.exe EmploymentProjServer Win64 Development -project="EmploymentProj/EmploymentProj.uproject"
 ```
-
-## Design Principles
-
-This is a **job portfolio project**. Code must be structurally complete, not just functional.
-
-- **Public/Private folder separation**: Follow UE5 standard module layout even for a single module
-- **Minimal access**: Use protected/private for members not needed externally. Apply least-privilege UPROPERTY specifiers
-- **Minimal includes**: Use forward declarations in headers. Only #include in .cpp files
-- **Comments explain "why"**: Let code speak for "what". Comments justify design decisions
-- **Server authority**: All game logic runs on server. Clients only request. Always check HasAuthority()
-- **Lyra patterns**: Follow Lyra project conventions where applicable (Linked Anim Layers, data-driven design)
 
 ## Conventions
 
-- All gameplay C++ classes use UE5 reflection macros (UCLASS, UPROPERTY, UFUNCTION)
-- Replicated variables use `ReplicatedUsing` with `OnRep_` callbacks where client-side reaction is needed
-- Server RPCs prefixed `Server_`, Client RPCs prefixed `Client_`, Multicast RPCs prefixed `Multicast_`
-- Weapon data accessed via `WeaponDef->` (type: `UEPWeaponDefinition`)
-- Source layout: `Public/` for headers, `Private/` for .cpp, organized by feature (Core/, Combat/, Data/, Movement/, Animation/, Types/)
-- Git branching: `main` (always builds), `feature-*` per system (current: `feature-gas`)
-- `UActorComponent` subclasses cannot call `HasAuthority()` directly — use `GetOwner()->HasAuthority()`
+- UE5 reflection macros on all gameplay classes (UCLASS, UPROPERTY, UFUNCTION)
+- Replicated vars use `ReplicatedUsing` + `OnRep_` when client reaction needed
+- RPC prefixes: `Server_`, `Client_`, `Multicast_`
+- `UActorComponent` subclasses: use `GetOwner()->HasAuthority()`, not `HasAuthority()`
+- Forward declarations in headers; `#include` only in .cpp
+- Weapon data via `WeaponDef->` (type: `UEPWeaponDefinition`)
 - Platform: Windows (win32)
+
+## Workflow
+
+- **코드는 사용자가 직접 작성한다.** Claude는 코드 파일을 직접 수정하지 않는다.
+- **Claude는 구현 방법을 문서에 기술한다.** 구현 지침은 `DOCS/Notes/` 하위 해당 단계 문서에 작성한다.
+- 코드 검토, 오류 지적, 설계 설명은 허용. 파일 Edit/Write는 문서에만 사용한다.
+- GAS 관련 작업 시작 시 `GAS_STATUS.md` + 해당 단계 STATUS 파일을 먼저 확인한다.
+- 코드 수정 후 사용자가 요청하면 STATUS 파일을 코드 기준으로 갱신한다. 세부 사항은 `SESSION.md` 참고.
 
 ## Agent Rules
 

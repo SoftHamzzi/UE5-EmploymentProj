@@ -3,10 +3,11 @@
 
 #include "Combat/EPWeapon.h"
 
-#include "TimerManager.h"
+#include "AbilitySystemComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Core/EPCharacter.h"
 #include "Engine/World.h"
+#include "GAS/EPAttributeSet.h"
 #include "Net/UnrealNetwork.h"
 
 // Sets default values
@@ -25,12 +26,6 @@ AEPWeapon::AEPWeapon()
 void AEPWeapon::BeginPlay()
 {
 	Super::BeginPlay();
-	
-	if (HasAuthority() && WeaponDef)
-	{
-		MaxAmmo = WeaponDef->MaxAmmo;
-		CurrentAmmo = MaxAmmo;
-	}
 }
 
 void AEPWeapon::Tick(float DeltaTime)
@@ -47,23 +42,21 @@ void AEPWeapon::Tick(float DeltaTime)
 		);
 	}
 	
-	float FireInterval = 1.f / WeaponDef->FireRate;
-	if (WeaponState == EEPWeaponState::Firing &&
-		GetWorld()->GetTimeSeconds() - LastFireTime > FireInterval * 2.f)
-	{
-		WeaponState = EEPWeaponState::Idle;
-		ConsecutiveShots = 0;
-	}
 }
 
 bool AEPWeapon::CanFire() const
 {
-	if (WeaponState != EEPWeaponState::Idle &&
-
-	WeaponState != EEPWeaponState::Firing) return false;
-	if (CurrentAmmo <= 0) return false;
 	if (!WeaponDef) return false;
-	
+	if (AEPCharacter* EPOwner = Cast<AEPCharacter>(GetOwner()))
+	{
+		if (UAbilitySystemComponent* ASC = EPOwner->GetAbilitySystemComponent())
+		{
+			if (const UEPAttributeSet* AS = Cast<const UEPAttributeSet>(ASC->GetAttributeSet(UEPAttributeSet::StaticClass())))
+			{
+				if (AS->GetAmmo() <= 0.f) return false;
+			}
+		}
+	}
 	return true;
 }
 
@@ -77,7 +70,6 @@ void AEPWeapon::Fire(const FVector& AimDir, float ClientFireTime, TArray<FVector
 	if (!HasAuthority()) return;
 	if (!WeaponDef) return;
 	
-	CurrentAmmo = FMath::Max(0, CurrentAmmo - 1);
 	LastFireTime = GetWorld()->GetTimeSeconds();
 	
 	// 퍼짐 누적
@@ -86,8 +78,6 @@ void AEPWeapon::Fire(const FVector& AimDir, float ClientFireTime, TArray<FVector
 		WeaponDef->MaxSpread
 	);
 	ConsecutiveShots++;
-	
-	WeaponState = EEPWeaponState::Firing;
 	
 	const int32 Count = FMath::Max(1, WeaponDef->PelletCount);
 	OutPellets.Reserve(Count);
@@ -111,8 +101,6 @@ void AEPWeapon::Fire(const FVector& AimDir, float ClientFireTime, TArray<FVector
 		);
 	}
 	
-	// 탄약 0이면 자동 재장전
-	if (CurrentAmmo <= 0) StartReload();
 }
 
 FVector AEPWeapon::ApplySpread(const FVector& Direction) const
@@ -137,41 +125,6 @@ float AEPWeapon::CalculateSpread() const
 	return FMath::Clamp(Spread, 0.f, WeaponDef->MaxSpread);
 }
 
-void AEPWeapon::StartReload()
-{
-	if (!HasAuthority()) return;
-	if (WeaponState == EEPWeaponState::Reloading) return;
-	
-	if (CurrentAmmo >= MaxAmmo) return;
-	
-	WeaponState = EEPWeaponState::Reloading;
-	
-	GetWorldTimerManager().SetTimer(
-		ReloadTimerHandle,
-		this, &AEPWeapon::FinishReload,
-		WeaponDef->ReloadTime,
-		false
-	);
-}
-
-void AEPWeapon::FinishReload()
-{
-	if (!HasAuthority()) return;
-	
-	CurrentAmmo = MaxAmmo;
-	WeaponState = EEPWeaponState::Idle;
-	ConsecutiveShots = 0;
-	CurrentSpread = 0.f;
-}
-
-void AEPWeapon::OnRep_CurrentAmmo() const
-{
-	UE_LOG(LogTemp, Warning, TEXT("Remaining Ammo: %d"), CurrentAmmo);
-}
-
 void AEPWeapon::GetLifetimeReplicatedProps(TArray<class FLifetimeProperty>& OutLifetimeProps) const {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
-	
-	DOREPLIFETIME_CONDITION(AEPWeapon, CurrentAmmo, COND_OwnerOnly);
-	
 }

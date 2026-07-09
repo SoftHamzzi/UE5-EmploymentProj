@@ -14,6 +14,10 @@ void UEPAttributeSet::PreAttributeChange(const FGameplayAttribute& Attribute, fl
 	
 	if (Attribute == GetHealthAttribute())
 		NewValue = FMath::Clamp(NewValue, 0.f, GetMaxHealth());
+	if (Attribute == GetAmmoAttribute())
+		NewValue = FMath::Clamp(NewValue, 0.f, GetMaxAmmo());
+	if (Attribute == GetMaxAmmoAttribute())
+		NewValue = FMath::Max(NewValue, 1.f);
 	else if (Attribute == GetMaxHealthAttribute())
 		NewValue = FMath::Max(NewValue, 1.f);
 }
@@ -21,6 +25,12 @@ void UEPAttributeSet::PreAttributeChange(const FGameplayAttribute& Attribute, fl
 void UEPAttributeSet::PostGameplayEffectExecute(const FGameplayEffectModCallbackData& Data)
 {
 	Super::PostGameplayEffectExecute(Data);
+	
+	if (Data.EvaluatedData.Attribute == GetAmmoAttribute())
+		SetAmmo(FMath::Clamp(GetAmmo(), 0.f, GetMaxAmmo()));
+	
+	if (Data.EvaluatedData.Attribute == GetMaxAmmoAttribute())
+		SetAmmo(FMath::Clamp(GetAmmo(), 0.f, GetMaxAmmo()));
 	
 	// 타겟 캐릭터
 	AEPCharacter* TargetCharacter = Cast<AEPCharacter>(GetOwningActor());
@@ -68,6 +78,8 @@ void UEPAttributeSet::GetLifetimeReplicatedProps(TArray<class FLifetimeProperty>
 	
 	DOREPLIFETIME_CONDITION_NOTIFY(UEPAttributeSet, Health, COND_None, REPNOTIFY_Always);
 	DOREPLIFETIME_CONDITION_NOTIFY(UEPAttributeSet, MaxHealth, COND_None, REPNOTIFY_Always);
+	DOREPLIFETIME_CONDITION_NOTIFY(UEPAttributeSet, Ammo, COND_None, REPNOTIFY_Always);
+	DOREPLIFETIME_CONDITION_NOTIFY(UEPAttributeSet, MaxAmmo, COND_None, REPNOTIFY_Always);
 }
 
 void UEPAttributeSet::OnRep_Health(const FGameplayAttributeData& OldValue)
@@ -78,4 +90,14 @@ void UEPAttributeSet::OnRep_Health(const FGameplayAttributeData& OldValue)
 void UEPAttributeSet::OnRep_MaxHealth(const FGameplayAttributeData& OldValue)
 {
 	GAMEPLAYATTRIBUTE_REPNOTIFY(UEPAttributeSet, MaxHealth, OldValue);
+}
+
+void UEPAttributeSet::OnRep_Ammo(const FGameplayAttributeData& OldValue)
+{
+	GAMEPLAYATTRIBUTE_REPNOTIFY(UEPAttributeSet, Ammo, OldValue);
+}
+
+void UEPAttributeSet::OnRep_MaxAmmo(const FGameplayAttributeData& OldValue)
+{
+	GAMEPLAYATTRIBUTE_REPNOTIFY(UEPAttributeSet, MaxAmmo, OldValue);
 }

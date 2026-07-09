@@ -33,6 +33,14 @@ public:
 	FGameplayAttributeData IncomingDamage;
 	ATTRIBUTE_ACCESSORS(UEPAttributeSet, IncomingDamage);
 	
+	UPROPERTY(BlueprintReadOnly, Category = "Attribute|Ammo", ReplicatedUsing = OnRep_Ammo)
+	FGameplayAttributeData Ammo;
+	ATTRIBUTE_ACCESSORS(UEPAttributeSet, Ammo);
+	
+	UPROPERTY(BlueprintReadOnly, Category = "Attribute|Ammo", ReplicatedUsing = OnRep_MaxAmmo)
+	FGameplayAttributeData MaxAmmo;
+	ATTRIBUTE_ACCESSORS(UEPAttributeSet, MaxAmmo);
+	
 	// === 함수 ===
 	virtual void PreAttributeChange(const FGameplayAttribute& Attribute, float& NewValue) override;
 	virtual void PostGameplayEffectExecute(const FGameplayEffectModCallbackData& Data) override;
@@ -47,4 +55,10 @@ protected:
 	
 	UFUNCTION()
 	void OnRep_MaxHealth(const FGameplayAttributeData& OldValue);
+	
+	UFUNCTION()
+	void OnRep_Ammo(const FGameplayAttributeData& OldValue);
+	
+	UFUNCTION()
+	void OnRep_MaxAmmo(const FGameplayAttributeData& OldValue);
 };
