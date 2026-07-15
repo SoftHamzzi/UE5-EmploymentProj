@@ -107,6 +107,12 @@ void AEPCharacter::Tick(float DeltaSeconds)
 	TickAutoStrafeInputTest(DeltaSeconds);
 }
 
+void AEPCharacter::OnRep_Controller()
+{
+	Super::OnRep_Controller();
+	InitASC();
+}
+
 void AEPCharacter::PossessedBy(AController* NewController)
 {
 	Super::PossessedBy(NewController);

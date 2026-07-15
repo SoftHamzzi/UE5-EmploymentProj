@@ -14,6 +14,7 @@ class AEPWeapon;
 class UEPPhysicalMaterial;
 class AEPProjectile;
 class UGameplayEffect;
+class UMaterialInterface;
 
 UCLASS( ClassGroup=(Custom), meta=(BlueprintSpawnableComponent) )
 class EMPLOYMENTPROJ_API UEPCombatComponent : public UActorComponent
@@ -86,7 +87,7 @@ protected:
 	UFUNCTION(NetMulticast, Unreliable)
 	void Multicast_PlayMuzzleEffect(const FVector_NetQuantize& MuzzleLocation);
 	UFUNCTION(NetMulticast, Unreliable)
-	void Multicast_PlayImpactEffect(const FVector_NetQuantize& ImpactPoint, const FVector_NetQuantize& ImpactNormal);
+	void Multicast_PlayImpactEffect(const TArray<FVector_NetQuantize>& ImpactPoints, const TArray<FVector_NetQuantize>& ImpactNormals);
 	UFUNCTION(NetMulticast, Unreliable)
 	void Multicast_SpawnCosmeticProjectile(
 		const FVector_NetQuantize& MuzzleLocation,

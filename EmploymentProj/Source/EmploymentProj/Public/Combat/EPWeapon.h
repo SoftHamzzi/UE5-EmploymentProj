@@ -25,6 +25,9 @@ public:
 	// === 함수 ===
 	AEPWeapon();
 	
+	UFUNCTION(BlueprintImplementableEvent)
+	void BP_PlayImpactEffect(const FVector& ImpactPoint, const FVector& ImpactNormal, uint8 SurfaceType);
+	
 	// --- 인터페이스 ---
     bool CanFire() const;
     void Fire(const FVector& AimDir, float ClientFireTime, TArray<FVector>& OutPellets);
@@ -50,4 +53,11 @@ protected:
 	virtual void Tick(float DeltaTime) override;
 	virtual void GetLifetimeReplicatedProps(TArray<class FLifetimeProperty>& OutLifetimeProps) const override;
 	
+private:
+	static constexpr int32 CDFTableSize = 256;
+	TArray<float> SpreadCDFTable;
+	
+	void BuildSpreadCDFTable();
+	
+	float SampleSpread() const;
 };

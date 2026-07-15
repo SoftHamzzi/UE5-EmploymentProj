@@ -92,3 +92,17 @@
 - `IMC_DefaultMappingContext.uasset` 수정 확인 (R 키 매핑)
 - `EPCharacter.cpp` `Input_Reload`: `ASC->TryActivateAbilitiesByTag(TAG_Ability_Item_Reload)` 호출 확인
 - `EPCharacter.cpp` `SetupPlayerInputComponent`: `PC->GetReloadAction()` 바인딩 확인
+
+---
+
+## 발견 및 수정된 버그
+
+### 사망 시 GA_Item_Reload 미취소 (수정 완료)
+- **증상**: 장전 중 사망 시 `State.Reloading` 태그가 즉시 해제되지 않고 장전 시간이 끝날 때까지 남음
+- **원인**: `EPGA_Death::ActivateAbility`가 활성 어빌리티를 취소하지 않음
+- **수정**: `EPGA_Death::ActivateAbility`에서 `ASC->CancelAbilitiesWithTags` 또는 `GE_StateDead`의 `Cancel Abilities With Tag` 설정으로 해결
+
+### PIE 시작 직후 LocalPredicted 어빌리티 활성화 실패 (수정 완료)
+- **증상**: 가끔 `Can't activate LocalPredicted ability when not local` 경고, 재시작하면 정상
+- **원인**: `OnRep_PlayerState`가 `Controller` 복제보다 먼저 오면 `PlayerController = null` → `IsLocallyControlled() = false`
+- **수정**: `EPCharacter.h/cpp`에 `OnRep_Controller` override 추가 → `InitASC()` 재호출

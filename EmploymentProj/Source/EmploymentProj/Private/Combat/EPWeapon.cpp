@@ -26,6 +26,7 @@ AEPWeapon::AEPWeapon()
 void AEPWeapon::BeginPlay()
 {
 	Super::BeginPlay();
+	BuildSpreadCDFTable();
 }
 
 void AEPWeapon::Tick(float DeltaTime)
@@ -88,9 +89,7 @@ void AEPWeapon::Fire(const FVector& AimDir, float ClientFireTime, TArray<FVector
 	
 	for (int32 i=0; i<Count; i++)
 	{
-		const float R = WeaponDef->SpreadDistributionCurve
-			? WeaponDef->SpreadDistributionCurve->GetFloatValue(FMath::FRand())
-			: FMath::FRand();
+		const float R = SampleSpread();
 		
 		const float Theta = R * HalfAngle;
 		const float Phi = FMath::FRand() * TWO_PI;
@@ -127,4 +126,58 @@ float AEPWeapon::CalculateSpread() const
 
 void AEPWeapon::GetLifetimeReplicatedProps(TArray<class FLifetimeProperty>& OutLifetimeProps) const {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+}
+
+void AEPWeapon::BuildSpreadCDFTable()
+{
+	SpreadCDFTable.SetNumUninitialized(CDFTableSize);
+	
+	if (!WeaponDef || !WeaponDef->SpreadDistributionCurve)
+	{
+		for (int32 i=0; i<CDFTableSize; i++)
+			SpreadCDFTable[i] = static_cast<float>(i+1) / CDFTableSize;
+		return;
+	}
+	
+	double Cumulative = 0.0;
+	TArray<double> RawCDF;
+	RawCDF.SetNumUninitialized(CDFTableSize);
+	
+	for (int32 i=0; i<CDFTableSize; i++)
+	{
+		const float XMid = (i + 0.5f) /CDFTableSize;
+		const float PDFVal = FMath::Max(0.f, WeaponDef->SpreadDistributionCurve->GetFloatValue(XMid));
+		Cumulative += PDFVal;
+		RawCDF[i] = Cumulative;
+	}
+	
+	if (Cumulative > KINDA_SMALL_NUMBER)
+	{
+		for (int32 i=0; i<CDFTableSize; i++)
+			SpreadCDFTable[i] = static_cast<float>(RawCDF[i] / Cumulative);
+	} else
+	{
+		for (int32 i=0; i<CDFTableSize; i++)
+			SpreadCDFTable[i] = static_cast<float>(i+1) / CDFTableSize;
+	}
+}
+
+float AEPWeapon::SampleSpread() const
+{
+	if (SpreadCDFTable.IsEmpty())
+		return FMath::FRand();
+	
+	const float U = FMath::FRand();
+	
+	int32 Lo = 0, Hi = CDFTableSize - 1;
+	while (Lo < Hi)
+	{
+		const int32 Mid = (Lo + Hi) / 2;
+		if (SpreadCDFTable[Mid] < U)
+			Lo = Mid + 1;
+		else
+			Hi = Mid;
+	}
+	
+	return static_cast<float>(Lo) / CDFTableSize;
 }

@@ -136,6 +136,9 @@ void UEPCombatComponent::PlayLocalImpactEffect(const FVector& ImpactPoint, const
 		UNiagaraFunctionLibrary::SpawnSystemAtLocation(GetWorld(), ImpactFX, ImpactPoint, ImpactRot);
 	if (ImpactSFX)
 		UGameplayStatics::PlaySoundAtLocation(GetWorld(), ImpactSFX, ImpactPoint);
+	
+	if (EquippedWeapon)
+		EquippedWeapon->BP_PlayImpactEffect(ImpactPoint, ImpactNormal, 0);
 }
 
 void UEPCombatComponent::OnRep_EquippedWeapon()
@@ -235,9 +238,13 @@ void UEPCombatComponent::Multicast_PlayMuzzleEffect_Implementation(const FVector
 	PlayLocalMuzzleEffect(MuzzleLocation);
 }
 
-void UEPCombatComponent::Multicast_PlayImpactEffect_Implementation(const FVector_NetQuantize& ImpactPoint, const FVector_NetQuantize& ImpactNormal)
+void UEPCombatComponent::Multicast_PlayImpactEffect_Implementation(const TArray<FVector_NetQuantize>& ImpactPoints, const TArray<FVector_NetQuantize>& ImpactNormals)
 {
-	PlayLocalImpactEffect(ImpactPoint, ImpactNormal);
+	UE_LOG(LogTemp, Log, TEXT("Multicast_ImpactEffect_Impl"));
+	for (int32 i = 0; i < ImpactPoints.Num(); ++i)                                                                                                                                                                                                                                                                
+	{                                                                                                                                                                                                                                                                                                             
+		PlayLocalImpactEffect(ImpactPoints[i], ImpactNormals[i]);                                                                                                                                                                                                                                                 
+	} 
 }
 
 void UEPCombatComponent::GetLifetimeReplicatedProps(TArray<class FLifetimeProperty>& OutLifetimeProps) const
@@ -293,36 +300,34 @@ void UEPCombatComponent::HandleHitscanFire(
 	TArray<FHitResult> ConfirmedHits;
 	Owner->GetServerSideRewindComponent()->ConfirmHitscan(Owner, EquippedWeapon, Origin, Directions, ClientFireTime, ConfirmedHits);
 	
+	TArray<FVector_NetQuantize> ImpactPoints;
+	TArray<FVector_NetQuantize> ImpactNormals;
+	
 	// Damage - GAS 전환 시 GameplayEffectSpec + SetByCaller로 교체
 	for (const FHitResult& Hit : ConfirmedHits)
 	{
-		if (!Hit.GetActor()) continue;
+		if (AEPCharacter* HitChar = Cast<AEPCharacter>(Hit.GetActor()))
+		{
+			const float BaseDamage = EquippedWeapon ? EquippedWeapon->GetDamage() : 0.f;
+			const float BoneMultiplier = GetBoneMultiplier(Hit.BoneName);
+			const float MaterialMultiplier = GetMaterialMultiplier(Hit.PhysMaterial.Get());
+			const float FinalDamage = BaseDamage * BoneMultiplier * MaterialMultiplier;
+            
+			UE_LOG(LogTemp, Log,
+				TEXT("[BoneHitbox] Bone=%s PM=%s Base=%.1f Bone*=%.2f Mat*=%.2f Final=%.1f"),
+				*Hit.BoneName.ToString(),
+				Hit.PhysMaterial.IsValid() ? *Hit.PhysMaterial->GetName() : TEXT("None"),
+				BaseDamage, BoneMultiplier, MaterialMultiplier, FinalDamage);
+            
+			ApplyGEDamage(Hit.GetActor(), Owner, GE_DamageClass, FinalDamage);
+			
+		}
 		
-		const float BaseDamage = EquippedWeapon ? EquippedWeapon->GetDamage() : 0.f;
-		const float BoneMultiplier = GetBoneMultiplier(Hit.BoneName);
-		const float MaterialMultiplier = GetMaterialMultiplier(Hit.PhysMaterial.Get());
-		const float FinalDamage = BaseDamage * BoneMultiplier * MaterialMultiplier;
-		
-		UE_LOG(LogTemp, Log,
-			TEXT("[BoneHitbox] Bone=%s PM=%s Base=%.1f Bone*=%.2f Mat*=%.2f Final=%.1f"),
-			*Hit.BoneName.ToString(),
-			Hit.PhysMaterial.IsValid() ? *Hit.PhysMaterial->GetName() : TEXT("None"),
-			BaseDamage, BoneMultiplier, MaterialMultiplier, FinalDamage);
-		
-		ApplyGEDamage(Hit.GetActor(), Owner, GE_DamageClass, FinalDamage);
-		
-		// UGameplayStatics::ApplyPointDamage(
-		// 	Hit.GetActor(),
-		// 	FinalDamage,
-		// 	(Hit.ImpactPoint - Origin).GetSafeNormal(),
-		// 	Hit,
-		// 	Owner->GetController(),
-		// 	Owner,
-		// 	UDamageType::StaticClass()
-		// );
-		
-		Multicast_PlayImpactEffect(Hit.ImpactPoint, Hit.ImpactNormal);
+		ImpactPoints.Add(Hit.ImpactPoint);
+		ImpactNormals.Add(Hit.ImpactNormal);
 	}
+	
+	Multicast_PlayImpactEffect(ImpactPoints, ImpactNormals);
 }
 
 void UEPCombatComponent::HandleProjectileFire(
