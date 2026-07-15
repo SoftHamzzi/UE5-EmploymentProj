@@ -154,10 +154,13 @@ EmpGameplayTags::TAG_State_Dead
 | `Ability.Skill.Heal` | `TAG_Ability_Skill_Heal` | Ability | 자가 힐 GA 식별 |
 | `Ability.Skill.Shield` | `TAG_Ability_Skill_Shield` | Ability | 실드 GA 식별 |
 | `State.Dashing` | `TAG_State_Dashing` | State | 대시 중 (ActivationBlockedTags 용도) |
-| `State.Shielded` | `TAG_State_Shielded` | State | 실드 활성 중. GE_ShieldOn GrantedTags |
+| `State.Shielded` | `TAG_State_Shielded` | State | 실드 활성 중. GE_ShieldOn GrantedTags. PostGEExecute에서 피해 50% 감소 체크 |
+| `State.Healing` | `TAG_State_Healing` | State | 힐 채널링 중. GE_Healing GrantedTags |
 | `Cooldown.Skill.Dash` | `TAG_Cooldown_Skill_Dash` | Cooldown | 대시 쿨타임 |
-| `Cooldown.Skill.Heal` | `TAG_Cooldown_Skill_Heal` | Cooldown | 힐 쿨타임 |
+| `Cooldown.Skill.Heal` | `TAG_Cooldown_Skill_Heal` | Cooldown | 힐 쿨타임 (성공 시만 부여) |
 | `Cooldown.Skill.Shield` | `TAG_Cooldown_Skill_Shield` | Cooldown | 실드 쿨타임 |
+| `Data.HealAmount` | `TAG_Data_HealAmount` | Data | SetByCaller 힐 수치 (HP 30) |
+| `Event.Damaged` | `TAG_Event_Damaged` | Event | 피해 수신 시 발송. 힐 채널링 취소 트리거 |
 
 > **Data 태그**: GE Modifier에 DataTag로 등록하고, Spec에 `SetSetByCallerMagnitude`로 값 주입. 태그가 GE에 등록되지 않으면 런타임 오류.
 > **Event 태그**: `ASC->HandleGameplayEvent(Tag, &Payload)` 직접 호출. `UAbilitySystemBlueprintLibrary::SendGameplayEventToActor` Blueprint wrapper 사용 금지.
@@ -182,12 +185,14 @@ GA는 C++ 클래스. GE는 Blueprint 에셋으로 생성. `Content/Data/GAS/`에
 
 | 에셋명 | Duration | 주요 설정 |
 |--------|----------|-----------|
-| `GE_Dash_Cost` | Instant | Modifier: `EPAttributeSet.Stamina`, Add, `-Cost` |
-| `GE_Dash_Cooldown` | HasDuration | GrantedTags: `Cooldown.Skill.Dash` |
+| `GE_Dash_Cost` | Instant | Modifier: `EPAttributeSet.Stamina`, Add, `-30` |
+| `GE_Dash_Cooldown` | HasDuration | GrantedTags: `Cooldown.Skill.Dash` (10s) |
+| `GE_StaminaRegen` | Infinite | Period: 0.5s, Modifier: `EPAttributeSet.Stamina`, Add, `+5` |
+| `GE_Healing` | HasDuration | GrantedTags: `State.Healing` (3s, 채널링 상태) |
 | `GE_Heal` | Instant | Modifier: `EPAttributeSet.Health`, Add, SetByCaller(`Data.HealAmount`) |
-| `GE_Heal_Cooldown` | HasDuration | GrantedTags: `Cooldown.Skill.Heal` |
-| `GE_ShieldOn` | HasDuration | Modifier: `EPAttributeSet.Shield`, Override(MaxShield), GrantedTags: `State.Shielded` |
-| `GE_Shield_Cooldown` | HasDuration | GrantedTags: `Cooldown.Skill.Shield` |
+| `GE_Heal_Cooldown` | HasDuration | GrantedTags: `Cooldown.Skill.Heal` (20s, 성공 시만) |
+| `GE_ShieldOn` | HasDuration | GrantedTags: `State.Shielded` (5s). **Modifier 없음** — 피해 감소는 PostGEExecute 태그 체크로 처리 |
+| `GE_Shield_Cooldown` | HasDuration | GrantedTags: `Cooldown.Skill.Shield` (30s) |
 
 ---
 
@@ -218,7 +223,7 @@ GA는 C++ 클래스. GE는 Blueprint 에셋으로 생성. `Content/Data/GAS/`에
 | 03 | `04_GAS_03_PrimaryUse.md` | ✅ | 발사 GA 활성화 → FireRate 쿨타임 GE 동작 → 히트 판정 정상 |
 | 04 | `04_GAS_04_Reload.md` | ✅ | 재장전 GA → `State.Reloading` 복제 → 발사 차단 → 탄약 보충 |
 | 05 | `04_GAS_05_WeaponDecals.md` | ✅ | 벽 사격 → 탄흔 데칼 생성. 샷건 다중 탄흔 확인 |
-| 05 | `04_GAS_05_Spread.md` | ⬜ | 중심 집중 커브로 산탄총 PelletCount=5 발사 시 중심 밀집 확인 |
+| 05 | `04_GAS_05_Spread.md` | ✅ | 중심 집중 커브로 산탄총 PelletCount=5 발사 시 중심 밀집 확인 |
 | 06 | `04_GAS_06_HitZoneDamage.md` | ✅ | `HitZone.Head` 피격 → 2.5배. 태그 없는 부위 → 1.0x 폴백 |
 | 07 | `04_GAS_07_Skills.md` (예정) | ⬜ | Dash/Heal/ShieldOn 각 GA 활성화, 쿨타임 GE 동작, Stamina/Shield 어트리뷰트 복제 |
 | 08 | `04_GAS_08_HUD.md` (예정) | ⬜ | 체력바/탄약/스킬 쿨타임 UI가 GAS Tag/Attribute 변화에 실시간 반응 |
