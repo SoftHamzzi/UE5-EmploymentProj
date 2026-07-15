@@ -6,27 +6,27 @@
 // System
 #include "Kismet/GameplayStatics.h"
 #include "Net/UnrealNetwork.h"
-
-// SFX/VFX
+#include "GameFramework/PlayerState.h"
+#include "GameFramework/GameStateBase.h"
 #include "NiagaraFunctionLibrary.h"
 #include "Sound/SoundBase.h"
 
-// Components
-#include "AbilitySystemComponent.h"
+// Inheritance
 #include "Combat/EPPhysicalMaterial.h"
 #include "Combat/EPServerSideRewindComponent.h"
 #include "Combat/EPWeapon.h"
 #include "Core/EPCharacter.h"
-#include "GameFramework/PlayerState.h"
 #include "Combat/EPProjectile.h"
-#include "GameFramework/GameStateBase.h"
-#include "GAS/EPNativeGameplayTags.h"
+#include "Data/EPWeaponDefinition.h"
+#include "Core/EPPlayerState.h"
 
 // GAS
+#include "AbilitySystemComponent.h"
 #include "GameplayEffect.h"
-#include "Core/EPPlayerState.h"
 #include "GAS/EPAttributeSet.h"
 #include "GAS/EPGA_Item_PrimaryUse.h"
+#include "GameplayTagContainer.h"
+#include "GAS/EPNativeGameplayTags.h"
 
 UEPCombatComponent::UEPCombatComponent()
 {
@@ -309,15 +309,16 @@ void UEPCombatComponent::HandleHitscanFire(
 		if (AEPCharacter* HitChar = Cast<AEPCharacter>(Hit.GetActor()))
 		{
 			const float BaseDamage = EquippedWeapon ? EquippedWeapon->GetDamage() : 0.f;
-			const float BoneMultiplier = GetBoneMultiplier(Hit.BoneName);
-			const float MaterialMultiplier = GetMaterialMultiplier(Hit.PhysMaterial.Get());
-			const float FinalDamage = BaseDamage * BoneMultiplier * MaterialMultiplier;
+			const UEPPhysicalMaterial* PM = Cast<UEPPhysicalMaterial>(Hit.PhysMaterial.Get());
+			const float Multiplier = GetTagDamageMultiplier(PM, EquippedWeapon->WeaponDef);
+			const float FinalDamage = BaseDamage * Multiplier;
             
 			UE_LOG(LogTemp, Log,
-				TEXT("[BoneHitbox] Bone=%s PM=%s Base=%.1f Bone*=%.2f Mat*=%.2f Final=%.1f"),
-				*Hit.BoneName.ToString(),
+				TEXT("[BoneHitbox] Base=%.1f PM_Name=%s PM=%.1f Final=%.1f"),
+				BaseDamage,
 				Hit.PhysMaterial.IsValid() ? *Hit.PhysMaterial->GetName() : TEXT("None"),
-				BaseDamage, BoneMultiplier, MaterialMultiplier, FinalDamage);
+				Multiplier,
+				FinalDamage);
             
 			ApplyGEDamage(Hit.GetActor(), Owner, GE_DamageClass, FinalDamage);
 			
@@ -358,26 +359,14 @@ void UEPCombatComponent::HandleProjectileFire(
 		// Multicast_SpawnCosmeticProjectile(MuzzleLoc, Direction.GetSafeNormal());
 }
 
-float UEPCombatComponent::GetBoneMultiplier(const FName& BoneName) const
+float UEPCombatComponent::GetTagDamageMultiplier(const UEPPhysicalMaterial* PM, const UEPWeaponDefinition* WeaponDef)
 {
-	if (EquippedWeapon && EquippedWeapon->WeaponDef)
-		if (const float* Found = EquippedWeapon->WeaponDef->BoneDamageMultiplierMap.Find(BoneName))
-			return *Found;
+	if (!PM || !WeaponDef) return 1.f;
 	
-	// 누락 본은 기본 배율 1.0 + 경고 로그
-	UE_LOG(LogTemp, Verbose, TEXT("[BoneHitbox] Bone multiplier fallback: %s"), *BoneName.ToString());
-	return 1.0f;
-}
-
-float UEPCombatComponent::GetMaterialMultiplier(const UPhysicalMaterial* PM)
-{
-	if (const UEPPhysicalMaterial* EPM = Cast<UEPPhysicalMaterial>(PM))
+	for (const FGameplayTag& Tag : PM->MaterialTags)
 	{
-		// 현재는 bool/배율 기반
-		if (EPM->bIsWeakSpot) return EPM->WeakSpotMultiplier;
-		
-		// GAS 들어가면 PhysicalMaterial의 GameplayTagContainer 기반 판정
-		// TAG_Gameplay_Zone_Weakspot 태그가 있는가?
+		if (const float* Multiplier = WeaponDef->TagDamageMultiplierMap.Find(Tag))
+			return *Multiplier;
 	}
 	return 1.f;
 }

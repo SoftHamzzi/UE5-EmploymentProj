@@ -12,8 +12,8 @@
 - [x] 04_GAS_03 PrimaryUse
 - [x] 04_GAS_04 Reload (완료, PIE 검수 완료)
 - [x] 04_GAS_05 WeaponDecals (PIE 검수 완료) — `04_GAS_05_WeaponDecals_STATUS.md`
-- [ ] 04_GAS_05 Spread CDF  ← 현재
-- [ ] 04_GAS_06 HitZoneDamage
+- [ ] 04_GAS_05 Spread CDF
+- [x] 04_GAS_06 HitZoneDamage (PIE 검수 완료) — `04_GAS_06_HitZoneDamage_STATUS.md`  ← 현재
 
 ---
 

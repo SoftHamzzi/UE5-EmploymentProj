@@ -15,6 +15,7 @@ class UEPPhysicalMaterial;
 class AEPProjectile;
 class UGameplayEffect;
 class UMaterialInterface;
+class UEPWeaponDefinition;
 
 UCLASS( ClassGroup=(Custom), meta=(BlueprintSpawnableComponent) )
 class EMPLOYMENTPROJ_API UEPCombatComponent : public UActorComponent
@@ -111,6 +112,5 @@ private:
 		const FVector& Direction
 	);
 	
-	float GetBoneMultiplier(const FName& BoneName) const;
-	static float GetMaterialMultiplier(const UPhysicalMaterial* PM);
+	static float GetTagDamageMultiplier(const UEPPhysicalMaterial* PM, const UEPWeaponDefinition* WeaponDef);
 };

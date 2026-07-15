@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Data/EPItemDefinition.h"
+#include "GameplayTagContainer.h"
 #include "EPWeaponDefinition.generated.h"
 
 class AEPProjectile;
@@ -51,8 +52,8 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Combat")
 	uint8 MaxAmmo = 30;
 	
-	// 부위별 대미지(GAS 이후 태그 기반으로 수정)
-	TMap<FName, float> BoneDamageMultiplierMap;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Combat")
+	TMap<FGameplayTag, float> TagDamageMultiplierMap;
 	
 	// 장전 시간
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Combat")

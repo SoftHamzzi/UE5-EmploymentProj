@@ -29,5 +29,5 @@ namespace EmpGameplayTags
 	// Hitzone
 	UE_DEFINE_GAMEPLAY_TAG(TAG_HitZone_Head,               "HitZone.Head")
 	UE_DEFINE_GAMEPLAY_TAG(TAG_HitZone_Chest,              "HitZone.Chest")
-	UE_DEFINE_GAMEPLAY_TAG(TAG_HitZone_Limb,               "HitZone.Limb")
+	UE_DEFINE_GAMEPLAY_TAG(TAG_HitZone_Limbs,               "HitZone.Limbs")
 }
