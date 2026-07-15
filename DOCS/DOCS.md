@@ -98,6 +98,19 @@
 - 면접에서 보는 것: Ability 발동 흐름, Attribute 변화, Effect 적용/태그 처리, 네트워크 동작 방식
 - 구현 가이드: `DOCS/Notes/04_GAS.md`, `DOCS/Notes/04_Implementation.md`
 
+### 4-1단계: GAS 스킬 + Overwatch형 UI
+- GAS 스킬 3종 구현 후 HUD에 쿨타임/상태를 시각화
+- **UI 참고: 오버워치** (캐릭터 초상화 제외)
+  - 크로스헤어
+  - 체력바 (화면 하단, 숫자 + 바)
+  - 탄약 카운터 (현재/최대)
+  - 스킬 아이콘 + 쿨타임 오버레이
+  - 장전 중 표시
+  - 킬 피드 (우측 상단)
+  - 라운드 타이머
+- GAS Tag 기반으로 UI 연동: `State.Reloading`, `State.UsingItem` 등 태그로 위젯 상태 갱신
+- UMG + C++ (BindWidget) 구조 권장
+
 ### 5단계: Persistence (영속 데이터)
 - 4단계까지 완료 후 진행
 - 1차: USaveGame으로 로컬 저장 구조 구현 (스태시 인벤토리, 플레이어 진행도, 재화)
@@ -180,18 +193,20 @@
 
 ## 5. 실행 순서 (압축)
 
-1. 싱글에서 매치 흐름 (GameMode/GameState)
-2. 멀티 접속/랜덤 스폰/이동 (기본 Replication)
-3. 캐릭터 애니메이션 (AnimBP, 스테이트 머신, 이동/점프 블렌드)
-4. 사격 RPC + 서버 히트 판정 + 사격 몽타주
-5. HP 복제 + 피격 처리 + 사망 애니메이션
-6. Lag Compensation (히스토리/리와인드)
-7. 자판기 시스템 (서버 판정 + 상태 복제 + Multicast 사운드)
-8. AI 적 (Behavior Tree + 서버 권한 로직)
-9. GAS로 대시/힐/실드
-10. 인벤토리 + 장비 + 판매
-11. Extraction + 퀘스트 수집
-12. UI/HUD (체력바, 탄약, 타이머, 킬 피드, 인벤토리 화면)
-13. 맵 제작 (레벨 디자인, 파밍 포인트, 자판기/탈출 지점 배치, 내비메시)
-14. USaveGame으로 영속 데이터 구조 (스태시, 진행도)
-15. 외부 DB 연동 (REST API + DB, 서버 권한 접근)
+> ✅ 완료 / 🔄 진행 중(불완전) / ⬜ 미착수
+
+1. ✅ 싱글에서 매치 흐름 (GameMode/GameState)
+2. ✅ 멀티 접속/랜덤 스폰/이동 (기본 Replication)
+3. 🔄 캐릭터 애니메이션 (AnimBP, 스테이트 머신, 이동/점프 블렌드) — 손 IK·블렌딩 미완
+4. ✅ 사격 RPC + 서버 히트 판정 + 사격 몽타주
+5. ✅ HP 복제 + 피격 처리 + 사망 애니메이션
+6. ✅ Lag Compensation (히스토리/리와인드)
+7. ⬜ 자판기 시스템 (서버 판정 + 상태 복제 + Multicast 사운드)
+8. ⬜ AI 적 (Behavior Tree + 서버 권한 로직)
+9. ✅ GAS 데미지 파이프라인 + PrimaryUse/Reload/HitZone/Decals
+10. ⬜ GAS 스킬 3종 (Dash, Heal, ShieldOn) + Overwatch형 HUD
+11. ⬜ 인벤토리 + 장비 + 판매
+12. ⬜ Extraction + 퀘스트 수집
+13. ⬜ 맵 제작 (레벨 디자인, 파밍 포인트, 자판기/탈출 지점 배치, 내비메시)
+14. ⬜ USaveGame으로 영속 데이터 구조 (스태시, 진행도)
+15. ⬜ 외부 DB 연동 (REST API + DB, 서버 권한 접근)

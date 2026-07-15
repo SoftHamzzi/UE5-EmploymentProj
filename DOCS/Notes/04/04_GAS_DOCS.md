@@ -104,15 +104,16 @@ void AEPCharacter::Input_Fire(...)
 | `Ammo` | ✓ | 04 | 현재 탄약 |
 | `MaxAmmo` | ✓ | 04 | 최대 탄약 |
 
-### 향후 확장 (GAS 이관 완료 후 별도 단계)
+### 향후 확장 (스킬 단계에서 추가)
 
-| Attribute | 설명 |
-|-----------|------|
-| `Stamina` / `MaxStamina` | 달리기/슬라이딩 코스트 GE에서 차감 |
-| `ArmorHead` / `ArmorChest` / `ArmorLimbs` | 부위별 방어력 (타르코프식) |
+| Attribute | 설명 | 단계 |
+|-----------|------|------|
+| `Stamina` / `MaxStamina` | Dash 스킬 코스트 GE에서 차감 | 07 Skills |
+| `Shield` / `MaxShield` | ShieldOn 스킬이 부여. 데미지 선차감 후 Health 차감 | 07 Skills |
+| `ArmorHead` / `ArmorChest` / `ArmorLimbs` | 부위별 방어력 (타르코프식) — 후순위 | 미정 |
 
-> **부위별 방어력 설계 방향:**
-> GE Context에 HitZone 태그를 실어 전달 → `PostGameplayEffectExecute`에서 태그 분기 → 해당 Armor 어트리뷰트 조회 → `IncomingDamage` 감산. `TagDamageMultiplierMap`(무기 배율)과 Armor(플레이어 방어력)는 독립 계층으로 적용.
+> **Shield 처리 방향:** `PostGameplayEffectExecute`에서 `IncomingDamage` 수신 시 Shield 잔량 먼저 차감, 초과분만 Health 차감.
+> **부위별 방어력 설계 방향:** GE Context에 HitZone 태그를 실어 전달 → Armor 어트리뷰트 조회 → `IncomingDamage` 감산. `TagDamageMultiplierMap`(무기 배율)과 Armor(방어력)는 독립 계층 적용.
 
 ---
 
@@ -127,21 +128,36 @@ EmpGameplayTags::TAG_State_Dead
 
 ### 태그 목록
 
+**구현 완료 (01~06)**
+
 | 태그 | 상수명 | 타입 | 용도 |
 |------|--------|------|------|
 | `State.Dead` | `TAG_State_Dead` | State | 사망 상태. GE_State_Dead (Infinite)로 복제 |
 | `State.Reloading` | `TAG_State_Reloading` | State | 재장전 중. GE_Reloading (Duration)으로 복제 |
 | `State.UsingItem` | `TAG_State_UsingItem` | State | 아이템 사용 중 |
-| `Event.Death` | `TAG_Event_Death` | Event | 사망 트리거. GA_Death AbilityTrigger가 수신. 순간 신호 — ASC에 잔류하지 않음 |
-| `Ability.Item.PrimaryUse` | `TAG_Ability_Item_PrimaryUse` | Ability | 발사 GA 식별. TryActivateAbilitiesByTag 키 |
+| `Event.Death` | `TAG_Event_Death` | Event | 사망 트리거. GA_Death AbilityTrigger가 수신. 순간 신호 |
+| `Ability.Item.PrimaryUse` | `TAG_Ability_Item_PrimaryUse` | Ability | 발사 GA 식별 |
 | `Ability.Item.Reload` | `TAG_Ability_Item_Reload` | Ability | 재장전 GA 식별 |
-| `Cooldown.Weapon.PrimaryUse` | `TAG_Cooldown_Weapon_PrimaryUse` | Cooldown | GE_FireCooldown의 GrantedTags. GA의 CooldownTags와 반드시 일치해야 함 |
-| `Data.Damage` | `TAG_Data_Damage` | Data | SetByCaller 데미지 수치 전달용. ASC에 잔류하지 않음 |
-| `Data.Cooldown` | `TAG_Data_Cooldown` | Data | SetByCaller 쿨타임 Duration 전달용 |
-| `Data.ReloadDuration` | `TAG_Data_ReloadDuration` | Data | SetByCaller 재장전 Duration 전달용 |
-| `HitZone.Head` | `TAG_HitZone_Head` | HitZone | 머리 부위. PM_Head PhysicalMaterial에 설정 |
+| `Cooldown.Weapon.PrimaryUse` | `TAG_Cooldown_Weapon_PrimaryUse` | Cooldown | GE_FireCooldown GrantedTags |
+| `Data.Damage` | `TAG_Data_Damage` | Data | SetByCaller 데미지 수치 |
+| `Data.Cooldown` | `TAG_Data_Cooldown` | Data | SetByCaller 쿨타임 Duration |
+| `Data.ReloadDuration` | `TAG_Data_ReloadDuration` | Data | SetByCaller 재장전 Duration |
+| `HitZone.Head` | `TAG_HitZone_Head` | HitZone | 머리 부위. PM_Head PhysicalMaterial |
 | `HitZone.Chest` | `TAG_HitZone_Chest` | HitZone | 몸통 부위 |
 | `HitZone.Limbs` | `TAG_HitZone_Limbs` | HitZone | 팔/다리 부위 |
+
+**추가 예정 (07 Skills)**
+
+| 태그 | 상수명 | 타입 | 용도 |
+|------|--------|------|------|
+| `Ability.Skill.Dash` | `TAG_Ability_Skill_Dash` | Ability | 대시 GA 식별 |
+| `Ability.Skill.Heal` | `TAG_Ability_Skill_Heal` | Ability | 자가 힐 GA 식별 |
+| `Ability.Skill.Shield` | `TAG_Ability_Skill_Shield` | Ability | 실드 GA 식별 |
+| `State.Dashing` | `TAG_State_Dashing` | State | 대시 중 (ActivationBlockedTags 용도) |
+| `State.Shielded` | `TAG_State_Shielded` | State | 실드 활성 중. GE_ShieldOn GrantedTags |
+| `Cooldown.Skill.Dash` | `TAG_Cooldown_Skill_Dash` | Cooldown | 대시 쿨타임 |
+| `Cooldown.Skill.Heal` | `TAG_Cooldown_Skill_Heal` | Cooldown | 힐 쿨타임 |
+| `Cooldown.Skill.Shield` | `TAG_Cooldown_Skill_Shield` | Cooldown | 실드 쿨타임 |
 
 > **Data 태그**: GE Modifier에 DataTag로 등록하고, Spec에 `SetSetByCallerMagnitude`로 값 주입. 태그가 GE에 등록되지 않으면 런타임 오류.
 > **Event 태그**: `ASC->HandleGameplayEvent(Tag, &Payload)` 직접 호출. `UAbilitySystemBlueprintLibrary::SendGameplayEventToActor` Blueprint wrapper 사용 금지.
@@ -152,6 +168,8 @@ EmpGameplayTags::TAG_State_Dead
 
 GA는 C++ 클래스. GE는 Blueprint 에셋으로 생성. `Content/Data/GAS/`에 배치.
 
+**구현 완료 (01~06)**
+
 | 에셋명 | Duration | 주요 설정 |
 |--------|----------|-----------|
 | `GE_Damage` | Instant | Modifier: `EPAttributeSet.IncomingDamage`, Add, SetByCaller(`Data.Damage`) |
@@ -160,51 +178,73 @@ GA는 C++ 클래스. GE는 Blueprint 에셋으로 생성. `Content/Data/GAS/`에
 | `GE_Reloading` | HasDuration | DurationMagnitude: SetByCaller(`Data.ReloadDuration`), GrantedTags: `State.Reloading` |
 | `GE_Reload_Ammo` | Instant | Modifier: `EPAttributeSet.Ammo`, Override, AttributeBased(MaxAmmo, Source, bSnapshot=false) |
 
+**추가 예정 (07 Skills)**
+
+| 에셋명 | Duration | 주요 설정 |
+|--------|----------|-----------|
+| `GE_Dash_Cost` | Instant | Modifier: `EPAttributeSet.Stamina`, Add, `-Cost` |
+| `GE_Dash_Cooldown` | HasDuration | GrantedTags: `Cooldown.Skill.Dash` |
+| `GE_Heal` | Instant | Modifier: `EPAttributeSet.Health`, Add, SetByCaller(`Data.HealAmount`) |
+| `GE_Heal_Cooldown` | HasDuration | GrantedTags: `Cooldown.Skill.Heal` |
+| `GE_ShieldOn` | HasDuration | Modifier: `EPAttributeSet.Shield`, Override(MaxShield), GrantedTags: `State.Shielded` |
+| `GE_Shield_Cooldown` | HasDuration | GrantedTags: `Cooldown.Skill.Shield` |
+
 ---
 
 ## 6. 구현 로드맵
 
 ```
-[01 Foundation]
+[01 Foundation] ✅
       ↓
-[02 DamagePipeline]
+[02 DamagePipeline] ✅
       ↓
-[03 PrimaryUse] ──→ [05 Spread]  (03 완료 후 독립 진행 가능)
+[03 PrimaryUse] ✅ ──→ [05 Spread] ⬜
       ↓
-[04 Reload]
+[04 Reload] ✅
       ↓
-[06 HitZoneDamage]
+[05 WeaponDecals] ✅
+      ↓
+[06 HitZoneDamage] ✅
+      ↓
+[07 Skills: Dash / Heal / ShieldOn] ⬜
+      ↓
+[08 Overwatch HUD] ⬜
 ```
 
-| # | 파일 | 완료 기준 요약 |
-|---|------|----------------|
-| 01 | `04_GAS_01_Foundation.md` | PIE 2인: 양쪽 ASC null 없음, `Health = 100` 복제 확인 |
-| 02 | `04_GAS_02_DamagePipeline.md` | 피격 → Health 감소 → 0 도달 → `State.Dead` 복제 → 래그돌 |
-| 03 | `04_GAS_03_PrimaryUse.md` | 발사 GA 활성화 → FireRate 쿨타임 GE 동작 → 히트 판정 정상 |
-| 04 | `04_GAS_04_Reload.md` | 재장전 GA → `State.Reloading` 복제 → 발사 차단 → 탄약 보충 |
-| 05 | `04_GAS_05_Spread.md` | 중심 집중 커브로 산탄총 PelletCount=5 발사 시 중심 밀집 확인 |
-| 06 | `04_GAS_06_HitZoneDamage.md` | `HitZone.Head` 피격 → 2.5배. 태그 없는 부위 → 1.0x 폴백 |
+| # | 파일 | 상태 | 완료 기준 요약 |
+|---|------|------|----------------|
+| 01 | `04_GAS_01_Foundation.md` | ✅ | PIE 2인: 양쪽 ASC null 없음, `Health = 100` 복제 확인 |
+| 02 | `04_GAS_02_DamagePipeline.md` | ✅ | 피격 → Health 감소 → 0 도달 → `State.Dead` 복제 → 래그돌 |
+| 03 | `04_GAS_03_PrimaryUse.md` | ✅ | 발사 GA 활성화 → FireRate 쿨타임 GE 동작 → 히트 판정 정상 |
+| 04 | `04_GAS_04_Reload.md` | ✅ | 재장전 GA → `State.Reloading` 복제 → 발사 차단 → 탄약 보충 |
+| 05 | `04_GAS_05_WeaponDecals.md` | ✅ | 벽 사격 → 탄흔 데칼 생성. 샷건 다중 탄흔 확인 |
+| 05 | `04_GAS_05_Spread.md` | ⬜ | 중심 집중 커브로 산탄총 PelletCount=5 발사 시 중심 밀집 확인 |
+| 06 | `04_GAS_06_HitZoneDamage.md` | ✅ | `HitZone.Head` 피격 → 2.5배. 태그 없는 부위 → 1.0x 폴백 |
+| 07 | `04_GAS_07_Skills.md` (예정) | ⬜ | Dash/Heal/ShieldOn 각 GA 활성화, 쿨타임 GE 동작, Stamina/Shield 어트리뷰트 복제 |
+| 08 | `04_GAS_08_HUD.md` (예정) | ⬜ | 체력바/탄약/스킬 쿨타임 UI가 GAS Tag/Attribute 변화에 실시간 반응 |
 
 ---
 
 ## 7. 이관 후 제거 대상
 
-| 제거 대상 | 단계 | 대체 |
-|-----------|------|------|
-| `AEPCharacter::HP` / `MaxHP` UPROPERTY | 02 | `UEPAttributeSet::Health` |
-| `AEPCharacter::TakeDamage()` | 02 | `PostGameplayEffectExecute` |
-| `AEPCharacter::Die()` 직접 호출 경로 | 02 | `GA_Death` 내부에서 `Multicast_Die()` 호출 |
-| `AEPCharacter::OnRep_HP()` | 02 | Attribute 변경 델리게이트 |
-| `UEPCombatComponent::Server_Fire` RPC | 03 | `GA_Item_PrimaryUse` |
-| `UEPCombatComponent::LastServerFireTime` | 03 | `GE_FireCooldown` Duration GE |
-| `UEPCombatComponent::Server_Reload` RPC | 04 | `GA_Item_Reload` |
-| `AEPWeapon::StartReload` / `FinishReload` / `ReloadTimerHandle` | 04 | `GA_Item_Reload` + `WaitDelay` AbilityTask |
-| `AEPWeapon::CurrentAmmo` / `MaxAmmo` / `OnRep_CurrentAmmo` | 04 | `AttributeSet::Ammo` / `MaxAmmo` |
-| `AEPWeapon::WeaponState` (EEPWeaponState enum) | 04 | `State.Reloading` 등 GameplayTag |
-| `AEPWeapon::CanFire()` | 03 | `ActivationBlockedTags` + Cooldown GE |
-| `UEPPhysicalMaterial::bIsWeakSpot` / `WeakSpotMultiplier` | 06 | `MaterialTags` (FGameplayTagContainer) |
-| `UEPWeaponDefinition::BoneDamageMultiplierMap` (TMap\<FName, float\>) | 06 | `TagDamageMultiplierMap` (TMap\<FGameplayTag, float\>) |
-| `UEPCombatComponent::GetBoneMultiplier` / `GetMaterialMultiplier` | 06 | `GetTagDamageMultiplier` |
+> ✅ 제거 완료 / ⬜ 미착수
+
+| 제거 대상 | 단계 | 상태 | 대체 |
+|-----------|------|------|------|
+| `AEPCharacter::HP` / `MaxHP` UPROPERTY | 02 | ✅ | `UEPAttributeSet::Health` |
+| `AEPCharacter::TakeDamage()` | 02 | ✅ | `PostGameplayEffectExecute` |
+| `AEPCharacter::Die()` 직접 호출 경로 | 02 | ✅ | `GA_Death` 내부에서 `Multicast_Die()` 호출 |
+| `AEPCharacter::OnRep_HP()` | 02 | ✅ | Attribute 변경 델리게이트 |
+| `UEPCombatComponent::Server_Fire` RPC | 03 | ✅ | `GA_Item_PrimaryUse` |
+| `UEPCombatComponent::LastServerFireTime` | 03 | ✅ | `GE_FireCooldown` Duration GE |
+| `UEPCombatComponent::Server_Reload` RPC | 04 | ✅ | `GA_Item_Reload` |
+| `AEPWeapon::StartReload` / `FinishReload` / `ReloadTimerHandle` | 04 | ✅ | `GA_Item_Reload` + `WaitDelay` AbilityTask |
+| `AEPWeapon::CurrentAmmo` / `MaxAmmo` / `OnRep_CurrentAmmo` | 04 | ✅ | `AttributeSet::Ammo` / `MaxAmmo` |
+| `AEPWeapon::WeaponState` (EEPWeaponState enum) | 04 | ✅ | `State.Reloading` 등 GameplayTag |
+| `AEPWeapon::CanFire()` | 03 | ✅ | `ActivationBlockedTags` + Cooldown GE |
+| `UEPPhysicalMaterial::bIsWeakSpot` / `WeakSpotMultiplier` | 06 | ✅ | `MaterialTags` (FGameplayTagContainer) |
+| `UEPWeaponDefinition::BoneDamageMultiplierMap` | 06 | ✅ | `TagDamageMultiplierMap` (TMap\<FGameplayTag, float\>) |
+| `UEPCombatComponent::GetBoneMultiplier` / `GetMaterialMultiplier` | 06 | ✅ | `GetTagDamageMultiplier` |
 
 ---
 

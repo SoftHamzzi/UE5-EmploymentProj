@@ -87,12 +87,14 @@ void AEPWeapon::Fire(const FVector& AimDir, float ClientFireTime, TArray<FVector
 	FVector Up, Right;
 	AimDir.FindBestAxisVectors(Up, Right);
 	
+	const float SectorSize = TWO_PI / Count;
+	
 	for (int32 i=0; i<Count; i++)
 	{
 		const float R = SampleSpread();
-		
 		const float Theta = R * HalfAngle;
-		const float Phi = FMath::FRand() * TWO_PI;
+		
+		const float Phi = (i * SectorSize) + FMath::FRand() * SectorSize;
 		OutPellets.Add(
 			AimDir	* FMath::Cos(Theta)
 			+ Up		* FMath::Sin(Theta) * FMath::Cos(Phi)
