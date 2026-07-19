@@ -10,22 +10,37 @@ namespace EmpGameplayTags
 	UE_DEFINE_GAMEPLAY_TAG(TAG_State_Reloading,            "State.Reloading")
 	UE_DEFINE_GAMEPLAY_TAG(TAG_State_UsingItem,            "State.UsingItem")
 	UE_DEFINE_GAMEPLAY_TAG(TAG_State_FireCooldown,         "State.FireCooldown")
+	
+	UE_DEFINE_GAMEPLAY_TAG(TAG_State_Shielded,        "State.Shielded")
+	UE_DEFINE_GAMEPLAY_TAG(TAG_State_Healing,         "State.Healing")
 
 	// Event
 	UE_DEFINE_GAMEPLAY_TAG(TAG_Event_Death,                "Event.Death")
-
+	UE_DEFINE_GAMEPLAY_TAG(TAG_Event_Damaged,         "Event.Damaged")
+	
 	// Ability
 	UE_DEFINE_GAMEPLAY_TAG(TAG_Ability_Item_PrimaryUse,    "Ability.Item.PrimaryUse")
 	UE_DEFINE_GAMEPLAY_TAG(TAG_Ability_Item_Reload,        "Ability.Item.Reload")
+	
+	UE_DEFINE_GAMEPLAY_TAG(TAG_Ability_Skill_Dash,    "Ability.Skill.Dash")
+	UE_DEFINE_GAMEPLAY_TAG(TAG_Ability_Skill_Heal,    "Ability.Skill.Heal")
+	UE_DEFINE_GAMEPLAY_TAG(TAG_Ability_Skill_Shield,  "Ability.Skill.Shield")
 
 	// Cooldown
 	UE_DEFINE_GAMEPLAY_TAG(TAG_Cooldown_Weapon_PrimaryUse, "Cooldown.Weapon.PrimaryUse")
+	
+	UE_DEFINE_GAMEPLAY_TAG(TAG_Cooldown_Skill_Dash,   "Cooldown.Skill.Dash")
+	UE_DEFINE_GAMEPLAY_TAG(TAG_Cooldown_Skill_Heal,   "Cooldown.Skill.Heal")
+	UE_DEFINE_GAMEPLAY_TAG(TAG_Cooldown_Skill_Shield, "Cooldown.Skill.Shield")
 
 	// Data
 	UE_DEFINE_GAMEPLAY_TAG(TAG_Data_Damage,                "Data.Damage")
 	UE_DEFINE_GAMEPLAY_TAG(TAG_Data_Cooldown,              "Data.Cooldown")
+	UE_DEFINE_GAMEPLAY_TAG(TAG_Data_Duration,               "Data.Duration")
 	UE_DEFINE_GAMEPLAY_TAG(TAG_Data_ReloadDuration,        "Data.ReloadDuration")
 
+	UE_DEFINE_GAMEPLAY_TAG(TAG_Data_HealAmount,       "Data.HealAmount")
+	
 	// Hitzone
 	UE_DEFINE_GAMEPLAY_TAG(TAG_HitZone_Head,               "HitZone.Head")
 	UE_DEFINE_GAMEPLAY_TAG(TAG_HitZone_Chest,              "HitZone.Chest")

@@ -92,7 +92,7 @@
 - 클라는 결과에 맞게 VFX/사운드 정리
 
 ### 4단계: GAS (스킬 시스템)
-- AttributeSet: HP, Stamina, Shield
+- AttributeSet: HP (Stamina/Shield 어트리뷰트 없음 — 스태미나 폐기, Shield는 State.Shielded 태그 기반 50% 감산)
 - GameplayEffect: 데미지, 힐, 버프
 - GameplayAbility: Dash, Heal, ShieldOn (3개면 충분)
 - 면접에서 보는 것: Ability 발동 흐름, Attribute 변화, Effect 적용/태그 처리, 네트워크 동작 방식

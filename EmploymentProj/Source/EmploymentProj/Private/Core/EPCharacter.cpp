@@ -225,6 +225,36 @@ void AEPCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCompone
 		ETriggerEvent::Started, this,
 		&AEPCharacter::Input_Reload
 	);
+	
+	if (PC->GetDashAction())
+	{
+		EnhancedInput->BindAction(
+			PC->GetDashAction(),
+			ETriggerEvent::Triggered,
+			this,
+			&AEPCharacter::Input_Dash
+		);
+	}
+	
+	if (PC->GetHealAction())
+	{
+		EnhancedInput->BindAction(
+			PC->GetHealAction(),
+			ETriggerEvent::Triggered,
+			this,
+			&AEPCharacter::Input_Heal
+		);
+	}
+	
+	if (PC->GetShieldAction())
+	{
+		EnhancedInput->BindAction(
+			PC->GetShieldAction(),
+			ETriggerEvent::Triggered,
+			this,
+			&AEPCharacter::Input_Shield
+		);
+	}
 
 	PlayerInputComponent->BindKey(EKeys::T, IE_Pressed, this, &AEPCharacter::Input_ToggleAutoStrafeTest);
 }
@@ -384,6 +414,24 @@ void AEPCharacter::Input_Reload(const FInputActionValue& Value)
 			  FGameplayTagContainer(EmpGameplayTags::TAG_Ability_Item_Reload));                                                                                                                                                                                                                         
 		UE_LOG(LogTemp, Warning, TEXT("TryActivateReload: %d"), bResult);
 	}
+}
+
+void AEPCharacter::Input_Dash(const FInputActionValue& Value)
+{
+	if (ASC)
+		ASC->TryActivateAbilitiesByTag(FGameplayTagContainer(EmpGameplayTags::TAG_Ability_Skill_Dash));
+}
+
+void AEPCharacter::Input_Heal(const FInputActionValue& Value)
+{
+	if (ASC)
+		ASC->TryActivateAbilitiesByTag(FGameplayTagContainer(EmpGameplayTags::TAG_Ability_Skill_Heal));
+}
+
+void AEPCharacter::Input_Shield(const FInputActionValue& Value)
+{
+	if (ASC)
+		ASC->TryActivateAbilitiesByTag(FGameplayTagContainer(EmpGameplayTags::TAG_Ability_Skill_Shield));
 }
 
 void AEPCharacter::TickAutoStrafeInputTest(float DeltaSeconds)

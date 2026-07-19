@@ -116,6 +116,11 @@ protected:
 	// 장전
 	void Input_Reload(const FInputActionValue& Value);
 	
+	// 스킬
+	void Input_Dash(const FInputActionValue& Value);
+	void Input_Heal(const FInputActionValue& Value);
+	void Input_Shield(const FInputActionValue& Value);
+	
 	// 동기화
 	virtual void GetLifetimeReplicatedProps(TArray<class FLifetimeProperty>& OutLifetimeProps) const override;
 	

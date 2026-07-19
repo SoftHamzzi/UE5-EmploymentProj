@@ -104,15 +104,13 @@ void AEPCharacter::Input_Fire(...)
 | `Ammo` | ✓ | 04 | 현재 탄약 |
 | `MaxAmmo` | ✓ | 04 | 최대 탄약 |
 
-### 향후 확장 (스킬 단계에서 추가)
+### 향후 확장
 
 | Attribute | 설명 | 단계 |
 |-----------|------|------|
-| `Stamina` / `MaxStamina` | Dash 스킬 코스트 GE에서 차감 | 07 Skills |
-| `Shield` / `MaxShield` | ShieldOn 스킬이 부여. 데미지 선차감 후 Health 차감 | 07 Skills |
 | `ArmorHead` / `ArmorChest` / `ArmorLimbs` | 부위별 방어력 (타르코프식) — 후순위 | 미정 |
 
-> **Shield 처리 방향:** `PostGameplayEffectExecute`에서 `IncomingDamage` 수신 시 Shield 잔량 먼저 차감, 초과분만 Health 차감.
+> **07 Skills는 Attribute를 추가하지 않는다.** Stamina는 폐기(달리기·점프 자원 제한 없음), Shield는 어트리뷰트 없이 `State.Shielded` 태그 기반 50% 감산으로 처리 (PostGEExecute에서 태그 확인).
 > **부위별 방어력 설계 방향:** GE Context에 HitZone 태그를 실어 전달 → Armor 어트리뷰트 조회 → `IncomingDamage` 감산. `TagDamageMultiplierMap`(무기 배율)과 Armor(방어력)는 독립 계층 적용.
 
 ---
@@ -185,9 +183,7 @@ GA는 C++ 클래스. GE는 Blueprint 에셋으로 생성. `Content/Data/GAS/`에
 
 | 에셋명 | Duration | 주요 설정 |
 |--------|----------|-----------|
-| `GE_Dash_Cost` | Instant | Modifier: `EPAttributeSet.Stamina`, Add, `-30` |
 | `GE_Dash_Cooldown` | HasDuration | GrantedTags: `Cooldown.Skill.Dash` (10s) |
-| `GE_StaminaRegen` | Infinite | Period: 0.5s, Modifier: `EPAttributeSet.Stamina`, Add, `+5` |
 | `GE_Healing` | HasDuration | GrantedTags: `State.Healing` (3s, 채널링 상태) |
 | `GE_Heal` | Instant | Modifier: `EPAttributeSet.Health`, Add, SetByCaller(`Data.HealAmount`) |
 | `GE_Heal_Cooldown` | HasDuration | GrantedTags: `Cooldown.Skill.Heal` (20s, 성공 시만) |
@@ -225,7 +221,7 @@ GA는 C++ 클래스. GE는 Blueprint 에셋으로 생성. `Content/Data/GAS/`에
 | 05 | `04_GAS_05_WeaponDecals.md` | ✅ | 벽 사격 → 탄흔 데칼 생성. 샷건 다중 탄흔 확인 |
 | 05 | `04_GAS_05_Spread.md` | ✅ | 중심 집중 커브로 산탄총 PelletCount=5 발사 시 중심 밀집 확인 |
 | 06 | `04_GAS_06_HitZoneDamage.md` | ✅ | `HitZone.Head` 피격 → 2.5배. 태그 없는 부위 → 1.0x 폴백 |
-| 07 | `04_GAS_07_Skills.md` (예정) | ⬜ | Dash/Heal/ShieldOn 각 GA 활성화, 쿨타임 GE 동작, Stamina/Shield 어트리뷰트 복제 |
+| 07 | `04_GAS_07_Skills.md` | ⬜ | Dash/Heal/ShieldOn 각 GA 활성화, 쿨타임 GE 동작, 채널링 피격 취소, State.Shielded 태그 복제 |
 | 08 | `04_GAS_08_HUD.md` (예정) | ⬜ | 체력바/탄약/스킬 쿨타임 UI가 GAS Tag/Attribute 변화에 실시간 반응 |
 
 ---

@@ -18,7 +18,7 @@ void UEPAttributeSet::PreAttributeChange(const FGameplayAttribute& Attribute, fl
 		NewValue = FMath::Clamp(NewValue, 0.f, GetMaxAmmo());
 	if (Attribute == GetMaxAmmoAttribute())
 		NewValue = FMath::Max(NewValue, 1.f);
-	else if (Attribute == GetMaxHealthAttribute())
+	if (Attribute == GetMaxHealthAttribute())
 		NewValue = FMath::Max(NewValue, 1.f);
 }
 
@@ -51,15 +51,27 @@ void UEPAttributeSet::PostGameplayEffectExecute(const FGameplayEffectModCallback
 		
 		if (Damage > 0.f)
 		{
-			// 이미 죽은 대상에게 대미지가 중복 적용되는 것을 방지한다.
+			// 이미 죽은 대상에게 대미지 중복 적용 방지
 			const bool bWasAlive = GetHealth() > 0.f;
+			UAbilitySystemComponent* TargetASC = GetOwningAbilitySystemComponent();
 			
-			const float NewHealth = FMath::Max(GetHealth() - Damage, 0.f);
+			float RemainingDamage = Damage;
+			if (TargetASC && TargetASC->HasMatchingGameplayTag(EmpGameplayTags::TAG_State_Shielded))
+				RemainingDamage *= 0.5f;
+			
+			const float NewHealth = FMath::Max(GetHealth() - RemainingDamage, 0.f);
 			SetHealth(NewHealth);
 			
+			// 힐 채널링 취소 이벤트 발송
+			if (TargetASC)
+			{
+				FGameplayEventData DmgPayload;
+				TargetASC->HandleGameplayEvent(EmpGameplayTags::TAG_Event_Damaged, &DmgPayload);
+			}
+			
+			// 사망 이벤트 발송
 			if (bWasAlive && NewHealth <= 0.f)
 			{
-				UAbilitySystemComponent* TargetASC = GetOwningAbilitySystemComponent();
 				if (TargetASC && !TargetASC->HasMatchingGameplayTag(EmpGameplayTags::TAG_State_Dead))
 				{
 					FGameplayEventData Payload;

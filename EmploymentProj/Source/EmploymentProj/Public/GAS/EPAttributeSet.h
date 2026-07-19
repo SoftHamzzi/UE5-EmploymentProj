@@ -61,4 +61,5 @@ protected:
 	
 	UFUNCTION()
 	void OnRep_MaxAmmo(const FGameplayAttributeData& OldValue);
+	
 };
