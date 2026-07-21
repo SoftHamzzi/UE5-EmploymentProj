@@ -7,7 +7,7 @@
 | 스킬 | 효과 | 쿨타임 |
 |------|------|--------|
 | Dash | 이동 방향으로 즉시 대시 (트레이서형 — 쿨타임만 있음) | 10초 |
-| Heal | 3초 채널링 → HP 30 회복. 채널링 중 피격 시 취소 (쿨타임 없음) | 20초 (성공 시만) |
+| Heal | 3초 채널링 → HP 30 회복, 채널링 중 이동속도 20%로 감소, Dash/Shield 잠금. 채널링 중 피격 시 취소 (쿨타임 없음) | 20초 (성공 시만) |
 | Shield | 5초간 피해 50% 감소 | 30초 |
 
 > **스태미나 시스템 폐기 (2026-07 설계 변경):** 달리기·점프는 자원 제한 없이 자유롭게 사용한다.
@@ -26,9 +26,10 @@
   → ASC->TryActivateAbilitiesByTag(TAG_Ability_Skill_*)
   → GA_* (LocalPredicted, InstancedPerActor)
       Dash    → LaunchCharacter + GE_Dash_Cooldown (10s) → 즉시 종료
-      Heal    → GE_Healing (State.Healing, 3s) + WaitDelay(3s) ∥ WaitGameplayEvent(Event.Damaged)
+      Heal    → GE_Healing (State.Healing, 3s) + GE_MoveSpeed_Modifier (×0.2, 3s) + WaitDelay(3s) ∥ WaitGameplayEvent(Event.Damaged)
                   └→ 완료: GE_Heal (+30 HP) + GE_Heal_Cooldown (20s)
                   └→ 피격 취소: 쿨타임 없이 종료
+                  └→ State.Healing이 Dash/ShieldOn의 ActivationBlockedTags에 걸려 채널링 중 다른 스킬 잠김 (Step 8)
       ShieldOn → GE_ShieldOn (State.Shielded, 5s) + GE_Shield_Cooldown (30s) → 즉시 종료
                   └→ PostGEExecute에서 State.Shielded 확인 시 IncomingDamage * 0.5
 ```
@@ -67,6 +68,11 @@
 | `EPGA_Skill_Heal.h/.cpp` | 신규 |
 | `EPGA_Skill_ShieldOn.h/.cpp` | 신규 |
 | `EPPlayerController.h` | Dash/Heal/Shield InputAction 슬롯 추가 |
+| `EPAttributeSet.h/.cpp` | `MoveSpeedMultiplier` 어트리뷰트 추가 (Step 8) |
+| `EPCharacterMovement.h/.cpp` | `MoveSpeedMultiplier` 필드 + `GetMaxSpeed()` 곱연산 반영 (Step 8) |
+| `EPCharacter.h/.cpp` | `InitASC`에 어트리뷰트 변경 구독 추가 (Step 8) |
+| `EPGA_Skill_Heal.h/.cpp` | 슬로우 GE 적용 + `EndAbility` authority 가드 (Step 8) |
+| `EPGA_Skill_Dash.cpp` / `EPGA_Skill_ShieldOn.cpp` | `ActivationBlockedTags`에 `State.Healing` 추가 (Step 8) |
 
 ---
 
@@ -427,6 +433,208 @@ if (PC->GetShieldAction())
 
 ---
 
+### Step 8 — 힐 이동속도 감소 + 스킬 상호 잠금 (신규)
+
+**설계 요지**: 이동속도 감소를 Heal에 하드코딩하지 않고 GAS 표준 패턴인 **어트리뷰트 + Multiply 모디파이어**로 구현한다 — 나중에 다른 감속/가속 효과가 추가돼도 새 어트리뷰트나 CMC 코드 없이 GE만 추가하면 되도록 하기 위함(실무에서 흔한 확장 포인트). 스킬 잠금은 신규 개념이 아니라 이미 있는 `ActivationBlockedTags`를 재사용한다.
+
+#### 8-1. `MoveSpeedMultiplier` 어트리뷰트 추가
+
+`EPAttributeSet.h` — Health/Ammo와 같은 자리에 추가:
+```cpp
+UPROPERTY(BlueprintReadOnly, Category = "Attribute|Movement", ReplicatedUsing = OnRep_MoveSpeedMultiplier)
+FGameplayAttributeData MoveSpeedMultiplier;
+ATTRIBUTE_ACCESSORS(UEPAttributeSet, MoveSpeedMultiplier);
+```
+```cpp
+UFUNCTION()
+void OnRep_MoveSpeedMultiplier(const FGameplayAttributeData& OldValue);
+```
+
+`EPAttributeSet.cpp`:
+```cpp
+// PreAttributeChange에 추가 — 0 이하로 떨어져 정지/역주행하는 사고 방지, 상한은 넉넉하게
+if (Attribute == GetMoveSpeedMultiplierAttribute())
+    NewValue = FMath::Clamp(NewValue, 0.05f, 3.f);
+```
+```cpp
+// GetLifetimeReplicatedProps에 추가
+DOREPLIFETIME_CONDITION_NOTIFY(UEPAttributeSet, MoveSpeedMultiplier, COND_None, REPNOTIFY_Always);
+```
+```cpp
+void UEPAttributeSet::OnRep_MoveSpeedMultiplier(const FGameplayAttributeData& OldValue)
+{
+    GAMEPLAYATTRIBUTE_REPNOTIFY(UEPAttributeSet, MoveSpeedMultiplier, OldValue);
+}
+```
+
+`EPCharacter.cpp` `PossessedBy` — 기존 `InitHealth`/`InitMaxHealth` 옆:
+```cpp
+AS->InitMoveSpeedMultiplier(1.f);
+```
+
+> `04_GAS_01_Foundation.md`가 정의한 AttributeSet을 Health/Ammo와 동일 패턴으로 확장하는 것이라 Foundation 문서 자체는 갱신하지 않는다.
+
+#### 8-2. `EPCharacterMovement`에 배속 훅 추가
+
+기존 `GetMaxSpeed()`의 Sprint/Aim 분기 결과에 **곱연산**으로 얹는다 (힐 중 스프린트를 시도하면 `SprintSpeed × 0.2`가 나와야 자연스럽다):
+
+```cpp
+// EPCharacterMovement.h — public에 추가. UPROPERTY 아님(디자이너 노출 불필요, 순수 게임플레이 코드로만 갱신)
+float MoveSpeedMultiplier = 1.f;
+```
+```cpp
+// EPCharacterMovement.cpp
+float UEPCharacterMovement::GetMaxSpeed() const
+{
+    float Base = Super::GetMaxSpeed();
+    if (bWantsToSprint && IsMovingOnGround()) Base = SprintSpeed;
+    else if (bWantsToAim) Base = AimSpeed;
+    return Base * MoveSpeedMultiplier;
+}
+```
+
+> `MoveSpeedMultiplier`는 CMC 레벨에서 별도로 복제하지 않는다 — 서버와 소유 클라 양쪽이 **각자 자신의 ASC 복제 어트리뷰트**로부터 독립적으로 채우므로(8-3), Sprint/Aim처럼 CompressedFlags로 복제할 필요가 없다.
+
+#### 8-3. `EPCharacter::InitASC`에서 어트리뷰트 변경 구독
+
+기존 HUD 바인딩과 같은 지점(`InitASC`)에 추가하되, `IsLocallyControlled()` 가드 **밖에** 둔다 — 서버 권위 시뮬레이션과 소유 클라 예측 둘 다 `GetMaxSpeed()`를 실행하므로 둘 다 필요하다:
+
+```cpp
+// EPCharacter.h — private
+UFUNCTION()
+void OnMoveSpeedMultiplierChanged(const FOnAttributeChangeData& Data);
+
+FDelegateHandle MoveSpeedMultiplierHandle;
+```
+```cpp
+// EPCharacter.cpp — InitASC()
+void AEPCharacter::InitASC()
+{
+    AEPPlayerState* PS = GetPlayerState<AEPPlayerState>();
+    if (!PS || !ASC) return;
+
+    ASC->InitAbilityActorInfo(PS, this);
+
+    // 리스폰 재호출 대비 — 기존 바인딩 해제 후 재바인딩 (HUD 위젯과 동일 관례)
+    if (MoveSpeedMultiplierHandle.IsValid())
+        ASC->GetGameplayAttributeValueChangeDelegate(UEPAttributeSet::GetMoveSpeedMultiplierAttribute())
+            .Remove(MoveSpeedMultiplierHandle);
+
+    MoveSpeedMultiplierHandle = ASC->GetGameplayAttributeValueChangeDelegate(UEPAttributeSet::GetMoveSpeedMultiplierAttribute())
+        .AddUObject(this, &AEPCharacter::OnMoveSpeedMultiplierChanged);
+
+    // 초기값 즉시 반영 (리스폰 등으로 이미 1.0이 아닐 수 있음)
+    if (UEPCharacterMovement* CMC = Cast<UEPCharacterMovement>(GetCharacterMovement()))
+        CMC->MoveSpeedMultiplier = ASC->GetNumericAttribute(UEPAttributeSet::GetMoveSpeedMultiplierAttribute());
+
+    if (IsLocallyControlled())
+        if (AEPPlayerController* PC = GetController<AEPPlayerController>())
+            PC->InitHUD(ASC);
+}
+
+void AEPCharacter::OnMoveSpeedMultiplierChanged(const FOnAttributeChangeData& Data)
+{
+    if (UEPCharacterMovement* CMC = Cast<UEPCharacterMovement>(GetCharacterMovement()))
+        CMC->MoveSpeedMultiplier = Data.NewValue;
+}
+```
+
+#### 8-4. 재사용 가능한 감속 GE — `GE_MoveSpeed_Modifier`
+
+Heal 전용이 아니라 **범용 GE**. `Content/Blueprints/GE/` 최상위(스킬 전용 폴더가 아님 — 향후 다른 디버프/버프도 재사용).
+
+| 항목 | 값 |
+|------|-----|
+| Duration Policy | Has Duration, SetByCaller(`Data.Duration`) |
+| Modifier | `MoveSpeedMultiplier`, **Multiply**, SetByCaller(`Data.MoveSpeedMultiplier`) |
+| GrantedTags | 없음 (State.Healing은 이미 `GE_Healing`이 부여) |
+
+> Modifier Op을 **Multiply**로 하는 것이 핵심 — 나중에 감속 효과 두 개가 겹쳐도 GAS가 자동으로 곱연산 누적한다. Add를 쓰면 여러 효과가 겹쳤을 때 서로 값을 빼앗는 식으로 계산이 꼬인다.
+
+신규 태그 (`EPNativeGameplayTags.h/.cpp`):
+```cpp
+EMPLOYMENTPROJ_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Data_MoveSpeedMultiplier)
+```
+```cpp
+UE_DEFINE_GAMEPLAY_TAG(TAG_Data_MoveSpeedMultiplier, "Data.MoveSpeedMultiplier")
+```
+
+#### 8-5. `EPGA_Skill_Heal`에서 적용 + EndAbility 정리 (기존 버그 동시 수정)
+
+```cpp
+// EPGA_Skill_Heal.h
+UPROPERTY(EditDefaultsOnly, Category = "GAS")
+TSubclassOf<UGameplayEffect> GE_MoveSpeedModifierClass;
+
+UPROPERTY(EditDefaultsOnly, Category = "Heal")
+float HealMoveSpeedMultiplier = 0.2f;   // GAME.md 스펙: 채널링 중 20%로 감소
+
+private:
+    FActiveGameplayEffectHandle MoveSpeedEffectHandle;   // HealingEffectHandle 옆에 추가
+```
+
+```cpp
+// EPGA_Skill_Heal.cpp — ActivateAbility, GE_HealingClass 적용 블록 옆에 추가
+if (GE_MoveSpeedModifierClass)
+{
+    FGameplayEffectSpecHandle SlowSpec = MakeOutgoingGameplayEffectSpec(GE_MoveSpeedModifierClass);
+    SlowSpec.Data->SetSetByCallerMagnitude(EmpGameplayTags::TAG_Data_Duration, HealDuration);
+    SlowSpec.Data->SetSetByCallerMagnitude(EmpGameplayTags::TAG_Data_MoveSpeedMultiplier, HealMoveSpeedMultiplier);
+    MoveSpeedEffectHandle = ApplyGameplayEffectSpecToOwner(Handle, ActorInfo, ActivationInfo, SlowSpec);
+}
+```
+
+`EndAbility` — 새 핸들 정리에 곁들여 기존 버그도 고친다. 지금 코드는 `LocalPredicted`라 클라 예측 인스턴스에서도 `EndAbility`가 돌기 때문에, authority 체크 없이 `RemoveActiveGameplayEffect`를 부르면 `LogAbilitySystem: Warning: RemoveActiveGameplayEffect called without Authority...`가 매번 찍힌다 (엔진 소스 `AbilitySystemComponent.cpp:1177`에서 `IsOwnerActorAuthoritative()`가 false면 그냥 경고만 찍고 반환하는 것을 확인). 서버에서만 실행되도록 감싼다:
+
+```cpp
+void UEPGA_Skill_Heal::EndAbility(const FGameplayAbilitySpecHandle Handle,
+    const FGameplayAbilityActorInfo* ActorInfo,
+    const FGameplayAbilityActivationInfo ActivationInfo,
+    bool bReplicateEndAbility, bool bWasCancelled)
+{
+    // LocalPredicted라 이 함수는 서버 인스턴스 + 클라 예측 인스턴스 양쪽에서 실행된다.
+    // RemoveActiveGameplayEffect는 서버 권위에서만 허용되므로 가드 필수 (없으면 클라에서 매번 경고 로그).
+    if (ActorInfo->IsNetAuthority())
+    {
+        if (UAbilitySystemComponent* ASC = GetAbilitySystemComponentFromActorInfo())
+        {
+            if (HealingEffectHandle.IsValid())
+            {
+                ASC->RemoveActiveGameplayEffect(HealingEffectHandle);
+                HealingEffectHandle.Invalidate();
+            }
+            if (MoveSpeedEffectHandle.IsValid())
+            {
+                ASC->RemoveActiveGameplayEffect(MoveSpeedEffectHandle);
+                MoveSpeedEffectHandle.Invalidate();
+            }
+        }
+    }
+
+    Super::EndAbility(Handle, ActorInfo, ActivationInfo, bReplicateEndAbility, bWasCancelled);
+}
+```
+
+> `EPGA_Item_Reload.cpp`의 `EndAbility`(67행)에도 authority 가드 없이 동일한 `RemoveActiveGameplayEffect` 호출이 있다 — 같은 버그가 잠재되어 있으니 리로드 쪽도 같은 패턴으로 고치는 것을 권장한다 (이 문서 범위 밖, `04_GAS_04_Reload.md` 참고).
+
+#### 8-6. 스킬 상호 잠금 — Dash/ShieldOn에 `State.Healing` 차단 태그 추가
+
+신규 메커니즘이 아니라 기존 `ActivationBlockedTags`에 태그 하나씩 추가하는 것뿐이다. `TryActivateAbilitiesByTag`는 클라이언트에서 먼저 `CanActivateAbility`(ActivationBlockedTags 검사 포함)를 통과해야 서버로 요청을 보내므로, 이 한 줄로 클라/서버 양쪽 다 즉시 차단된다 — 입력 쪽에 별도 가드 코드 불필요.
+
+```cpp
+// EPGA_Skill_Dash.cpp 생성자에 추가
+ActivationBlockedTags.AddTag(EmpGameplayTags::TAG_State_Healing);
+
+// EPGA_Skill_ShieldOn.cpp 생성자에 추가
+ActivationBlockedTags.AddTag(EmpGameplayTags::TAG_State_Healing);
+```
+
+> 잠긴 슬롯이 빨갛게 변하는 시각 피드백은 GAS 레이어가 아니라 HUD 위젯의 몫이다 — `04_GAS_08_HUD.md`의 `LockTags` 참고.
+
+**verify:** 빌드 통과. PIE에서 힐 시전 중 이동속도 체감 20%로 감소(스프린트해도 SprintSpeed×0.2), Dash/Shield 키 입력이 무반응(서버 CommitAbility 실패 로그도 없어야 함 — 클라에서 아예 활성화 시도가 막힘), 힐 종료/취소 시 즉시 원래 속도로 복귀, `RemoveActiveGameplayEffect` 경고 로그 더 이상 안 뜸.
+
+---
+
 ## 5. 완료 체크리스트
 
 ### Step 0 — 태그
@@ -454,6 +662,14 @@ if (PC->GetShieldAction())
 - [ ] PlayerController 액션 슬롯 3종
 - [ ] IA 3종 + IMC 매핑, BP_GA 3종, DefaultAbilities 등록
 
+### Step 8 — 힐 이동속도 감소 + 스킬 잠금 (신규)
+- [ ] `EPAttributeSet`: `MoveSpeedMultiplier` 어트리뷰트(초기값 1.0) + PreAttributeChange 클램프 + 복제
+- [ ] `EPCharacterMovement::GetMaxSpeed()`가 `MoveSpeedMultiplier`를 곱연산으로 반영
+- [ ] `EPCharacter::InitASC`에서 어트리뷰트 변경 구독 (리스폰 재바인딩 안전)
+- [ ] `GE_MoveSpeed_Modifier` 에셋 (Multiply, SetByCaller 2종)
+- [ ] `EPGA_Skill_Heal`: 슬로우 GE 적용 + `EndAbility` authority 가드 추가(경고 로그 수정 겸함)
+- [ ] `EPGA_Skill_Dash`/`EPGA_Skill_ShieldOn`: `ActivationBlockedTags`에 `State.Healing` 추가
+
 ### 검증 (PIE 2인 멀티)
 - [ ] 스태미나 제거 후: 스프린트/점프 기존 동작 그대로, 데미지 파이프라인 이상 없음
 - [ ] Dash: 이동 방향 대시, 10초 쿨타임 GE 복제
@@ -478,6 +694,9 @@ if (PC->GetShieldAction())
 | Dash가 서버에서만 전방으로 감 (러버밴딩) | GetLastMovementInputVector는 로컬 전용 — 서버에선 Zero | `CMC->GetCurrentAcceleration()` 사용 (saved move로 복제됨) |
 | 지상 Dash가 거의 안 나감 | 수평 발사 → 즉시 착지 → GroundFriction/Braking이 감속 | Z 부스트(DashZBoost)로 잠깐 체공, bZOverride=true |
 | DefaultAbilities 중복 부여 | PossessedBy 재호출 | 현 프로젝트는 재빙의 없음 — 도입 시 가드 추가 |
+| `RemoveActiveGameplayEffect called without Authority` 경고 | `LocalPredicted` 어빌리티의 `EndAbility`가 클라 예측 인스턴스에서도 실행되는데, authority 체크 없이 GE를 지우려 함 | `ActorInfo->IsNetAuthority()`로 감싸 서버에서만 실행 (Step 8-5) |
+| 힐 중 스프린트해도 속도가 안 줄어듦 | `MoveSpeedMultiplier`를 Sprint/Aim 분기 **이전**에 곱하거나, 분기 자체를 건드림 | `GetMaxSpeed()`에서 Sprint/Aim으로 Base를 정한 **뒤에** 마지막으로 `* MoveSpeedMultiplier` |
+| 감속 GE가 겹칠 때 계산이 이상함 | Modifier Op을 Add로 설정 | Multiply로 설정 — 여러 감속 효과가 자동으로 곱연산 누적됨 (Step 8-4) |
 
 ---
 

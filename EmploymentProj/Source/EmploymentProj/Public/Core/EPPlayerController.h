@@ -9,6 +9,8 @@
 class UInputMappingContext;
 class UInputAction;
 class AEPCharacter;
+class UEPHUDWidget;
+class UAbilitySystemComponent;
 
 class UEPCrosshairWidget;
 
@@ -31,6 +33,16 @@ public:
 	FORCEINLINE UInputAction* GetDashAction() const { return DashAction; }
 	FORCEINLINE UInputAction* GetHealAction() const { return HealAction; }
 	FORCEINLINE UInputAction* GetShieldAction() const { return ShieldAction; }
+	
+	void InitHUD(UAbilitySystemComponent* InASC);
+	
+	// --- Client RPC ---
+	// 킬 피드백 (서버 -> 킬러 클라)
+	UFUNCTION(Client, Reliable)
+	void Client_OnKill(const FString& VictimName);
+	
+	UFUNCTION(Client, Unreliable)
+	void Client_PlayHitConfirmSound();
 	
 protected:
 	// --- Enhanced Input ---
@@ -88,12 +100,12 @@ private:
 	UPROPERTY(EditDefaultsOnly, Category = "HUD")
 	TObjectPtr<USoundBase> HitConfirmSound;
 	
-public:
-	// --- Client RPC ---
-	// 킬 피드백 (서버 -> 킬러 클라)
-	UFUNCTION(Client, Reliable)
-	void Client_OnKill(const FString& VictimName);
+	UPROPERTY(EditDefaultsOnly, Category = "HUD")
+	TObjectPtr<USoundBase> KillConfirmSound;
 	
-	UFUNCTION(Client, Unreliable)
-	void Client_PlayHitConfirmSound();
+	UPROPERTY(EditDefaultsOnly, Category = "HUD")
+	TSubclassOf<UEPHUDWidget> HUDWidgetClass;
+	
+	UPROPERTY()
+	TObjectPtr<UEPHUDWidget> HUDWidget;
 };

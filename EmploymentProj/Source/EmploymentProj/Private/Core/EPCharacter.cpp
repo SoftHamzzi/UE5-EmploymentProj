@@ -495,10 +495,7 @@ void AEPCharacter::InitASC()
 	
 	ASC->InitAbilityActorInfo(PS, this);
 	
-	// if (IsLocallyControlled())
-	// {
-	// 	ASC->GetGameplayAttributeValueChangeDelegate(
-	// 		UEPAttributeSet::GetHealthAttribute()
-	// 	).AddUObject(this, &AEPCharacter::OnHealthChanged);
-	// }
+	if (IsLocallyControlled())
+		if (AEPPlayerController* PC = GetController<AEPPlayerController>())
+			PC->InitHUD(ASC);
 }

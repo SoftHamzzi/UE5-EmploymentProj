@@ -62,7 +62,7 @@ void UEPGA_Item_Reload::ActivateAbility(const FGameplayAbilitySpecHandle Handle,
 void UEPGA_Item_Reload::EndAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo,
 	const FGameplayAbilityActivationInfo ActivationInfo, bool bReplicateEndAbility, bool bWasCancelled)
 {
-	if (ReloadingEffectHandle.IsValid())
+	if (ActorInfo->IsNetAuthority() && ReloadingEffectHandle.IsValid())
 	{
 		ActorInfo->AbilitySystemComponent->RemoveActiveGameplayEffect(ReloadingEffectHandle);
 		ReloadingEffectHandle.Invalidate();

@@ -52,7 +52,7 @@ void UEPGA_Skill_Heal::EndAbility(const FGameplayAbilitySpecHandle Handle, const
 	const FGameplayAbilityActivationInfo ActivationInfo, bool bReplicateEndAbility, bool bWasCancelled)
 {
 	if (UAbilitySystemComponent* ASC = GetAbilitySystemComponentFromActorInfo())
-		if (HealingEffectHandle.IsValid())
+		if (ActorInfo->IsNetAuthority() && HealingEffectHandle.IsValid())
 		{
 			ASC->RemoveActiveGameplayEffect(HealingEffectHandle);
 			HealingEffectHandle.Invalidate();
