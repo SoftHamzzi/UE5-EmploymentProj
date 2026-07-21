@@ -22,6 +22,7 @@ class UGroomComponent;
 // --- GAS ---
 class UAbilitySystemComponent;
 class UGameplayAbility;
+struct FOnAttributeChangeData;
 
 UCLASS()
 class EMPLOYMENTPROJ_API AEPCharacter : public ACharacter, public IAbilitySystemInterface
@@ -135,6 +136,8 @@ private:
 	UPROPERTY()
 	TObjectPtr<UAbilitySystemComponent> ASC;
 	
+	FDelegateHandle MoveSpeedMultiplierHandle;
+	
 	// --- 테스트: 로컬 입력 기반 자동 좌우 이동 ---
 	// T 키로 토글. 클라이언트 입력 -> 서버 검증 경로를 그대로 사용한다.
 	UPROPERTY(EditAnywhere, Category = "Debug|NetPrediction")
@@ -151,6 +154,8 @@ private:
 	
 	// === 함수 ===
 	void InitASC();
+	
+	void OnMoveSpeedMultiplierChanged(const FOnAttributeChangeData& Data);
 	
 	UFUNCTION(NetMulticast, Unreliable)
 	void Multicast_PlayHitReact();

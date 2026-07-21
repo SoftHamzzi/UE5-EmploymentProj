@@ -20,6 +20,8 @@ void UEPAttributeSet::PreAttributeChange(const FGameplayAttribute& Attribute, fl
 		NewValue = FMath::Max(NewValue, 1.f);
 	if (Attribute == GetMaxHealthAttribute())
 		NewValue = FMath::Max(NewValue, 1.f);
+	if (Attribute == GetMoveSpeedMultiplierAttribute())
+		NewValue = FMath::Clamp(NewValue, 0.05f, 3.f);
 }
 
 void UEPAttributeSet::PostGameplayEffectExecute(const FGameplayEffectModCallbackData& Data)
@@ -92,6 +94,7 @@ void UEPAttributeSet::GetLifetimeReplicatedProps(TArray<class FLifetimeProperty>
 	DOREPLIFETIME_CONDITION_NOTIFY(UEPAttributeSet, MaxHealth, COND_None, REPNOTIFY_Always);
 	DOREPLIFETIME_CONDITION_NOTIFY(UEPAttributeSet, Ammo, COND_None, REPNOTIFY_Always);
 	DOREPLIFETIME_CONDITION_NOTIFY(UEPAttributeSet, MaxAmmo, COND_None, REPNOTIFY_Always);
+	DOREPLIFETIME_CONDITION_NOTIFY(UEPAttributeSet, MoveSpeedMultiplier, COND_None, REPNOTIFY_Always);
 }
 
 void UEPAttributeSet::OnRep_Health(const FGameplayAttributeData& OldValue)
@@ -112,4 +115,8 @@ void UEPAttributeSet::OnRep_Ammo(const FGameplayAttributeData& OldValue)
 void UEPAttributeSet::OnRep_MaxAmmo(const FGameplayAttributeData& OldValue)
 {
 	GAMEPLAYATTRIBUTE_REPNOTIFY(UEPAttributeSet, MaxAmmo, OldValue);
+}
+
+void UEPAttributeSet::OnRep_MoveSpeedMultiplier(const FGameplayAttributeData& OldValue)
+{
 }

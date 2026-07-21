@@ -16,7 +16,7 @@
 | 체력바 (숫자 + 바) | 하단 좌 | `Health`/`MaxHealth` Attribute 변경 델리게이트 |
 | 탄약 카운터 (현재/최대) | 하단 우 | `Ammo`/`MaxAmmo` Attribute 변경 델리게이트 |
 | 장전 중 표시 | 탄약 옆 | `State.Reloading` 태그 이벤트 |
-| 스킬 아이콘 3종 (쿨타임/시전/잠금 3-상태 오버레이) | 하단 중앙-우 | `Cooldown.Skill.*` + `State.Healing` 등 태그 이벤트 + GE 남은 시간 쿼리 |
+| 스킬 아이콘 3종 (쿨타임/시전/잠금 3-상태 오버레이) | 하단 중앙-우 | `Cooldown.Skill.*` + 자기 시전 태그(예 `State.Healing`) + 공용 `State.Casting` 태그 이벤트 + GE 남은 시간 쿼리 |
 | 화면 중앙 시전 게이지 (링) | 화면 정중앙 | 채널링 태그(`State.Healing`) + GE 남은 시간 쿼리 |
 | 라운드 타이머 | 상단 중앙 | `AEPGameState::RemainingTime` (기존 복제 변수) |
 
@@ -62,12 +62,12 @@
 |------|--------|------|
 | Ready | 아무 태그도 없음 | 흰 베이스, 오버레이 없음, 검은 픽토그램 |
 | Cooldown | 자신의 `Cooldown.Skill.*` 태그 | 흰 베이스, 주황 오버레이가 **아래→위로 차오름**(0→1, 회복 진행도), 남은 초 표시 |
-| Casting (자기 시전) | 자신의 채널링 태그(현재는 Heal의 `State.Healing`만 해당) | 흰 베이스, 주황 오버레이가 **전체를 고정으로 덮음**(애니메이션 없음) |
-| Locked (타 스킬 시전으로 잠김) | 다른 슬롯의 채널링 태그(Dash/Shield 슬롯 입장에서 `State.Healing`) | 베이스+픽토그램 모두 **불투명한 빨강** |
+| Casting (자기 시전) | 자신의 시전 태그(예: Heal의 `State.Healing`. CastTime=0인 Dash/Shield는 해당 없음) | 흰 베이스, 주황 오버레이가 **전체를 고정으로 덮음**(애니메이션 없음) |
+| Locked (타 스킬 시전으로 잠김) | 공용 `State.Casting` 태그 (다른 누군가가 시전 중이면 항상 켜져 있음) | 베이스+픽토그램 모두 **불투명한 빨강** |
 
 우선순위는 `Casting > Locked > Cooldown > Ready` — 이 슬롯 자신이 시전 중이면 그게 최우선으로 보여야 하고(자기 자신은 잠기지 않음), 그 다음이 잠금이다.
 
-**GAS 레이어와 UI 레이어 분리**: "다른 스킬이 진짜로 활성화되지 못하게 막는 것"은 `04_GAS_07_Skills.md`의 `ActivationBlockedTags`(Dash/ShieldOn 생성자에 `State.Healing` 추가)가 담당 — 서버가 실제로 거부한다. 이 문서가 다루는 건 그 상태를 **보여주는 것**뿐이다. 위젯은 GAS가 이미 관리하는 태그(`State.Healing`)를 구독만 할 뿐, 잠금 여부를 스스로 판단하지 않는다.
+**GAS 레이어와 UI 레이어 분리**: "다른 스킬이 진짜로 활성화되지 못하게 막는 것"은 `04_GAS_07_Skills.md`의 `UEPGA_Skill_Base` 생성자가 모든 스킬 공통으로 추가하는 `ActivationBlockedTags`의 `State.Casting`이 담당 — 서버가 실제로 거부한다(개정: 예전엔 Dash/ShieldOn 생성자에 `State.Healing`을 하드코딩했으나, 스킬이 늘어날 때마다 서로의 태그를 알아야 하는 문제가 있어 공용 태그 하나로 대체됨). 이 문서가 다루는 건 그 상태를 **보여주는 것**뿐이다. 위젯은 GAS가 이미 관리하는 태그(`State.Casting`, 그리고 자기 자신의 시전 태그)를 구독만 할 뿐, 잠금 여부를 스스로 판단하지 않는다. 모든 슬롯이 같은 태그 하나(`State.Casting`)만 구독하면 되므로, 새 스킬이 추가돼도 기존 슬롯의 `LockTags` 설정은 손댈 필요가 없다.
 
 **이동속도 감소(채널링 중 20%)는 HUD와 무관** — `EPCharacterMovement`가 어트리뷰트를 직접 읽어 처리한다 (`04_GAS_07_Skills.md` Step 8). HUD는 이 값을 표시하지 않는다.
 
@@ -141,7 +141,8 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Skill")
 	FGameplayTag CastingTag;
 	
-	// 이 중 하나라도 켜져 있으면 잠김 — Dash/Shield 슬롯엔 State.Healing, Heal 슬롯은 비워둠(자기 자신은 안 잠김)
+	// 이 중 하나라도 켜져 있으면 잠김 — 모든 슬롯에 동일하게 {State.Casting} 하나만 넣으면 됨.
+	// 자기 자신이 시전 중일 때도 State.Casting은 켜져 있지만 CastingTag가 우선순위에서 이기므로 안전(RecomputeState 참고)
 	UPROPERTY(EditAnywhere, Category = "Skill")
 	FGameplayTagContainer LockTags;
 	
@@ -824,13 +825,13 @@ CanvasPanel 기준 배치 (오버워치 레이아웃):
 | `HealthText` | TextBlock | HealthBar 위/안 | `100 / 100` |
 | `AmmoText` | TextBlock | 하단 우 | `30 / 30`, 큰 폰트 |
 | `ReloadingText` | TextBlock | AmmoText 옆 | 텍스트 "RELOADING", 초기 Collapsed |
-| `DashSlot` | WBP_SkillSlot | 하단 중앙-우 | CooldownTag=`Cooldown.Skill.Dash`, CastingTag=(비움), LockTags={`State.Healing`} |
-| `HealSlot` | WBP_SkillSlot | DashSlot 옆 | CooldownTag=`Cooldown.Skill.Heal`, CastingTag=`State.Healing`, LockTags=(비움) |
-| `ShieldSlot` | WBP_SkillSlot | HealSlot 옆 | CooldownTag=`Cooldown.Skill.Shield`, CastingTag=(비움), LockTags={`State.Healing`} |
+| `DashSlot` | WBP_SkillSlot | 하단 중앙-우 | CooldownTag=`Cooldown.Skill.Dash`, CastingTag=(비움), LockTags={`State.Casting`} |
+| `HealSlot` | WBP_SkillSlot | DashSlot 옆 | CooldownTag=`Cooldown.Skill.Heal`, CastingTag=`State.Healing`, LockTags={`State.Casting`} |
+| `ShieldSlot` | WBP_SkillSlot | HealSlot 옆 | CooldownTag=`Cooldown.Skill.Shield`, CastingTag=(비움), LockTags={`State.Casting`} |
 | `CastGauge` | WBP_CastGauge | 화면 정중앙 | ChannelTag=`State.Healing` |
 | `TimerText` | TextBlock | 상단 중앙 | `10:00` |
 
-> 슬롯 인스턴스의 CooldownTag/CastingTag/LockTags는 디자이너에서 해당 슬롯 선택 → Details 패널 → Skill 카테고리에서 지정. **HealSlot만 CastingTag가 있고, Dash/ShieldSlot만 LockTags가 있다** — Heal은 자기 자신을 잠그지 않고, Dash/Shield는 채널링이 없어 CastingTag가 없다.
+> 슬롯 인스턴스의 CooldownTag/CastingTag/LockTags는 디자이너에서 해당 슬롯 선택 → Details 패널 → Skill 카테고리에서 지정. **`LockTags`는 세 슬롯 전부 동일하게 `{State.Casting}`** — 개정 전엔 Dash/ShieldSlot만 LockTags를 채우고 HealSlot은 비워야 했지만(자기 잠금 방지), 지금은 우선순위(Casting > Locked)가 그 문제를 대신 해결해주므로 모든 슬롯이 같은 값을 써도 안전하다. `CastingTag`만 여전히 스킬마다 다름(즉발 스킬은 비움).
 > 크로스헤어는 기존 WBP 그대로 (별도 위젯, 이번 단계 무변경).
 
 ### BP_EPPlayerController
@@ -875,10 +876,11 @@ CanvasPanel 기준 배치 (오버워치 레이아웃):
 | 쿨타임 오버레이 폴링 남용 | 태그 이벤트로 on/off를 토글하고, **쿨타임 중일 때만** Tick에서 남은 시간을 쿼리한다. 상시 폴링 금지 |
 | `GetActiveEffectsTimeRemainingAndDuration` Pair 순서 | `Key = 남은 시간`, `Value = 전체 Duration` (엔진 `GameplayAbility.cpp:1206` 사용례 기준) |
 | 쿨타임 오버레이가 아래→위로 안 차오름 | WBP에서 `CooldownBar`의 Fill Type을 Bottom to Top으로 안 바꾼 경우 — 기본값(Left to Right)이면 옆으로 채워짐. C++ Percent 공식(1 - Remaining/Duration)과 Fill Type 둘 다 맞아야 함 |
-| Heal 슬롯이 자기 자신을 잠금 상태로 표시 | Heal 슬롯의 `LockTags`를 비워두지 않고 실수로 `State.Healing`을 넣은 경우 — Heal 슬롯은 CastingTag만 갖고 LockTags는 비워야 함(우선순위상 Casting이 이겨서 실제로는 안 보이지만, 설계 의도상 애초에 넣지 않는 것이 맞음) |
-| Dash/Shield 슬롯이 빨강으로 안 바뀜 | `LockTags`(FGameplayTagContainer)에 `State.Healing`을 안 넣은 경우 — `CooldownTag`(FGameplayTag 단일)와 헷갈리기 쉬움, 타입이 다름 |
+| 슬롯이 빨강으로 안 바뀜 | `LockTags`(FGameplayTagContainer)에 `State.Casting`을 안 넣은 경우 — `CooldownTag`(FGameplayTag 단일)와 헷갈리기 쉬움, 타입이 다름. 세 슬롯 전부 동일하게 `{State.Casting}`이어야 함(더 이상 스킬마다 다른 값 아님) |
+| Heal 슬롯이 자기 자신을 잠금 상태로 표시 | `RecomputeState()`의 우선순위(`Casting > Locked`)가 안 지켜진 경우 — `bCasting`을 `bLocked`보다 먼저 체크해야 함. 정상 구현이면 `LockTags`에 `State.Casting`이 있어도 자기 시전 중엔 Casting이 항상 이김 |
+| 새 스킬 추가 후 잠금이 하나도 안 걸림 | 새 GA를 `UEPGA_Skill_Base` 대신 `UGameplayAbility`를 직접 상속해서 만든 경우 — `State.Casting` 부여/차단이 전부 베이스 클래스 책임이라 직접 상속하면 이 메커니즘이 아예 없음 (`04_GAS_07_Skills.md` Step 8-4 참고) |
 | 중앙 게이지가 항상 안 보임 | `RingImage`의 브러시 리소스에 머티리얼(인스턴스)을 지정 안 해서 `GetDynamicMaterial()`이 null 반환 — WBP 디자이너에서 Brush → Image에 머티리얼 자산을 먼저 넣어야 함 |
-| 힐 도중 `RemoveActiveGameplayEffect called without Authority` 경고 | `EPGA_Skill_Heal::EndAbility`가 authority 체크 없이 호출 — `04_GAS_07_Skills.md` Step 8 참고 (HUD 문제 아님, GAS 코드 버그) |
+| 힐 도중 `RemoveActiveGameplayEffect called without Authority` 경고 | `EndAbility`가 authority 체크 없이 호출 — 개정판에선 `UEPGA_Skill_Base::EndAbility`가 이미 가드 처리 (`04_GAS_07_Skills.md` Step 8-4 참고, HUD 문제 아님) |
 
 ---
 

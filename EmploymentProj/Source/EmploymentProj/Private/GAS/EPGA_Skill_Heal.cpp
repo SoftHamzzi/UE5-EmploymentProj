@@ -38,6 +38,14 @@ void UEPGA_Skill_Heal::ActivateAbility(const FGameplayAbilitySpecHandle Handle,
 		HealingEffectHandle = ApplyGameplayEffectSpecToOwner(Handle, ActorInfo, ActivationInfo, HealingSpec);
 	}
 	
+	if (GE_MoveSpeedModifierClass)
+	{
+		FGameplayEffectSpecHandle SlowSpec = MakeOutgoingGameplayEffectSpec(GE_MoveSpeedModifierClass);
+		SlowSpec.Data->SetSetByCallerMagnitude(EmpGameplayTags::TAG_Data_Duration, HealDuration);
+		SlowSpec.Data->SetSetByCallerMagnitude(EmpGameplayTags::TAG_Data_MoveSpeedMultiplier, HealMoveSpeedMultiplier);
+		MoveSpeedEffectHandle = ApplyGameplayEffectSpecToOwner(Handle, ActorInfo, ActivationInfo, SlowSpec);
+	}
+	
 	UAbilityTask_WaitDelay* WaitTask = UAbilityTask_WaitDelay::WaitDelay(this, HealDuration);
 	WaitTask->OnFinish.AddDynamic(this, &UEPGA_Skill_Heal::OnHealComplete);
 	WaitTask->ReadyForActivation();
@@ -51,12 +59,22 @@ void UEPGA_Skill_Heal::ActivateAbility(const FGameplayAbilitySpecHandle Handle,
 void UEPGA_Skill_Heal::EndAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo,
 	const FGameplayAbilityActivationInfo ActivationInfo, bool bReplicateEndAbility, bool bWasCancelled)
 {
-	if (UAbilitySystemComponent* ASC = GetAbilitySystemComponentFromActorInfo())
-		if (ActorInfo->IsNetAuthority() && HealingEffectHandle.IsValid())
+	if (ActorInfo->IsNetAuthority())
+	{
+		if (UAbilitySystemComponent* ASC = GetAbilitySystemComponentFromActorInfo())
 		{
-			ASC->RemoveActiveGameplayEffect(HealingEffectHandle);
-			HealingEffectHandle.Invalidate();
+			if (HealingEffectHandle.IsValid())
+			{
+				ASC->RemoveActiveGameplayEffect(HealingEffectHandle);
+				HealingEffectHandle.Invalidate();
+			}
+			if (MoveSpeedEffectHandle.IsValid())
+			{
+				ASC->RemoveActiveGameplayEffect(MoveSpeedEffectHandle);
+				MoveSpeedEffectHandle.Invalidate();
+			}
 		}
+	}
 	
 	Super::EndAbility(Handle, ActorInfo, ActivationInfo, bReplicateEndAbility, bWasCancelled);
 }

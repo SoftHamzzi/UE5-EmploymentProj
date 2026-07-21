@@ -126,6 +126,7 @@ void AEPCharacter::PossessedBy(AController* NewController)
 		{
 			AS->InitHealth(100.f);
 			AS->InitMaxHealth(100.f);
+			AS->InitMoveSpeedMultiplier(1.f);
 		}
 		
 		ASC->SetTagMapCount(EmpGameplayTags::TAG_State_Dead, 0);
@@ -495,7 +496,24 @@ void AEPCharacter::InitASC()
 	
 	ASC->InitAbilityActorInfo(PS, this);
 	
+	if (MoveSpeedMultiplierHandle.IsValid())
+		ASC->GetGameplayAttributeValueChangeDelegate(UEPAttributeSet::GetMoveSpeedMultiplierAttribute())
+			.Remove(MoveSpeedMultiplierHandle);
+	
+	MoveSpeedMultiplierHandle = ASC->GetGameplayAttributeValueChangeDelegate(UEPAttributeSet::GetMoveSpeedMultiplierAttribute())
+		.AddUObject(this, &AEPCharacter::OnMoveSpeedMultiplierChanged);
+	
+	if (UEPCharacterMovement* CMC = Cast<UEPCharacterMovement>(GetCharacterMovement()))
+		CMC->MoveSpeedMultiplier = ASC->GetNumericAttribute(UEPAttributeSet::GetMoveSpeedMultiplierAttribute());
+	
 	if (IsLocallyControlled())
 		if (AEPPlayerController* PC = GetController<AEPPlayerController>())
 			PC->InitHUD(ASC);
 }
+
+void AEPCharacter::OnMoveSpeedMultiplierChanged(const FOnAttributeChangeData& Data)
+{
+	if (UEPCharacterMovement* CMC = Cast<UEPCharacterMovement>(GetCharacterMovement()))
+		CMC->MoveSpeedMultiplier = Data.NewValue;
+}
+

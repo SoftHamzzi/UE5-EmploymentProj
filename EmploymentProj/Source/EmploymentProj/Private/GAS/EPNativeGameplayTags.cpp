@@ -40,6 +40,7 @@ namespace EmpGameplayTags
 	UE_DEFINE_GAMEPLAY_TAG(TAG_Data_ReloadDuration,        "Data.ReloadDuration")
 
 	UE_DEFINE_GAMEPLAY_TAG(TAG_Data_HealAmount,       "Data.HealAmount")
+	UE_DEFINE_GAMEPLAY_TAG(TAG_Data_MoveSpeedMultiplier, "Data.MoveSpeedMultiplier")
 	
 	// Hitzone
 	UE_DEFINE_GAMEPLAY_TAG(TAG_HitZone_Head,               "HitZone.Head")

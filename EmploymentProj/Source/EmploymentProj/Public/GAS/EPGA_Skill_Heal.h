@@ -39,6 +39,9 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "GAS")
 	TSubclassOf<UGameplayEffect> GE_HealCooldownClass;
 	
+	UPROPERTY(EditDefaultsOnly, Category = "GAS")
+	TSubclassOf<UGameplayEffect> GE_MoveSpeedModifierClass;
+	
 	UPROPERTY(EditDefaultsOnly, Category = "Heal")
 	float HealAmount = 30.f;
 	
@@ -48,8 +51,12 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Heal")
 	float HealCooldown = 20.f;
 	
+	UPROPERTY(EditDefaultsOnly, Category = "Heal")
+	float HealMoveSpeedMultiplier = 0.2f;
+	
 private:
 	FActiveGameplayEffectHandle HealingEffectHandle;
+	FActiveGameplayEffectHandle MoveSpeedEffectHandle;
 	
 	UFUNCTION()
 	void OnHealComplete();

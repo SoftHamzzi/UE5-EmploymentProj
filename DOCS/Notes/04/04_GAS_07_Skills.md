@@ -24,13 +24,17 @@
 ```
 입력 (Q/E/F)
   → ASC->TryActivateAbilitiesByTag(TAG_Ability_Skill_*)
-  → GA_* (LocalPredicted, InstancedPerActor)
-      Dash    → LaunchCharacter + GE_Dash_Cooldown (10s) → 즉시 종료
-      Heal    → GE_Healing (State.Healing, 3s) + GE_MoveSpeed_Modifier (×0.2, 3s) + WaitDelay(3s) ∥ WaitGameplayEvent(Event.Damaged)
-                  └→ 완료: GE_Heal (+30 HP) + GE_Heal_Cooldown (20s)
-                  └→ 피격 취소: 쿨타임 없이 종료
-                  └→ State.Healing이 Dash/ShieldOn의 ActivationBlockedTags에 걸려 채널링 중 다른 스킬 잠김 (Step 8)
-      ShieldOn → GE_ShieldOn (State.Shielded, 5s) + GE_Shield_Cooldown (30s) → 즉시 종료
+  → GA_* : UEPGA_Skill_Base 공용 베이스 (LocalPredicted, InstancedPerActor) — Step 8 재설계
+      베이스가 CastTime(0=즉시시전)만큼 GE_CastingClass(자기 고유 태그 + 공용 State.Casting 부여) 적용 후
+      WaitDelay(CastTime) ∥ (bInterruptibleOnDamage ? WaitGameplayEvent(Event.Damaged) : 없음)
+      → 완료: OnCastComplete() / 피격 취소(해당 시): OnCastInterrupted()
+      → State.Casting은 전 스킬의 ActivationBlockedTags에 공통으로 걸려있어 시전 중엔 다른 스킬 전부 잠김(Step 8)
+
+      Dash    → CastTime=0 → 즉시 OnCastComplete: LaunchCharacter + GE_Dash_Cooldown (10s)
+      Heal    → CastTime=3 → GE_Healing(GrantedTags: State.Healing+State.Casting, Modifier: MoveSpeedMultiplier×0.2) 3초
+                  └→ 완료(OnCastComplete): GE_Heal (+30 HP) + GE_Heal_Cooldown (20s)
+                  └→ 피격 취소(bInterruptibleOnDamage=true): 쿨타임 없이 종료
+      ShieldOn → CastTime=0 → 즉시 OnCastComplete: GE_ShieldOn (State.Shielded, 5s) + GE_Shield_Cooldown (30s)
                   └→ PostGEExecute에서 State.Shielded 확인 시 IncomingDamage * 0.5
 ```
 
@@ -71,8 +75,10 @@
 | `EPAttributeSet.h/.cpp` | `MoveSpeedMultiplier` 어트리뷰트 추가 (Step 8) |
 | `EPCharacterMovement.h/.cpp` | `MoveSpeedMultiplier` 필드 + `GetMaxSpeed()` 곱연산 반영 (Step 8) |
 | `EPCharacter.h/.cpp` | `InitASC`에 어트리뷰트 변경 구독 추가 (Step 8) |
-| `EPGA_Skill_Heal.h/.cpp` | 슬로우 GE 적용 + `EndAbility` authority 가드 (Step 8) |
-| `EPGA_Skill_Dash.cpp` / `EPGA_Skill_ShieldOn.cpp` | `ActivationBlockedTags`에 `State.Healing` 추가 (Step 8) |
+| `EPGA_Skill_Base.h/.cpp` | 신규 — 공용 시전(CastTime/interrupt) 베이스 클래스 (Step 8) |
+| `EPGA_Skill_Heal.h/.cpp` | `UEPGA_Skill_Base` 상속으로 재작성, `OnCastComplete`/`ConfigureCastingSpec` 오버라이드 (Step 8) |
+| `EPGA_Skill_Dash.h/.cpp` / `EPGA_Skill_ShieldOn.h/.cpp` | `UEPGA_Skill_Base` 상속으로 변경, `ActivateAbility`→`OnCastComplete`로 이관 (Step 8) |
+| `EPNativeGameplayTags.h/.cpp` | `State.Casting`, `Data.MoveSpeedMultiplier` 태그 추가 (Step 8) |
 
 ---
 
@@ -539,74 +545,162 @@ void AEPCharacter::OnMoveSpeedMultiplierChanged(const FOnAttributeChangeData& Da
 }
 ```
 
-#### 8-4. 재사용 가능한 감속 GE — `GE_MoveSpeed_Modifier`
+> **8-4~8-6 개정 이력**: 최초 설계는 "Dash/ShieldOn 생성자에 `State.Healing`을 하드코딩"하는 방식이었다. 이러면 스킬을 하나 추가할 때마다 기존 스킬 파일을 전부 열어서 새 태그를 추가해야 하는 N² 문제가 생기고, 스킬마다 "시전 시간"·"피격 시 취소 여부"가 제각각 흩어진다. 아래는 이를 대체하는 개정판 — **공용 베이스 클래스 + 공용 잠금 태그** 하나로 일반화한다. Step 2/4/5에서 설명한 Dash/Heal/ShieldOn의 `ActivateAbility` 직접 구현 구조는 이 섹션으로 대체된다 (Step 2/4/5 문서 본문은 최초 골격 설명으로 남겨두되, 실제 클래스 계층은 아래를 따른다).
 
-Heal 전용이 아니라 **범용 GE**. `Content/Blueprints/GE/` 최상위(스킬 전용 폴더가 아님 — 향후 다른 디버프/버프도 재사용).
+#### 8-4. 공용 베이스 클래스 — `UEPGA_Skill_Base`
 
-| 항목 | 값 |
-|------|-----|
-| Duration Policy | Has Duration, SetByCaller(`Data.Duration`) |
-| Modifier | `MoveSpeedMultiplier`, **Multiply**, SetByCaller(`Data.MoveSpeedMultiplier`) |
-| GrantedTags | 없음 (State.Healing은 이미 `GE_Healing`이 부여) |
-
-> Modifier Op을 **Multiply**로 하는 것이 핵심 — 나중에 감속 효과 두 개가 겹쳐도 GAS가 자동으로 곱연산 누적한다. Add를 쓰면 여러 효과가 겹쳤을 때 서로 값을 빼앗는 식으로 계산이 꼬인다.
-
-신규 태그 (`EPNativeGameplayTags.h/.cpp`):
-```cpp
-EMPLOYMENTPROJ_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Data_MoveSpeedMultiplier)
-```
-```cpp
-UE_DEFINE_GAMEPLAY_TAG(TAG_Data_MoveSpeedMultiplier, "Data.MoveSpeedMultiplier")
-```
-
-#### 8-5. `EPGA_Skill_Heal`에서 적용 + EndAbility 정리 (기존 버그 동시 수정)
+모든 스킬이 공유하는 것: **시전 시간(`CastTime`, 0이면 즉시시전)**, **피격 시 취소 여부(`bInterruptibleOnDamage`)**, **시전 중 공용 잠금 태그 부여**. 서브클래스는 이 세 값과 "시전 완료 시 무엇을 할지"만 정의한다.
 
 ```cpp
-// EPGA_Skill_Heal.h
-UPROPERTY(EditDefaultsOnly, Category = "GAS")
-TSubclassOf<UGameplayEffect> GE_MoveSpeedModifierClass;
+// EPGA_Skill_Base.h
+#pragma once
 
-UPROPERTY(EditDefaultsOnly, Category = "Heal")
-float HealMoveSpeedMultiplier = 0.2f;   // GAME.md 스펙: 채널링 중 20%로 감소
+#include "CoreMinimal.h"
+#include "Abilities/GameplayAbility.h"
+#include "EPGA_Skill_Base.generated.h"
+
+UCLASS(Abstract)
+class EMPLOYMENTPROJ_API UEPGA_Skill_Base : public UGameplayAbility
+{
+    GENERATED_BODY()
+
+public:
+    UEPGA_Skill_Base();
+
+    // 공용 시전 흐름을 서브클래스가 깨뜨리지 못하도록 final — 서브클래스는 아래 훅만 오버라이드
+    virtual void ActivateAbility(
+        const FGameplayAbilitySpecHandle Handle,
+        const FGameplayAbilityActorInfo* ActorInfo,
+        const FGameplayAbilityActivationInfo ActivationInfo,
+        const FGameplayEventData* TriggerEventData) override final;
+
+    virtual void EndAbility(
+        const FGameplayAbilitySpecHandle Handle,
+        const FGameplayAbilityActorInfo* ActorInfo,
+        const FGameplayAbilityActivationInfo ActivationInfo,
+        bool bReplicateEndAbility, bool bWasCancelled) override;
+
+protected:
+    // 시전 시간. 0이면 즉시시전 — 캐스팅 GE/태그를 아예 적용하지 않는다 (Dash/Shield 기본값 유지)
+    UPROPERTY(EditDefaultsOnly, Category = "Cast")
+    float CastTime = 0.f;
+
+    // 시전 중 피격 시 취소되는지 (Heal만 true)
+    UPROPERTY(EditDefaultsOnly, Category = "Cast")
+    bool bInterruptibleOnDamage = false;
+
+    // 시전 중 부여할 GE. CastTime>0일 때만 사용.
+    // 이 스킬 고유 태그(예: State.Healing)와 공용 State.Casting을 함께 GrantedTags로 부여하도록 에셋을 구성 (8-5 참고)
+    UPROPERTY(EditDefaultsOnly, Category = "Cast")
+    TSubclassOf<UGameplayEffect> GE_CastingClass;
+
+    // 시전 완료 시 호출 (즉시시전이면 ActivateAbility 안에서 곧바로, 시전시간이 있으면 딜레이 후)
+    virtual void OnCastComplete() PURE_VIRTUAL(UEPGA_Skill_Base::OnCastComplete, );
+
+    // 시전 중 피격 취소 시 호출 (bInterruptibleOnDamage=false면 절대 안 불림). 기본은 아무 것도 안 함
+    virtual void OnCastInterrupted() {}
+
+    // GE_CastingClass 스펙에 Data.Duration 외 추가 SetByCaller가 필요할 때 오버라이드 (예: Heal의 Data.MoveSpeedMultiplier)
+    virtual void ConfigureCastingSpec(FGameplayEffectSpecHandle& SpecHandle) {}
 
 private:
-    FActiveGameplayEffectHandle MoveSpeedEffectHandle;   // HealingEffectHandle 옆에 추가
+    UFUNCTION()
+    void OnCastTimerComplete();
+
+    UFUNCTION()
+    void OnDamageDuringCast(FGameplayEventData Payload);
+
+    FActiveGameplayEffectHandle CastingEffectHandle;
+};
 ```
 
 ```cpp
-// EPGA_Skill_Heal.cpp — ActivateAbility, GE_HealingClass 적용 블록 옆에 추가
-if (GE_MoveSpeedModifierClass)
+// EPGA_Skill_Base.cpp
+#include "GAS/EPGA_Skill_Base.h"
+
+#include "AbilitySystemComponent.h"
+#include "Abilities/Tasks/AbilityTask_WaitDelay.h"
+#include "Abilities/Tasks/AbilityTask_WaitGameplayEvent.h"
+#include "GAS/EPNativeGameplayTags.h"
+
+UEPGA_Skill_Base::UEPGA_Skill_Base()
 {
-    FGameplayEffectSpecHandle SlowSpec = MakeOutgoingGameplayEffectSpec(GE_MoveSpeedModifierClass);
-    SlowSpec.Data->SetSetByCallerMagnitude(EmpGameplayTags::TAG_Data_Duration, HealDuration);
-    SlowSpec.Data->SetSetByCallerMagnitude(EmpGameplayTags::TAG_Data_MoveSpeedMultiplier, HealMoveSpeedMultiplier);
-    MoveSpeedEffectHandle = ApplyGameplayEffectSpecToOwner(Handle, ActorInfo, ActivationInfo, SlowSpec);
+    NetExecutionPolicy = EGameplayAbilityNetExecutionPolicy::LocalPredicted;
+    InstancingPolicy = EGameplayAbilityInstancingPolicy::InstancedPerActor;
+
+    // 모든 스킬 공용 — 새 스킬을 추가해도 이 두 줄은 베이스에서 자동 상속됨. 기존 스킬 파일은 손댈 필요 없음
+    ActivationBlockedTags.AddTag(EmpGameplayTags::TAG_State_Casting);
+    ActivationBlockedTags.AddTag(EmpGameplayTags::TAG_State_Dead);
 }
-```
 
-`EndAbility` — 새 핸들 정리에 곁들여 기존 버그도 고친다. 지금 코드는 `LocalPredicted`라 클라 예측 인스턴스에서도 `EndAbility`가 돌기 때문에, authority 체크 없이 `RemoveActiveGameplayEffect`를 부르면 `LogAbilitySystem: Warning: RemoveActiveGameplayEffect called without Authority...`가 매번 찍힌다 (엔진 소스 `AbilitySystemComponent.cpp:1177`에서 `IsOwnerActorAuthoritative()`가 false면 그냥 경고만 찍고 반환하는 것을 확인). 서버에서만 실행되도록 감싼다:
-
-```cpp
-void UEPGA_Skill_Heal::EndAbility(const FGameplayAbilitySpecHandle Handle,
+void UEPGA_Skill_Base::ActivateAbility(
+    const FGameplayAbilitySpecHandle Handle,
     const FGameplayAbilityActorInfo* ActorInfo,
     const FGameplayAbilityActivationInfo ActivationInfo,
-    bool bReplicateEndAbility, bool bWasCancelled)
+    const FGameplayEventData* TriggerEventData)
 {
-    // LocalPredicted라 이 함수는 서버 인스턴스 + 클라 예측 인스턴스 양쪽에서 실행된다.
-    // RemoveActiveGameplayEffect는 서버 권위에서만 허용되므로 가드 필수 (없으면 클라에서 매번 경고 로그).
+    if (!CommitAbility(Handle, ActorInfo, ActivationInfo))
+    {
+        EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
+        return;
+    }
+
+    if (CastTime <= 0.f)
+    {
+        OnCastComplete();
+        EndAbility(Handle, ActorInfo, ActivationInfo, true, false);
+        return;
+    }
+
+    if (GE_CastingClass)
+    {
+        FGameplayEffectSpecHandle Spec = MakeOutgoingGameplayEffectSpec(GE_CastingClass);
+        Spec.Data->SetSetByCallerMagnitude(EmpGameplayTags::TAG_Data_Duration, CastTime);
+        ConfigureCastingSpec(Spec);
+        CastingEffectHandle = ApplyGameplayEffectSpecToOwner(Handle, ActorInfo, ActivationInfo, Spec);
+    }
+
+    UAbilityTask_WaitDelay* WaitDelay = UAbilityTask_WaitDelay::WaitDelay(this, CastTime);
+    WaitDelay->OnFinish.AddDynamic(this, &UEPGA_Skill_Base::OnCastTimerComplete);
+    WaitDelay->ReadyForActivation();
+
+    if (bInterruptibleOnDamage)
+    {
+        UAbilityTask_WaitGameplayEvent* WaitDamage = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(
+            this, EmpGameplayTags::TAG_Event_Damaged, nullptr, false, true);
+        WaitDamage->EventReceived.AddDynamic(this, &UEPGA_Skill_Base::OnDamageDuringCast);
+        WaitDamage->ReadyForActivation();
+    }
+}
+
+void UEPGA_Skill_Base::OnCastTimerComplete()
+{
+    OnCastComplete();
+    EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, false);
+}
+
+void UEPGA_Skill_Base::OnDamageDuringCast(FGameplayEventData Payload)
+{
+    // OnCastComplete()는 일부러 호출 안 함 — 피격 취소는 "완료되지 않은 채 끝남"이 핵심
+    OnCastInterrupted();
+    EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, true);
+}
+
+void UEPGA_Skill_Base::EndAbility(
+    const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo,
+    const FGameplayAbilityActivationInfo ActivationInfo, bool bReplicateEndAbility, bool bWasCancelled)
+{
+    // LocalPredicted라 클라 예측 인스턴스에서도 EndAbility가 돈다 — RemoveActiveGameplayEffect는
+    // 서버 권위에서만 허용되므로 가드 필수 (없으면 클라에서 매번 `RemoveActiveGameplayEffect called without
+    // Authority` 경고 로그, 엔진 AbilitySystemComponent.cpp:1177 IsOwnerActorAuthoritative() 확인 참고).
     if (ActorInfo->IsNetAuthority())
     {
         if (UAbilitySystemComponent* ASC = GetAbilitySystemComponentFromActorInfo())
         {
-            if (HealingEffectHandle.IsValid())
+            if (CastingEffectHandle.IsValid())
             {
-                ASC->RemoveActiveGameplayEffect(HealingEffectHandle);
-                HealingEffectHandle.Invalidate();
-            }
-            if (MoveSpeedEffectHandle.IsValid())
-            {
-                ASC->RemoveActiveGameplayEffect(MoveSpeedEffectHandle);
-                MoveSpeedEffectHandle.Invalidate();
+                ASC->RemoveActiveGameplayEffect(CastingEffectHandle);
+                CastingEffectHandle.Invalidate();
             }
         }
     }
@@ -617,21 +711,204 @@ void UEPGA_Skill_Heal::EndAbility(const FGameplayAbilitySpecHandle Handle,
 
 > `EPGA_Item_Reload.cpp`의 `EndAbility`(67행)에도 authority 가드 없이 동일한 `RemoveActiveGameplayEffect` 호출이 있다 — 같은 버그가 잠재되어 있으니 리로드 쪽도 같은 패턴으로 고치는 것을 권장한다 (이 문서 범위 밖, `04_GAS_04_Reload.md` 참고).
 
-#### 8-6. 스킬 상호 잠금 — Dash/ShieldOn에 `State.Healing` 차단 태그 추가
-
-신규 메커니즘이 아니라 기존 `ActivationBlockedTags`에 태그 하나씩 추가하는 것뿐이다. `TryActivateAbilitiesByTag`는 클라이언트에서 먼저 `CanActivateAbility`(ActivationBlockedTags 검사 포함)를 통과해야 서버로 요청을 보내므로, 이 한 줄로 클라/서버 양쪽 다 즉시 차단된다 — 입력 쪽에 별도 가드 코드 불필요.
-
+신규 태그 (`EPNativeGameplayTags.h/.cpp`):
 ```cpp
-// EPGA_Skill_Dash.cpp 생성자에 추가
-ActivationBlockedTags.AddTag(EmpGameplayTags::TAG_State_Healing);
-
-// EPGA_Skill_ShieldOn.cpp 생성자에 추가
-ActivationBlockedTags.AddTag(EmpGameplayTags::TAG_State_Healing);
+EMPLOYMENTPROJ_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_State_Casting)
+EMPLOYMENTPROJ_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Data_MoveSpeedMultiplier)
+```
+```cpp
+UE_DEFINE_GAMEPLAY_TAG(TAG_State_Casting, "State.Casting")
+UE_DEFINE_GAMEPLAY_TAG(TAG_Data_MoveSpeedMultiplier, "Data.MoveSpeedMultiplier")
 ```
 
-> 잠긴 슬롯이 빨갛게 변하는 시각 피드백은 GAS 레이어가 아니라 HUD 위젯의 몫이다 — `04_GAS_08_HUD.md`의 `LockTags` 참고.
+#### 8-5. `EPGA_Skill_Heal` — 베이스 상속으로 재작성 (기존 버그 동시 수정)
 
-**verify:** 빌드 통과. PIE에서 힐 시전 중 이동속도 체감 20%로 감소(스프린트해도 SprintSpeed×0.2), Dash/Shield 키 입력이 무반응(서버 CommitAbility 실패 로그도 없어야 함 — 클라에서 아예 활성화 시도가 막힘), 힐 종료/취소 시 즉시 원래 속도로 복귀, `RemoveActiveGameplayEffect` 경고 로그 더 이상 안 뜸.
+`GE_Healing` 에셋에 태그 하나 + Modifier 하나만 추가하면 끝난다 — 별도의 `GE_MoveSpeed_Modifier` GE는 더 이상 필요 없다:
+
+| 항목 | 값 |
+|------|-----|
+| Duration Policy | Has Duration, SetByCaller(`Data.Duration`) *(기존 그대로)* |
+| GrantedTags | `State.Healing` *(기존)* **+ `State.Casting`(신규)** — 이 한 줄이 곧 "다른 스킬 잠금" 스위치 |
+| Modifier (신규) | `MoveSpeedMultiplier`, **Multiply**, SetByCaller(`Data.MoveSpeedMultiplier`) |
+
+> 최초 설계(8-4 구판)는 `GE_Healing`과 `GE_MoveSpeed_Modifier`를 별도 스펙 두 개로 적용해서 `Data.Duration` SetByCaller를 두 번 채워야 했다. 하나의 GE에 Modifier를 얹으면 스펙 적용도 SetByCaller도 한 번으로 끝난다. `MoveSpeedMultiplier` 어트리뷰트/CMC 훅(8-1~8-3)은 여전히 범용이므로, 확장성은 "GE 클래스를 공유하는 것"이 아니라 "어트리뷰트+Multiply 연산"에 있다 — 나중에 다른 스킬이 자기 GE에 같은 Modifier 한 줄만 추가하면 그대로 재사용된다.
+
+```cpp
+// EPGA_Skill_Heal.h
+UCLASS()
+class EMPLOYMENTPROJ_API UEPGA_Skill_Heal : public UEPGA_Skill_Base
+{
+    GENERATED_BODY()
+
+public:
+    UEPGA_Skill_Heal();
+
+protected:
+    virtual void OnCastComplete() override;
+    virtual void ConfigureCastingSpec(FGameplayEffectSpecHandle& SpecHandle) override;
+
+    UPROPERTY(EditDefaultsOnly, Category = "GAS")
+    TSubclassOf<UGameplayEffect> GE_HealClass;
+
+    UPROPERTY(EditDefaultsOnly, Category = "GAS")
+    TSubclassOf<UGameplayEffect> GE_HealCooldownClass;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Heal")
+    float HealAmount = 30.f;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Heal")
+    float HealCooldown = 20.f;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Heal")
+    float HealMoveSpeedMultiplier = 0.2f;   // GAME.md 스펙: 채널링 중 20%로 감소
+};
+```
+
+> `HealDuration`은 사라지고 베이스의 `CastTime`이 그 역할을 겸한다. `GE_HealingClass`는 베이스의 `GE_CastingClass`로 대체. `HealingEffectHandle`/`MoveSpeedEffectHandle`/`GE_MoveSpeedModifierClass`는 전부 베이스가 관리하므로 헤더에서 제거.
+
+```cpp
+// EPGA_Skill_Heal.cpp
+UEPGA_Skill_Heal::UEPGA_Skill_Heal()
+{
+    CastTime = 3.f;
+    bInterruptibleOnDamage = true;
+
+    FGameplayTagContainer Tags = GetAssetTags();
+    Tags.AddTag(EmpGameplayTags::TAG_Ability_Skill_Heal);
+    SetAssetTags(Tags);
+
+    ActivationBlockedTags.AddTag(EmpGameplayTags::TAG_Cooldown_Skill_Heal);
+    // State.Dead/State.Casting은 베이스 생성자에서 이미 추가됨 — 중복 추가 금지.
+    // State.Healing을 여기 또 추가할 필요도 없음 — 시전 시작과 동시에 자기 GE가 State.Casting을
+    // 걸어버리므로, 힐 도중 힐 재시전(자기 자신 재시전)도 이 공용 태그 하나로 자동 차단된다.
+}
+
+void UEPGA_Skill_Heal::ConfigureCastingSpec(FGameplayEffectSpecHandle& SpecHandle)
+{
+    SpecHandle.Data->SetSetByCallerMagnitude(EmpGameplayTags::TAG_Data_MoveSpeedMultiplier, HealMoveSpeedMultiplier);
+}
+
+void UEPGA_Skill_Heal::OnCastComplete()
+{
+    if (GE_HealClass)
+    {
+        FGameplayEffectSpecHandle HealSpec = MakeOutgoingGameplayEffectSpec(GE_HealClass);
+        HealSpec.Data->SetSetByCallerMagnitude(EmpGameplayTags::TAG_Data_HealAmount, HealAmount);
+        ApplyGameplayEffectSpecToOwner(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, HealSpec);
+    }
+    if (GE_HealCooldownClass)
+    {
+        FGameplayEffectSpecHandle CDSpec = MakeOutgoingGameplayEffectSpec(GE_HealCooldownClass);
+        CDSpec.Data->SetSetByCallerMagnitude(EmpGameplayTags::TAG_Data_Cooldown, HealCooldown);
+        ApplyGameplayEffectSpecToOwner(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, CDSpec);
+    }
+}
+```
+
+> `OnCastComplete()`는 피격 취소 경로에서 호출되지 않는다 — 베이스의 `OnDamageDuringCast`가 `OnCastInterrupted()`(Heal은 오버라이드 안 함, 빈 구현)만 부르고 곧장 `EndAbility(..., bWasCancelled=true)`로 끝낸다. "피격 취소 시 쿨타임 없이 종료"라는 기존 동작이 Heal 쪽 코드 한 줄 없이 그대로 유지된다.
+
+#### 8-6. Dash/ShieldOn — 베이스 클래스로 이전
+
+Dash/ShieldOn은 `CastTime`을 건드릴 필요조차 없다(기본값 0 = 즉시시전, GAME.md 스펙 그대로). 할 일은 상속 변경 + 기존 `ActivateAbility` 본문을 `OnCastComplete()`로 옮기는 것뿐 — **차단 태그를 서로 알 필요가 완전히 없어졌다.**
+
+```cpp
+// EPGA_Skill_Dash.h — 부모 클래스만 변경
+class EMPLOYMENTPROJ_API UEPGA_Skill_Dash : public UEPGA_Skill_Base
+{
+    GENERATED_BODY()
+public:
+    UEPGA_Skill_Dash();
+protected:
+    virtual void OnCastComplete() override;   // ActivateAbility 대신
+    // GE_DashCooldownClass/DashImpulse/DashCooldown/DashZBoost 필드는 그대로 유지
+};
+```
+```cpp
+// EPGA_Skill_Dash.cpp
+UEPGA_Skill_Dash::UEPGA_Skill_Dash()
+{
+    FGameplayTagContainer Tags = GetAssetTags();
+    Tags.AddTag(EmpGameplayTags::TAG_Ability_Skill_Dash);
+    SetAssetTags(Tags);
+
+    ActivationBlockedTags.AddTag(EmpGameplayTags::TAG_Cooldown_Skill_Dash);
+    // State.Dead/State.Casting은 베이스 생성자에서 이미 추가됨 — 중복 추가 금지
+}
+
+void UEPGA_Skill_Dash::OnCastComplete()
+{
+    ACharacter* Char = Cast<ACharacter>(CurrentActorInfo->AvatarActor.Get());
+    if (Char)
+    {
+        UCharacterMovementComponent* CMC = Char->GetCharacterMovement();
+        FVector DashDir = CMC ? CMC->GetCurrentAcceleration().GetSafeNormal2D() : FVector::ZeroVector;
+        if (DashDir.IsNearlyZero())
+            DashDir = Char->GetActorForwardVector().GetSafeNormal2D();
+
+        FVector LaunchVel = DashDir.GetSafeNormal() * DashImpulse;
+        LaunchVel.Z = DashZBoost;
+        Char->LaunchCharacter(LaunchVel, true, true);
+    }
+
+    if (GE_DashCooldownClass)
+    {
+        FGameplayEffectSpecHandle CDSpec = MakeOutgoingGameplayEffectSpec(GE_DashCooldownClass);
+        CDSpec.Data->SetSetByCallerMagnitude(EmpGameplayTags::TAG_Data_Cooldown, DashCooldown);
+        ApplyGameplayEffectSpecToOwner(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, CDSpec);
+    }
+}
+```
+
+```cpp
+// EPGA_Skill_ShieldOn.h — 부모 클래스만 변경 (구조는 Dash와 동일)
+class EMPLOYMENTPROJ_API UEPGA_Skill_ShieldOn : public UEPGA_Skill_Base
+{
+    GENERATED_BODY()
+public:
+    UEPGA_Skill_ShieldOn();
+protected:
+    virtual void OnCastComplete() override;
+    // GE_ShieldOnClass/GE_ShieldCooldownClass/ShieldDuration/ShieldCooldown 필드는 그대로 유지
+};
+```
+```cpp
+// EPGA_Skill_ShieldOn.cpp
+UEPGA_Skill_ShieldOn::UEPGA_Skill_ShieldOn()
+{
+    FGameplayTagContainer Tags = GetAssetTags();
+    Tags.AddTag(EmpGameplayTags::TAG_Ability_Skill_Shield);
+    SetAssetTags(Tags);
+
+    ActivationBlockedTags.AddTag(EmpGameplayTags::TAG_Cooldown_Skill_Shield);
+    ActivationBlockedTags.AddTag(EmpGameplayTags::TAG_State_Shielded);
+    // State.Dead/State.Casting은 베이스 생성자에서 이미 추가됨
+}
+
+void UEPGA_Skill_ShieldOn::OnCastComplete()
+{
+    if (GE_ShieldOnClass)
+    {
+        FGameplayEffectSpecHandle ShieldSpec = MakeOutgoingGameplayEffectSpec(GE_ShieldOnClass);
+        ShieldSpec.Data->SetSetByCallerMagnitude(EmpGameplayTags::TAG_Data_Duration, ShieldDuration);
+        ApplyGameplayEffectSpecToOwner(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, ShieldSpec);
+    }
+
+    if (GE_ShieldCooldownClass)
+    {
+        FGameplayEffectSpecHandle CDSpec = MakeOutgoingGameplayEffectSpec(GE_ShieldCooldownClass);
+        CDSpec.Data->SetSetByCallerMagnitude(EmpGameplayTags::TAG_Data_Cooldown, ShieldCooldown);
+        ApplyGameplayEffectSpecToOwner(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, CDSpec);
+    }
+}
+```
+
+> `Handle`/`ActorInfo`/`ActivationInfo` 파라미터가 `OnCastComplete()`엔 없으므로 `CurrentSpecHandle`/`CurrentActorInfo`/`CurrentActivationInfo`(GAS가 자동 관리하는 멤버, Heal의 `OnHealComplete`가 원래 쓰던 것과 동일 관례)로 교체한다. `EndAbility` 호출도 제거 — 즉시시전 경로는 베이스의 `ActivateAbility`가 `OnCastComplete()` 직후 대신 호출해준다.
+>
+> 새 스킬을 추가할 때: `UEPGA_Skill_Base`를 상속하고 `CastTime`/`bInterruptibleOnDamage`/`OnCastComplete()`만 채우면 끝난다. Dash/Heal/ShieldOn 파일은 한 줄도 안 건드려도 자동으로 서로 잠근다.
+
+> 잠긴 슬롯이 빨갛게 변하는 시각 피드백은 GAS 레이어가 아니라 HUD 위젯의 몫이다 — `04_GAS_08_HUD.md`의 `LockTags`가 이제 모든 슬롯에 대해 동일하게 `{State.Casting}` 하나면 충분해진다 (문서 갱신 반영).
+
+**verify:** 빌드 통과. PIE에서 힐 시전 중 이동속도 체감 20%로 감소(스프린트해도 SprintSpeed×0.2), Dash/Shield 키 입력이 무반응(서버 CommitAbility 실패 로그도 없어야 함 — 클라에서 아예 활성화 시도가 막힘), 힐 종료/취소 시 즉시 원래 속도로 복귀, `RemoveActiveGameplayEffect` 경고 로그 더 이상 안 뜸. Dash/Shield는 시전 시간이 0이라 기존과 체감 동일해야 함(러버밴딩/쿨타임 등 회귀 없음).
 
 ---
 
@@ -662,13 +939,15 @@ ActivationBlockedTags.AddTag(EmpGameplayTags::TAG_State_Healing);
 - [ ] PlayerController 액션 슬롯 3종
 - [ ] IA 3종 + IMC 매핑, BP_GA 3종, DefaultAbilities 등록
 
-### Step 8 — 힐 이동속도 감소 + 스킬 잠금 (신규)
+### Step 8 — 힐 이동속도 감소 + 스킬 잠금 (신규, 8-4~8-6 베이스클래스 개정판)
 - [ ] `EPAttributeSet`: `MoveSpeedMultiplier` 어트리뷰트(초기값 1.0) + PreAttributeChange 클램프 + 복제
 - [ ] `EPCharacterMovement::GetMaxSpeed()`가 `MoveSpeedMultiplier`를 곱연산으로 반영
 - [ ] `EPCharacter::InitASC`에서 어트리뷰트 변경 구독 (리스폰 재바인딩 안전)
-- [ ] `GE_MoveSpeed_Modifier` 에셋 (Multiply, SetByCaller 2종)
-- [ ] `EPGA_Skill_Heal`: 슬로우 GE 적용 + `EndAbility` authority 가드 추가(경고 로그 수정 겸함)
-- [ ] `EPGA_Skill_Dash`/`EPGA_Skill_ShieldOn`: `ActivationBlockedTags`에 `State.Healing` 추가
+- [ ] `EPNativeGameplayTags`: `State.Casting`, `Data.MoveSpeedMultiplier` 추가
+- [ ] `EPGA_Skill_Base` 신규 (CastTime/bInterruptibleOnDamage/GE_CastingClass + 공용 ActivateAbility/EndAbility + OnCastComplete/OnCastInterrupted/ConfigureCastingSpec 훅)
+- [ ] `GE_Healing` 에셋: GrantedTags에 `State.Casting` 추가 + Modifier(`MoveSpeedMultiplier`, Multiply, SetByCaller) 추가 — 별도 `GE_MoveSpeed_Modifier` 에셋 불필요
+- [ ] `EPGA_Skill_Heal`: `UEPGA_Skill_Base` 상속으로 재작성 (`OnCastComplete`/`ConfigureCastingSpec` 오버라이드, CastTime=3/bInterruptibleOnDamage=true)
+- [ ] `EPGA_Skill_Dash`/`EPGA_Skill_ShieldOn`: `UEPGA_Skill_Base` 상속으로 변경, `ActivateAbility`→`OnCastComplete`로 이관 (차단 태그 하드코딩 제거)
 
 ### 검증 (PIE 2인 멀티)
 - [ ] 스태미나 제거 후: 스프린트/점프 기존 동작 그대로, 데미지 파이프라인 이상 없음
@@ -694,9 +973,12 @@ ActivationBlockedTags.AddTag(EmpGameplayTags::TAG_State_Healing);
 | Dash가 서버에서만 전방으로 감 (러버밴딩) | GetLastMovementInputVector는 로컬 전용 — 서버에선 Zero | `CMC->GetCurrentAcceleration()` 사용 (saved move로 복제됨) |
 | 지상 Dash가 거의 안 나감 | 수평 발사 → 즉시 착지 → GroundFriction/Braking이 감속 | Z 부스트(DashZBoost)로 잠깐 체공, bZOverride=true |
 | DefaultAbilities 중복 부여 | PossessedBy 재호출 | 현 프로젝트는 재빙의 없음 — 도입 시 가드 추가 |
-| `RemoveActiveGameplayEffect called without Authority` 경고 | `LocalPredicted` 어빌리티의 `EndAbility`가 클라 예측 인스턴스에서도 실행되는데, authority 체크 없이 GE를 지우려 함 | `ActorInfo->IsNetAuthority()`로 감싸 서버에서만 실행 (Step 8-5) |
+| `RemoveActiveGameplayEffect called without Authority` 경고 | `LocalPredicted` 어빌리티의 `EndAbility`가 클라 예측 인스턴스에서도 실행되는데, authority 체크 없이 GE를 지우려 함 | `ActorInfo->IsNetAuthority()`로 감싸 서버에서만 실행 — `UEPGA_Skill_Base::EndAbility`에 이미 반영 (Step 8-4) |
 | 힐 중 스프린트해도 속도가 안 줄어듦 | `MoveSpeedMultiplier`를 Sprint/Aim 분기 **이전**에 곱하거나, 분기 자체를 건드림 | `GetMaxSpeed()`에서 Sprint/Aim으로 Base를 정한 **뒤에** 마지막으로 `* MoveSpeedMultiplier` |
-| 감속 GE가 겹칠 때 계산이 이상함 | Modifier Op을 Add로 설정 | Multiply로 설정 — 여러 감속 효과가 자동으로 곱연산 누적됨 (Step 8-4) |
+| 감속 GE가 겹칠 때 계산이 이상함 | Modifier Op을 Add로 설정 | Multiply로 설정 — 여러 감속 효과가 자동으로 곱연산 누적됨 (Step 8-5, `GE_Healing`) |
+| Heal 시전 중 Heal을 또 눌러도(자기 재시전) 안 막힘 | `GE_Healing`의 GrantedTags에 `State.Casting` 추가를 빠뜨림 | `State.Casting`이 베이스의 `ActivationBlockedTags`에 있으므로, 이 태그가 GE_Healing에서 실제로 부여돼야 자기 자신도 막힘 |
+| 새 스킬 추가했는데 다른 스킬이 안 잠김 / 이 스킬이 다른 스킬 시전 중에도 활성화됨 | 새 GA가 `UEPGA_Skill_Base`를 상속 안 하고 `UGameplayAbility`를 직접 상속함 | 반드시 `UEPGA_Skill_Base` 상속 — `State.Casting` 차단/부여가 전부 베이스와 그 GE_CastingClass 쪽 책임이라 직접 상속하면 이 메커니즘을 전혀 안 탐 |
+| `OnCastComplete`가 피격 취소 시에도 불림(원치 않는 완료 처리) | `OnDamageDuringCast`를 직접 오버라이드하며 `OnCastComplete()`를 잘못 호출 | 베이스의 `OnDamageDuringCast`는 `OnCastInterrupted()`만 부름 — `OnCastComplete()`를 임의로 추가 호출하지 말 것 |
 
 ---
 

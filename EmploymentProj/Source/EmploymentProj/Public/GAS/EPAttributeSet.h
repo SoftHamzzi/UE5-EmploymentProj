@@ -41,6 +41,10 @@ public:
 	FGameplayAttributeData MaxAmmo;
 	ATTRIBUTE_ACCESSORS(UEPAttributeSet, MaxAmmo);
 	
+	UPROPERTY(BlueprintReadOnly, Category = "Attribute|Movement", ReplicatedUsing = OnRep_MoveSpeedMultiplier)
+	FGameplayAttributeData MoveSpeedMultiplier;
+	ATTRIBUTE_ACCESSORS(UEPAttributeSet, MoveSpeedMultiplier);
+	
 	// === 함수 ===
 	virtual void PreAttributeChange(const FGameplayAttribute& Attribute, float& NewValue) override;
 	virtual void PostGameplayEffectExecute(const FGameplayEffectModCallbackData& Data) override;
@@ -61,5 +65,8 @@ protected:
 	
 	UFUNCTION()
 	void OnRep_MaxAmmo(const FGameplayAttributeData& OldValue);
+	
+	UFUNCTION()
+	void OnRep_MoveSpeedMultiplier(const FGameplayAttributeData& OldValue);
 	
 };

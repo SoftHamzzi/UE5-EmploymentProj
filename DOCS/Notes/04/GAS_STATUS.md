@@ -14,8 +14,8 @@
 - [x] 04_GAS_05 WeaponDecals (PIE 검수 완료) — `04_GAS_05_WeaponDecals_STATUS.md`
 - [x] 04_GAS_05 Spread CDF (PIE 검수 완료) — `04_GAS_05_Spread_STATUS.md`
 - [x] 04_GAS_06 HitZoneDamage (PIE 검수 완료) — `04_GAS_06_HitZoneDamage_STATUS.md`
-- [ ] 04_GAS_07 Skills (구현 완료, ShieldOn 버그 2건 수정 완료 — PIE 검수 대기) — `04_GAS_07_Skills_STATUS.md`  ← 현재
-- [ ] 04_GAS_08 HUD (문서 작성 완료, 구현 미착수) — `04_GAS_08_HUD.md`
+- [ ] 04_GAS_07 Skills (Step 0~7 구현 완료, ShieldOn 버그 2건 수정 완료 — PIE 검수 대기. Step 8은 문서만 완료, 구현 대부분 미착수) — `04_GAS_07_Skills_STATUS.md`  ← 현재
+- [ ] 04_GAS_08 HUD (기본 HUD·킬 사운드 구현 완료, 4-상태 슬롯+중앙 게이지 재설계는 문서만 완료·구현 미착수) — `04_GAS_08_HUD_STATUS.md`
 
 ---
 
