@@ -119,4 +119,5 @@ void UEPAttributeSet::OnRep_MaxAmmo(const FGameplayAttributeData& OldValue)
 
 void UEPAttributeSet::OnRep_MoveSpeedMultiplier(const FGameplayAttributeData& OldValue)
 {
+	GAMEPLAYATTRIBUTE_REPNOTIFY(UEPAttributeSet, MoveSpeedMultiplier, OldValue);
 }

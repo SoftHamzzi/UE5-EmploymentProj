@@ -3,25 +3,21 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "EPGA_Skill_Base.h"
 #include "Abilities/GameplayAbility.h"
 #include "EPGA_Skill_ShieldOn.generated.h"
 
-/**
- * 
- */
 UCLASS()
-class EMPLOYMENTPROJ_API UEPGA_Skill_ShieldOn : public UGameplayAbility
+class EMPLOYMENTPROJ_API UEPGA_Skill_ShieldOn : public UEPGA_Skill_Base
 {
 	GENERATED_BODY()
 	
 public:
 	UEPGA_Skill_ShieldOn();
-	virtual void ActivateAbility(const FGameplayAbilitySpecHandle Handle,
-		const FGameplayAbilityActorInfo* ActorInfo,
-		const FGameplayAbilityActivationInfo ActivationInfo,
-		const FGameplayEventData* TriggerEventData) override;
 	
 protected:
+	virtual void OnCastComplete();
+	
 	UPROPERTY(EditDefaultsOnly, Category = "GAS")
 	TSubclassOf<UGameplayEffect> GE_ShieldOnClass;
 	

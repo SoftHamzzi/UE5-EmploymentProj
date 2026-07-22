@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "EPGA_Skill_Base.h"
 #include "Abilities/GameplayAbility.h"
 #include "EPGA_Skill_Heal.generated.h"
 
@@ -10,43 +11,25 @@
  * 
  */
 UCLASS()
-class EMPLOYMENTPROJ_API UEPGA_Skill_Heal : public UGameplayAbility
+class EMPLOYMENTPROJ_API UEPGA_Skill_Heal : public UEPGA_Skill_Base
 {
 	GENERATED_BODY()
 	
 public:
 	UEPGA_Skill_Heal();
 	
-	virtual void ActivateAbility(
-		const FGameplayAbilitySpecHandle Handle,
-		const FGameplayAbilityActorInfo* ActorInfo,
-		const FGameplayAbilityActivationInfo ActivationInfo,
-		const FGameplayEventData* TriggerEventData) override;
-	
-	virtual void EndAbility(
-		const FGameplayAbilitySpecHandle Handle,
-		const FGameplayAbilityActorInfo* ActorInfo,
-		const FGameplayAbilityActivationInfo ActivationInfo,
-		bool bReplicateEndAbility, bool bWasCancelled) override;
+	virtual void OnCastComplete() override;
+	virtual void ConfigureCastingSpec(FGameplayEffectSpecHandle& SpecHandle) override;
 	
 protected:
-	UPROPERTY(EditDefaultsOnly, Category = "GAS")
-	TSubclassOf<UGameplayEffect> GE_HealingClass;
-	
 	UPROPERTY(EditDefaultsOnly, Category = "GAS")
 	TSubclassOf<UGameplayEffect> GE_HealClass;
 
 	UPROPERTY(EditDefaultsOnly, Category = "GAS")
 	TSubclassOf<UGameplayEffect> GE_HealCooldownClass;
 	
-	UPROPERTY(EditDefaultsOnly, Category = "GAS")
-	TSubclassOf<UGameplayEffect> GE_MoveSpeedModifierClass;
-	
 	UPROPERTY(EditDefaultsOnly, Category = "Heal")
 	float HealAmount = 30.f;
-	
-	UPROPERTY(EditDefaultsOnly, Category = "Heal")
-	float HealDuration = 3.f;
 	
 	UPROPERTY(EditDefaultsOnly, Category = "Heal")
 	float HealCooldown = 20.f;
@@ -55,12 +38,4 @@ protected:
 	float HealMoveSpeedMultiplier = 0.2f;
 	
 private:
-	FActiveGameplayEffectHandle HealingEffectHandle;
-	FActiveGameplayEffectHandle MoveSpeedEffectHandle;
-	
-	UFUNCTION()
-	void OnHealComplete();
-	
-	UFUNCTION()
-	void OnDamageTaken(FGameplayEventData Payload);
 };

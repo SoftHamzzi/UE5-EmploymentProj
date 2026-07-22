@@ -119,15 +119,15 @@ void AEPCharacter::PossessedBy(AController* NewController)
 	
 	if (AEPPlayerState* PS = GetPlayerState<AEPPlayerState>())
 	{
-		ASC = PS->GetAbilitySystemComponent();
-		InitASC();
-		
 		if (UEPAttributeSet* AS = PS->GetAttributeSet())
 		{
 			AS->InitHealth(100.f);
 			AS->InitMaxHealth(100.f);
 			AS->InitMoveSpeedMultiplier(1.f);
 		}
+		
+		ASC = PS->GetAbilitySystemComponent();
+		InitASC();
 		
 		ASC->SetTagMapCount(EmpGameplayTags::TAG_State_Dead, 0);
 		

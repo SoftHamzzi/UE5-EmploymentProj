@@ -13,6 +13,7 @@ namespace EmpGameplayTags
 	
 	UE_DEFINE_GAMEPLAY_TAG(TAG_State_Shielded,        "State.Shielded")
 	UE_DEFINE_GAMEPLAY_TAG(TAG_State_Healing,         "State.Healing")
+	UE_DEFINE_GAMEPLAY_TAG(TAG_State_Casting,         "State.Casting")
 
 	// Event
 	UE_DEFINE_GAMEPLAY_TAG(TAG_Event_Death,                "Event.Death")

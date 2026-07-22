@@ -9,30 +9,16 @@
 
 UEPGA_Skill_Dash::UEPGA_Skill_Dash()
 {
-	NetExecutionPolicy = EGameplayAbilityNetExecutionPolicy::LocalPredicted;
-	InstancingPolicy = EGameplayAbilityInstancingPolicy::InstancedPerActor;
-	
 	FGameplayTagContainer Tags = GetAssetTags();
 	Tags.AddTag(EmpGameplayTags::TAG_Ability_Skill_Dash);
 	SetAssetTags(Tags);
 	
 	ActivationBlockedTags.AddTag(EmpGameplayTags::TAG_Cooldown_Skill_Dash);
-	ActivationBlockedTags.AddTag(EmpGameplayTags::TAG_State_Dead);
 }
 
-void UEPGA_Skill_Dash::ActivateAbility(
-	const FGameplayAbilitySpecHandle Handle,
-	const FGameplayAbilityActorInfo* ActorInfo,
-	const FGameplayAbilityActivationInfo ActivationInfo,
-	const FGameplayEventData* TriggerEventData)
+void UEPGA_Skill_Dash::OnCastComplete()
 {
-	if (!CommitAbility(Handle, ActorInfo, ActivationInfo))
-	{
-		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
-		return;
-	}
-	
-	ACharacter* Char = Cast<ACharacter>(ActorInfo->AvatarActor.Get());
+	ACharacter* Char = Cast<ACharacter>(CurrentActorInfo->AvatarActor.Get());
 	if (Char)
 	{
 		UCharacterMovementComponent* CMC = Char->GetCharacterMovement();
@@ -49,8 +35,6 @@ void UEPGA_Skill_Dash::ActivateAbility(
 	{
 		FGameplayEffectSpecHandle CDSpec = MakeOutgoingGameplayEffectSpec(GE_DashCooldownClass);
 		CDSpec.Data->SetSetByCallerMagnitude(EmpGameplayTags::TAG_Data_Cooldown, DashCooldown);
-		ApplyGameplayEffectSpecToOwner(Handle, ActorInfo, ActivationInfo, CDSpec);
+		ApplyGameplayEffectSpecToOwner(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, CDSpec);
 	}
-	
-	EndAbility(Handle, ActorInfo, ActivationInfo, true, false);
 }
