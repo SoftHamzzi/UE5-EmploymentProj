@@ -16,8 +16,8 @@
 | 체력바 (숫자 + 바) | 하단 좌 | `Health`/`MaxHealth` Attribute 변경 델리게이트 |
 | 탄약 카운터 (현재/최대) | 하단 우 | `Ammo`/`MaxAmmo` Attribute 변경 델리게이트 |
 | 장전 중 표시 | 탄약 옆 | `State.Reloading` 태그 이벤트 |
-| 스킬 아이콘 3종 (쿨타임/시전/잠금 3-상태 오버레이) | 하단 중앙-우 | `Cooldown.Skill.*` + 자기 시전 태그(예 `State.Healing`) + 공용 `State.Casting` 태그 이벤트 + GE 남은 시간 쿼리 |
-| 화면 중앙 시전 게이지 (링) | 화면 정중앙 | 채널링 태그(`State.Healing`) + GE 남은 시간 쿼리 |
+| 스킬 아이콘 3종 (쿨타임/진행중/잠금 3-상태 오버레이) | 하단 중앙-우 | `Cooldown.Skill.*` + 자기 진행 중 태그들(`ActiveTags` — 예: Heal의 `State.Healing`, Shield의 `State.Shielded`) + 공용 `State.Casting` 태그 이벤트 + GE 남은 시간 쿼리 |
+| 화면 중앙 시전 게이지 (링) | 화면 정중앙 | 공용 `State.Casting` 태그(스킬 무관, 채널링형 전체 공용) + GE 남은 시간 쿼리 |
 | 라운드 타이머 | 상단 중앙 | `AEPGameState::RemainingTime` (기존 복제 변수) |
 
 킬 피드백은 HUD 요소가 아니라 사운드다 — 킬 성공 시 킬러 본인에게만 찰진 사운드 하나 재생 (§2 참조).
@@ -56,24 +56,26 @@
 
 ### 스킬 슬롯 4-상태 + 중앙 시전 게이지 (오버워치 참고, 신규)
 
-오버워치 참고 결과, 스킬 슬롯은 아래→위 순서로 3겹이다: **흰색 베이스면 → 주황색 면(쿨타임/시전) → 검은 픽토그램**. 여기에 "다른 스킬이 시전 중이라 이 슬롯을 못 쓴다"는 잠금 상태(빨강)까지 더해 슬롯 하나가 4가지 상태를 표현해야 한다:
+오버워치 참고 결과, 스킬 슬롯은 아래→위 순서로 3겹이다: **흰색 베이스면 → 주황색 면(쿨타임/진행중) → 검은 픽토그램**. 여기에 "다른 스킬이 시전 중이라 이 슬롯을 못 쓴다"는 잠금 상태(빨강)까지 더해 슬롯 하나가 4가지 상태를 표현해야 한다:
 
 | 상태 | 트리거 | 시각 |
 |------|--------|------|
 | Ready | 아무 태그도 없음 | 흰 베이스, 오버레이 없음, 검은 픽토그램 |
 | Cooldown | 자신의 `Cooldown.Skill.*` 태그 | 흰 베이스, 주황 오버레이가 **아래→위로 차오름**(0→1, 회복 진행도), 남은 초 표시 |
-| Casting (자기 시전) | 자신의 시전 태그(예: Heal의 `State.Healing`. CastTime=0인 Dash/Shield는 해당 없음) | 흰 베이스, 주황 오버레이가 **전체를 고정으로 덮음**(애니메이션 없음) |
-| Locked (타 스킬 시전으로 잠김) | 공용 `State.Casting` 태그 (다른 누군가가 시전 중이면 항상 켜져 있음) | 베이스+픽토그램 모두 **불투명한 빨강** |
+| Active (자기 진행 중) | 자신의 `ActiveTags` 중 하나라도 켜짐 — **채널링형**(예: Heal의 `State.Healing`, 효과 발동 전 시전 중) 또는 **지속형**(예: Shield의 `State.Shielded`, 효과 발동 후 유지 중) 둘 다 해당. CastTime=0이고 발동 후 지속 상태도 없는 순수 즉발 스킬(Dash)만 해당 없음 | 흰 베이스, 주황 오버레이가 **전체를 고정으로 덮음**(애니메이션 없음) |
+| Locked (타 스킬 시전으로 잠김) | 공용 `State.Casting` 태그 (다른 누군가가 채널링 중이면 항상 켜져 있음) | 베이스+픽토그램 모두 **불투명한 빨강** |
 
-우선순위는 `Casting > Locked > Cooldown > Ready` — 이 슬롯 자신이 시전 중이면 그게 최우선으로 보여야 하고(자기 자신은 잠기지 않음), 그 다음이 잠금이다.
+우선순위는 `Active > Locked > Cooldown > Ready` — 이 슬롯 자신이 진행 중이면 그게 최우선으로 보여야 하고(자기 자신은 잠기지 않음), 그 다음이 잠금이다.
 
-**GAS 레이어와 UI 레이어 분리**: "다른 스킬이 진짜로 활성화되지 못하게 막는 것"은 `04_GAS_07_Skills.md`의 `UEPGA_Skill_Base` 생성자가 모든 스킬 공통으로 추가하는 `ActivationBlockedTags`의 `State.Casting`이 담당 — 서버가 실제로 거부한다(개정: 예전엔 Dash/ShieldOn 생성자에 `State.Healing`을 하드코딩했으나, 스킬이 늘어날 때마다 서로의 태그를 알아야 하는 문제가 있어 공용 태그 하나로 대체됨). 이 문서가 다루는 건 그 상태를 **보여주는 것**뿐이다. 위젯은 GAS가 이미 관리하는 태그(`State.Casting`, 그리고 자기 자신의 시전 태그)를 구독만 할 뿐, 잠금 여부를 스스로 판단하지 않는다. 모든 슬롯이 같은 태그 하나(`State.Casting`)만 구독하면 되므로, 새 스킬이 추가돼도 기존 슬롯의 `LockTags` 설정은 손댈 필요가 없다.
+**"채널링(사전)"과 "지속(사후)"은 서로 다른 GAS 매커니즘이지만 UI에선 같은 시각으로 통합**: `State.Casting`(공용 상호잠금)은 오직 `CastTime>0`인 채널링 중에만 걸리고 다른 모든 스킬을 잠근다(Heal). 반면 `State.Shielded` 같은 발동 후 지속 태그는 그냥 평범한 Duration GE의 GrantedTags일 뿐이고(`Cooldown.Skill.*`와 동일한 매커니즘), 다른 스킬을 잠그지 않는다(방벽 켜놨다고 Dash/Heal이 막히면 안 됨). 위젯 입장에선 둘 다 "내 스킬이 지금 뭔가 하고 있다"는 같은 의미라서 `ActiveTags`라는 하나의 태그 컨테이너로 묶어서 구독하고, 둘 중 뭐든 하나라도 켜지면 똑같이 오렌지로 덮는다 — 어떤 GAS 매커니즘에서 온 태그인지는 위젯이 몰라도 된다.
+
+**GAS 레이어와 UI 레이어 분리**: "다른 스킬이 진짜로 활성화되지 못하게 막는 것"은 `04_GAS_07_Skills.md`의 `UEPGA_Skill_Base` 생성자가 모든 스킬 공통으로 추가하는 `ActivationBlockedTags`의 `State.Casting`이 담당 — 서버가 실제로 거부한다(개정: 예전엔 Dash/ShieldOn 생성자에 `State.Healing`을 하드코딩했으나, 스킬이 늘어날 때마다 서로의 태그를 알아야 하는 문제가 있어 공용 태그 하나로 대체됨). 이 문서가 다루는 건 그 상태를 **보여주는 것**뿐이다. 위젯은 GAS가 이미 관리하는 태그(`State.Casting`, 그리고 자기 자신의 `ActiveTags`)를 구독만 할 뿐, 잠금 여부를 스스로 판단하지 않는다. 모든 슬롯이 같은 태그 하나(`State.Casting`)만 `LockTags`로 구독하면 되므로, 새 스킬이 추가돼도 기존 슬롯의 `LockTags` 설정은 손댈 필요가 없다.
 
 **이동속도 감소(채널링 중 20%)는 HUD와 무관** — `EPCharacterMovement`가 어트리뷰트를 직접 읽어 처리한다 (`04_GAS_07_Skills.md` Step 8). HUD는 이 값을 표시하지 않는다.
 
 **슬롯 오버레이(ProgressBar)만으로 구현 — 신규 머티리얼 불필요**: "아래→위로 차오름"은 UMG `ProgressBar`의 내장 `Fill Type = Bottom to Top` 옵션 + `SetPercent`만으로 충분하다. 기존 `CooldownBar`를 그대로 재사용하고, 색상만 `SetFillColorAndOpacity`로 주황/빨강 전환한다. 커스텀 마스크 머티리얼이 필요한 건 **중앙 시전 게이지(원형 링)** 하나뿐 — UMG에 방사형(radial) ProgressBar가 없어서다.
 
-**중앙 시전 게이지는 "옵션 1+2 동시 적용"**: 슬롯의 주황 오버레이(옵션 2, 이미 구현)에 더해 화면 정중앙에 원형 게이지(옵션 1)를 추가한다. 슬롯 오버레이는 "회복까지 얼마나 진행됐나"(0→1 차오름)를 보여주고, 중앙 게이지는 반대로 "남은 시전 시간"(1→0 줄어듦)을 보여준다 — 같은 정보를 다른 은유로 중복 표시하는 것은 의도적이다 (오버워치도 이렇게 함).
+**중앙 시전 게이지는 "옵션 1+2 동시 적용", 그리고 스킬 무관하게 자동 확장됨**: 슬롯의 주황 오버레이(옵션 2, 이미 구현)에 더해 화면 정중앙에 원형 게이지(옵션 1)를 추가한다. 슬롯 오버레이는 "회복까지 얼마나 진행됐나"(0→1 차오름)를 보여주고, 중앙 게이지는 반대로 "남은 시전 시간"(1→0 줄어듦)을 보여준다 — 같은 정보를 다른 은유로 중복 표시하는 것은 의도적이다 (오버워치도 이렇게 함). 중앙 게이지는 스킬별 고유 태그가 아니라 **공용 `State.Casting`**을 구독한다 — 상호잠금 매커니즘상 한 번에 한 스킬만 이 태그를 가질 수 있고, 채널링형 스킬은 어차피 자기 `GE_CastingClass`에 이 태그를 넣어야만 상호잠금이 동작하므로(이미 필수 조건), 나중에 메르시 부활형 같은 채널링 스킬이 추가돼도 이 위젯은 코드/설정 변경 없이 자동으로 반응한다. 반대로 Shield의 `State.Shielded`처럼 지속형(비채널링) 태그는 중앙 게이지에 절대 뜨지 않는다 — 그건 슬롯의 `ActiveTags`만의 몫이다.
 
 ---
 
@@ -95,7 +97,7 @@ PrivateDependencyModuleNames.AddRange(new string[] { "Slate", "SlateCore" });
 
 ## 4. Step 1 — UEPSkillSlotWidget (스킬 슬롯 1칸) + UEPCastGaugeWidget (중앙 게이지)
 
-`UEPSkillSlotWidget`은 Ready/Cooldown/Casting/Locked 4-상태를 감시하는 재사용 위젯. WBP_HUD에 3개 배치하고 인스턴스별로 `CooldownTag`/`CastingTag`/`LockTags`를 다르게 지정한다 (표는 §9 Step 6 참고). `UEPCastGaugeWidget`은 화면 중앙에 하나만 배치하는 별도 위젯이다.
+`UEPSkillSlotWidget`은 Ready/Cooldown/Active/Locked 4-상태를 감시하는 재사용 위젯. WBP_HUD에 3개 배치하고 인스턴스별로 `CooldownTag`/`ActiveTags`/`LockTags`를 다르게 지정한다 (표는 §9 Step 6 참고). `UEPCastGaugeWidget`은 화면 중앙에 하나만 배치하는 별도 위젯이다.
 
 ### `Public/HUD/EPSkillSlotWidget.h`
 
@@ -116,7 +118,7 @@ enum class EEPSkillSlotState : uint8
 {
 	Ready,
 	Cooldown,
-	Casting,   // 이 슬롯 자신의 스킬이 시전/채널링 중
+	Active,    // 이 슬롯 자신의 스킬이 채널링 중이거나(예: Heal) 발동 후 지속 효과가 유지 중(예: Shield)
 	Locked,    // 다른 스킬의 시전 때문에 이 슬롯이 잠김
 };
 
@@ -137,12 +139,14 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Skill")
 	FGameplayTag CooldownTag;
 	
-	// 이 슬롯 자신의 스킬이 시전/채널링 중임을 나타내는 태그. 즉발 스킬(Dash/Shield)은 비워둠 — Heal 슬롯만 State.Healing 지정
+	// 이 슬롯 자신의 스킬이 "지금 뭔가 하고 있다"고 표시할 태그들 — 채널링 태그(예: Heal의 State.Healing)든
+	// 발동 후 지속 효과 태그(예: Shield의 State.Shielded)든 종류 상관없이 하나라도 켜지면 오렌지로 덮인다.
+	// 지속 상태 자체가 없는 순수 즉발 스킬(Dash)은 비워둠
 	UPROPERTY(EditAnywhere, Category = "Skill")
-	FGameplayTag CastingTag;
+	FGameplayTagContainer ActiveTags;
 	
 	// 이 중 하나라도 켜져 있으면 잠김 — 모든 슬롯에 동일하게 {State.Casting} 하나만 넣으면 됨.
-	// 자기 자신이 시전 중일 때도 State.Casting은 켜져 있지만 CastingTag가 우선순위에서 이기므로 안전(RecomputeState 참고)
+	// 자기 자신이 진행 중일 때도 State.Casting은 켜져 있지만 ActiveTags가 우선순위에서 이기므로 안전(RecomputeState 참고)
 	UPROPERTY(EditAnywhere, Category = "Skill")
 	FGameplayTagContainer LockTags;
 	
@@ -160,18 +164,18 @@ protected:
 	
 private:
 	void OnCooldownTagChanged(const FGameplayTag Tag, int32 NewCount);
-	void OnCastingTagChanged(const FGameplayTag Tag, int32 NewCount);
+	void OnActiveTagChanged(const FGameplayTag Tag, int32 NewCount);
 	void OnLockTagChanged(const FGameplayTag Tag, int32 NewCount);
 	void RecomputeState();
 	void ApplyState(EEPSkillSlotState NewState);
 	
 	TWeakObjectPtr<UAbilitySystemComponent> ASC;
 	FDelegateHandle CooldownHandle;
-	FDelegateHandle CastingHandle;
+	TArray<FDelegateHandle> ActiveHandles;
 	TArray<FDelegateHandle> LockHandles;
 	
 	bool bCoolingDown = false;
-	bool bCasting = false;
+	bool bActive = false;
 	bool bLocked = false;
 	EEPSkillSlotState CurrentState = EEPSkillSlotState::Ready;
 };
@@ -195,22 +199,29 @@ namespace
 
 void UEPSkillSlotWidget::InitWithASC(UAbilitySystemComponent* InASC)
 {
-	// 리스폰 재호출 대비 — 기존 바인딩 전부 해제 (Cooldown/Casting/Lock 3종)
+	// 리스폰 재호출 대비 — 기존 바인딩 전부 해제 (Cooldown/Active/Lock 3종)
 	if (ASC.IsValid())
 	{
 		if (CooldownTag.IsValid() && CooldownHandle.IsValid())
 			ASC->RegisterGameplayTagEvent(CooldownTag, EGameplayTagEventType::NewOrRemoved).Remove(CooldownHandle);
-		if (CastingTag.IsValid() && CastingHandle.IsValid())
-			ASC->RegisterGameplayTagEvent(CastingTag, EGameplayTagEventType::NewOrRemoved).Remove(CastingHandle);
 		
-		int32 Idx = 0;
+		int32 ActiveIdx = 0;
+		for (const FGameplayTag& Tag : ActiveTags)
+		{
+			if (ActiveHandles.IsValidIndex(ActiveIdx) && ActiveHandles[ActiveIdx].IsValid())
+				ASC->RegisterGameplayTagEvent(Tag, EGameplayTagEventType::NewOrRemoved).Remove(ActiveHandles[ActiveIdx]);
+			++ActiveIdx;
+		}
+		
+		int32 LockIdx = 0;
 		for (const FGameplayTag& LockTag : LockTags)
 		{
-			if (LockHandles.IsValidIndex(Idx) && LockHandles[Idx].IsValid())
-				ASC->RegisterGameplayTagEvent(LockTag, EGameplayTagEventType::NewOrRemoved).Remove(LockHandles[Idx]);
-			++Idx;
+			if (LockHandles.IsValidIndex(LockIdx) && LockHandles[LockIdx].IsValid())
+				ASC->RegisterGameplayTagEvent(LockTag, EGameplayTagEventType::NewOrRemoved).Remove(LockHandles[LockIdx]);
+			++LockIdx;
 		}
 	}
+	ActiveHandles.Reset();
 	LockHandles.Reset();
 	
 	ASC = InASC;
@@ -220,9 +231,9 @@ void UEPSkillSlotWidget::InitWithASC(UAbilitySystemComponent* InASC)
 		CooldownHandle = ASC->RegisterGameplayTagEvent(CooldownTag, EGameplayTagEventType::NewOrRemoved)
 			.AddUObject(this, &UEPSkillSlotWidget::OnCooldownTagChanged);
 	
-	if (CastingTag.IsValid())
-		CastingHandle = ASC->RegisterGameplayTagEvent(CastingTag, EGameplayTagEventType::NewOrRemoved)
-			.AddUObject(this, &UEPSkillSlotWidget::OnCastingTagChanged);
+	for (const FGameplayTag& Tag : ActiveTags)
+		ActiveHandles.Add(ASC->RegisterGameplayTagEvent(Tag, EGameplayTagEventType::NewOrRemoved)
+			.AddUObject(this, &UEPSkillSlotWidget::OnActiveTagChanged));
 	
 	for (const FGameplayTag& LockTag : LockTags)
 		LockHandles.Add(ASC->RegisterGameplayTagEvent(LockTag, EGameplayTagEventType::NewOrRemoved)
@@ -230,7 +241,7 @@ void UEPSkillSlotWidget::InitWithASC(UAbilitySystemComponent* InASC)
 	
 	// 바인딩 시점 초기 상태 반영 (리스폰 직후 등)
 	bCoolingDown = CooldownTag.IsValid() && ASC->HasMatchingGameplayTag(CooldownTag);
-	bCasting = CastingTag.IsValid() && ASC->HasMatchingGameplayTag(CastingTag);
+	bActive = ASC->HasAnyMatchingGameplayTags(ActiveTags);
 	bLocked = ASC->HasAnyMatchingGameplayTags(LockTags);
 	RecomputeState();
 }
@@ -241,9 +252,11 @@ void UEPSkillSlotWidget::OnCooldownTagChanged(const FGameplayTag Tag, int32 NewC
 	RecomputeState();
 }
 
-void UEPSkillSlotWidget::OnCastingTagChanged(const FGameplayTag Tag, int32 NewCount)
+void UEPSkillSlotWidget::OnActiveTagChanged(const FGameplayTag Tag, int32 NewCount)
 {
-	bCasting = NewCount > 0;
+	// ActiveTags가 여러 개일 수 있으므로(향후 스킬이 채널링+지속 태그를 동시에 쓸 경우 대비)
+	// 이 태그 하나의 NewCount만 보지 않고 전체를 다시 조회 — LockTags와 동일한 안전 패턴
+	bActive = ASC.IsValid() && ASC->HasAnyMatchingGameplayTags(ActiveTags);
 	RecomputeState();
 }
 
@@ -255,8 +268,8 @@ void UEPSkillSlotWidget::OnLockTagChanged(const FGameplayTag Tag, int32 NewCount
 
 void UEPSkillSlotWidget::RecomputeState()
 {
-	// 우선순위: 내가 시전 중 > 남 때문에 잠김 > 쿨타임 > 준비됨
-	if (bCasting)          ApplyState(EEPSkillSlotState::Casting);
+	// 우선순위: 내가 진행 중(채널링/지속) > 남 때문에 잠김 > 쿨타임 > 준비됨
+	if (bActive)           ApplyState(EEPSkillSlotState::Active);
 	else if (bLocked)      ApplyState(EEPSkillSlotState::Locked);
 	else if (bCoolingDown) ApplyState(EEPSkillSlotState::Cooldown);
 	else                   ApplyState(EEPSkillSlotState::Ready);
@@ -266,16 +279,17 @@ void UEPSkillSlotWidget::ApplyState(EEPSkillSlotState NewState)
 {
 	CurrentState = NewState;
 	
-	const bool bShowBar = (NewState == EEPSkillSlotState::Cooldown || NewState == EEPSkillSlotState::Casting);
+	const bool bShowBar = (NewState == EEPSkillSlotState::Cooldown || NewState == EEPSkillSlotState::Active);
 	if (CooldownBar)
 		CooldownBar->SetVisibility(bShowBar ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
 	if (CooldownText)
 		CooldownText->SetVisibility(
 			NewState == EEPSkillSlotState::Cooldown ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
 	
-	if (NewState == EEPSkillSlotState::Casting && CooldownBar)
+	if (NewState == EEPSkillSlotState::Active && CooldownBar)
 	{
-		// 시전 중엔 애니메이션 없이 100%로 고정 — Tick에서 건드리지 않음(CurrentState 체크로 스킵)
+		// 진행 중엔 애니메이션 없이 100%로 고정 — Tick에서 건드리지 않음(CurrentState 체크로 스킵)
+		// (채널링이든 지속형 버프든 동일 — 남은 시간 숫자를 보여주지 않는다는 결정은 Heal 시절부터 유지)
 		CooldownBar->SetFillColorAndOpacity(SlotColorOrange);
 		CooldownBar->SetPercent(1.f);
 	}
@@ -293,7 +307,7 @@ void UEPSkillSlotWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTi
 {
 	Super::NativeTick(MyGeometry, InDeltaTime);
 	
-	// 남은 시간 쿼리는 Cooldown 상태에서만 필요 — Casting은 ApplyState에서 이미 100% 고정
+	// 남은 시간 쿼리는 Cooldown 상태에서만 필요 — Active는 ApplyState에서 이미 100% 고정
 	if (CurrentState != EEPSkillSlotState::Cooldown || !ASC.IsValid()) return;
 	
 	// 쿨타임 GE는 GrantedTags로 CooldownTag를 소유 → OwningTags 쿼리로 매칭
@@ -328,15 +342,21 @@ void UEPSkillSlotWidget::NativeDestruct()
 	{
 		if (CooldownTag.IsValid() && CooldownHandle.IsValid())
 			ASC->RegisterGameplayTagEvent(CooldownTag, EGameplayTagEventType::NewOrRemoved).Remove(CooldownHandle);
-		if (CastingTag.IsValid() && CastingHandle.IsValid())
-			ASC->RegisterGameplayTagEvent(CastingTag, EGameplayTagEventType::NewOrRemoved).Remove(CastingHandle);
 		
-		int32 Idx = 0;
+		int32 ActiveIdx = 0;
+		for (const FGameplayTag& Tag : ActiveTags)
+		{
+			if (ActiveHandles.IsValidIndex(ActiveIdx) && ActiveHandles[ActiveIdx].IsValid())
+				ASC->RegisterGameplayTagEvent(Tag, EGameplayTagEventType::NewOrRemoved).Remove(ActiveHandles[ActiveIdx]);
+			++ActiveIdx;
+		}
+		
+		int32 LockIdx = 0;
 		for (const FGameplayTag& LockTag : LockTags)
 		{
-			if (LockHandles.IsValidIndex(Idx) && LockHandles[Idx].IsValid())
-				ASC->RegisterGameplayTagEvent(LockTag, EGameplayTagEventType::NewOrRemoved).Remove(LockHandles[Idx]);
-			++Idx;
+			if (LockHandles.IsValidIndex(LockIdx) && LockHandles[LockIdx].IsValid())
+				ASC->RegisterGameplayTagEvent(LockTag, EGameplayTagEventType::NewOrRemoved).Remove(LockHandles[LockIdx]);
+			++LockIdx;
 		}
 	}
 	
@@ -344,7 +364,7 @@ void UEPSkillSlotWidget::NativeDestruct()
 }
 ```
 
-> 기존 코드 대비 바뀐 것: (1) `Percent` 공식이 `Remaining/Duration`(1→0)에서 `1 - Remaining/Duration`(0→1)로 뒤집힘 — WBP에서 `CooldownBar`의 **Fill Type을 Bottom to Top으로 설정**해야 "아래→위로 차오름"이 실제로 보인다. (2) 아이콘이 `Image`(BindWidget 아님)에서 `SkillIcon`(BindWidget)으로 바뀜 — 잠금 시 빨강으로 틴트해야 하므로 C++이 접근해야 한다. 텍스처 자체는 여전히 슬롯 인스턴스별로 WBP에서 지정.
+> 기존 코드 대비 바뀐 것: (1) `Percent` 공식이 `Remaining/Duration`(1→0)에서 `1 - Remaining/Duration`(0→1)로 뒤집힘 — WBP에서 `CooldownBar`의 **Fill Type을 Bottom to Top으로 설정**해야 "아래→위로 차오름"이 실제로 보인다. (2) 아이콘이 `Image`(BindWidget 아님)에서 `SkillIcon`(BindWidget)으로 바뀜 — 잠금 시 빨강으로 틴트해야 하므로 C++이 접근해야 한다. 텍스처 자체는 여전히 슬롯 인스턴스별로 WBP에서 지정. (3) `CastingTag`(단일)가 `ActiveTags`(복수 컨테이너)로 바뀜 — 채널링 태그와 지속형 태그를 동시에 여러 개 감시할 수 있도록 `LockTags`와 동일한 패턴으로 통일.
 
 **verify:** 빌드 통과. (동작 확인은 Step 7 이후 PIE에서)
 
@@ -377,8 +397,10 @@ protected:
 	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
 	virtual void NativeDestruct() override;
 	
-	// 지금은 Heal의 State.Healing 하나만 지정. 향후 다른 채널링 스킬도 링에 띄우려면
-	// 슬롯처럼 여러 태그를 감시하도록 확장 필요 — 지금은 범위 밖 (Heal 하나뿐이라 과설계 방지)
+	// 공용 State.Casting을 지정 — 스킬별 고유 태그(State.Healing 등)가 아니다.
+	// 상호잠금 매커니즘상 한 번에 한 스킬만 이 태그를 가질 수 있고, 채널링형 스킬은 어차피
+	// 자기 GE_CastingClass에 이 태그를 넣어야 상호잠금이 동작하므로(이미 필수),
+	// 이 위젯은 스킬이 몇 개든 코드/설정 변경 없이 그대로 재사용된다
 	UPROPERTY(EditAnywhere, Category = "Cast")
 	FGameplayTag ChannelTag;
 	
@@ -813,7 +835,7 @@ void AEPPlayerController::Client_OnKill_Implementation(const FString& VictimName
  └─ RingImage (Image) — Brush의 Image에 방사형 마스크 머티리얼(또는 M.I.) 지정 (§4 참고, 별도 아트 작업)
 ```
 
-- Details → Cast → `ChannelTag` = `State.Healing`, `ProgressParamName`은 머티리얼의 스칼라 파라미터 이름과 일치시킴 (기본값 `Progress`).
+- Details → Cast → `ChannelTag` = `State.Casting`(공용 — 스킬별 고유 태그 아님), `ProgressParamName`은 머티리얼의 스칼라 파라미터 이름과 일치시킴 (기본값 `Progress`).
 
 ### WBP_HUD (부모: `EPHUDWidget`)
 
@@ -825,13 +847,13 @@ CanvasPanel 기준 배치 (오버워치 레이아웃):
 | `HealthText` | TextBlock | HealthBar 위/안 | `100 / 100` |
 | `AmmoText` | TextBlock | 하단 우 | `30 / 30`, 큰 폰트 |
 | `ReloadingText` | TextBlock | AmmoText 옆 | 텍스트 "RELOADING", 초기 Collapsed |
-| `DashSlot` | WBP_SkillSlot | 하단 중앙-우 | CooldownTag=`Cooldown.Skill.Dash`, CastingTag=(비움), LockTags={`State.Casting`} |
-| `HealSlot` | WBP_SkillSlot | DashSlot 옆 | CooldownTag=`Cooldown.Skill.Heal`, CastingTag=`State.Healing`, LockTags={`State.Casting`} |
-| `ShieldSlot` | WBP_SkillSlot | HealSlot 옆 | CooldownTag=`Cooldown.Skill.Shield`, CastingTag=(비움), LockTags={`State.Casting`} |
-| `CastGauge` | WBP_CastGauge | 화면 정중앙 | ChannelTag=`State.Healing` |
+| `DashSlot` | WBP_SkillSlot | 하단 중앙-우 | CooldownTag=`Cooldown.Skill.Dash`, ActiveTags={} (비움), LockTags={`State.Casting`} |
+| `HealSlot` | WBP_SkillSlot | DashSlot 옆 | CooldownTag=`Cooldown.Skill.Heal`, ActiveTags={`State.Healing`}, LockTags={`State.Casting`} |
+| `ShieldSlot` | WBP_SkillSlot | HealSlot 옆 | CooldownTag=`Cooldown.Skill.Shield`, ActiveTags={`State.Shielded`}, LockTags={`State.Casting`} |
+| `CastGauge` | WBP_CastGauge | 화면 정중앙 | ChannelTag=`State.Casting` |
 | `TimerText` | TextBlock | 상단 중앙 | `10:00` |
 
-> 슬롯 인스턴스의 CooldownTag/CastingTag/LockTags는 디자이너에서 해당 슬롯 선택 → Details 패널 → Skill 카테고리에서 지정. **`LockTags`는 세 슬롯 전부 동일하게 `{State.Casting}`** — 개정 전엔 Dash/ShieldSlot만 LockTags를 채우고 HealSlot은 비워야 했지만(자기 잠금 방지), 지금은 우선순위(Casting > Locked)가 그 문제를 대신 해결해주므로 모든 슬롯이 같은 값을 써도 안전하다. `CastingTag`만 여전히 스킬마다 다름(즉발 스킬은 비움).
+> 슬롯 인스턴스의 CooldownTag/ActiveTags/LockTags는 디자이너에서 해당 슬롯 선택 → Details 패널 → Skill 카테고리에서 지정. **`LockTags`는 세 슬롯 전부 동일하게 `{State.Casting}`** — 개정 전엔 Dash/ShieldSlot만 LockTags를 채우고 HealSlot은 비워야 했지만(자기 잠금 방지), 지금은 우선순위(Active > Locked)가 그 문제를 대신 해결해주므로 모든 슬롯이 같은 값을 써도 안전하다. `ActiveTags`는 여전히 스킬마다 다름 — **Dash만 비워둔다**(진짜 순간적이라 지속 상태 자체가 없음). Shield는 즉발(CastTime=0)이지만 발동 후 5초간 `State.Shielded`가 유지되므로 **비워두면 안 된다** — 이 오버레이가 이번 재설계로 채워진 부분이다.
 > 크로스헤어는 기존 WBP 그대로 (별도 위젯, 이번 단계 무변경).
 
 ### BP_EPPlayerController
@@ -849,8 +871,9 @@ CanvasPanel 기준 배치 (오버워치 레이아웃):
 - [ ] 피격 → 피격자 본인 화면의 HealthBar/HealthText 즉시 갱신
 - [ ] 발사 → 탄약 감소 실시간 반영 (LocalPredicted라 즉시)
 - [ ] 재장전 → RELOADING 표시 → 종료 시 사라짐 + 탄약 최대치 복구
-- [ ] Dash/Shield 사용 → 사용 직후 오버레이 아래→위로 차오르기 시작(회복 진행도) → 완료 시 사라짐
-- [ ] Heal 시전 시작 → HealSlot 전체가 고정 주황으로 덮임(애니메이션 없음) + 화면 중앙 링 게이지 등장(1→0 감소) + Dash/ShieldSlot이 빨강(테두리+면)으로 잠김 + 픽토그램도 빨강
+- [ ] Dash 사용 → 사용 직후 오버레이 아래→위로 차오르기 시작(회복 진행도) → 완료 시 사라짐 (지속 상태 없음, 즉시 쿨타임)
+- [ ] Shield 사용 → 방벽 지속 5초간 ShieldSlot 전체가 고정 주황으로 덮임(Active, 애니메이션 없음) + 이 5초 동안 Dash/Heal은 잠기지 않고 자유롭게 사용 가능(State.Casting이 아니므로) → 5초 종료 시 자동으로 쿨타임 차오름 오버레이로 전환
+- [ ] Heal 시전 시작 → HealSlot 전체가 고정 주황으로 덮임(Active, 애니메이션 없음) + 화면 중앙 링 게이지 등장(1→0 감소) + Dash/ShieldSlot이 빨강(테두리+면)으로 잠김 + 픽토그램도 빨강
 - [ ] Heal 시전 중 Dash/Shield 입력 → 활성화 자체가 안 됨(서버 CommitAbility 로그도 없음), 잠금 UI와 실제 차단이 일치
 - [ ] Heal 성공 → 체력 +30 반영 (100 초과 안 함), HealSlot이 쿨타임(차오르는 주황)으로 전환, Dash/ShieldSlot 잠금 즉시 해제
 - [ ] Heal 채널링 중 피격 취소 → State.Healing 즉시 해제 → HealSlot·중앙 게이지·Dash/ShieldSlot 잠금이 전부 즉시 원상복귀, 쿨타임 오버레이 안 뜸
@@ -877,8 +900,10 @@ CanvasPanel 기준 배치 (오버워치 레이아웃):
 | `GetActiveEffectsTimeRemainingAndDuration` Pair 순서 | `Key = 남은 시간`, `Value = 전체 Duration` (엔진 `GameplayAbility.cpp:1206` 사용례 기준) |
 | 쿨타임 오버레이가 아래→위로 안 차오름 | WBP에서 `CooldownBar`의 Fill Type을 Bottom to Top으로 안 바꾼 경우 — 기본값(Left to Right)이면 옆으로 채워짐. C++ Percent 공식(1 - Remaining/Duration)과 Fill Type 둘 다 맞아야 함 |
 | 슬롯이 빨강으로 안 바뀜 | `LockTags`(FGameplayTagContainer)에 `State.Casting`을 안 넣은 경우 — `CooldownTag`(FGameplayTag 단일)와 헷갈리기 쉬움, 타입이 다름. 세 슬롯 전부 동일하게 `{State.Casting}`이어야 함(더 이상 스킬마다 다른 값 아님) |
-| Heal 슬롯이 자기 자신을 잠금 상태로 표시 | `RecomputeState()`의 우선순위(`Casting > Locked`)가 안 지켜진 경우 — `bCasting`을 `bLocked`보다 먼저 체크해야 함. 정상 구현이면 `LockTags`에 `State.Casting`이 있어도 자기 시전 중엔 Casting이 항상 이김 |
+| Heal 슬롯이 자기 자신을 잠금 상태로 표시 | `RecomputeState()`의 우선순위(`Active > Locked`)가 안 지켜진 경우 — `bActive`를 `bLocked`보다 먼저 체크해야 함. 정상 구현이면 `LockTags`에 `State.Casting`이 있어도 자기 진행 중엔 Active가 항상 이김 |
+| Shield 사용 중인데 오렌지 오버레이가 안 뜸 | `ShieldSlot`의 `ActiveTags`가 비어있는 경우 — Dash와 똑같이 취급해서 비워두기 쉬운데, Dash는 진짜 순간적이라 지속 상태가 없지만 Shield는 발동 후 `State.Shielded`가 5초간 유지되는 지속형이라 `ActiveTags={State.Shielded}`를 반드시 채워야 함 |
 | 새 스킬 추가 후 잠금이 하나도 안 걸림 | 새 GA를 `UEPGA_Skill_Base` 대신 `UGameplayAbility`를 직접 상속해서 만든 경우 — `State.Casting` 부여/차단이 전부 베이스 클래스 책임이라 직접 상속하면 이 메커니즘이 아예 없음 (`04_GAS_07_Skills.md` Step 8-4 참고) |
+| 새 채널링 스킬을 추가했는데 중앙 게이지에 안 뜸 | `CastGaugeWidget`의 `ChannelTag`를 그 스킬만의 고유 태그로 착각해서 설정한 경우 — `ChannelTag`는 항상 공용 `State.Casting`이어야 자동으로 모든 채널링형 스킬을 커버함. 새 스킬의 `GE_CastingClass`에 `State.Casting`을 GrantedTags로 넣기만 하면 위젯은 그대로 재사용됨 |
 | 중앙 게이지가 항상 안 보임 | `RingImage`의 브러시 리소스에 머티리얼(인스턴스)을 지정 안 해서 `GetDynamicMaterial()`이 null 반환 — WBP 디자이너에서 Brush → Image에 머티리얼 자산을 먼저 넣어야 함 |
 | 힐 도중 `RemoveActiveGameplayEffect called without Authority` 경고 | `EndAbility`가 authority 체크 없이 호출 — 개정판에선 `UEPGA_Skill_Base::EndAbility`가 이미 가드 처리 (`04_GAS_07_Skills.md` Step 8-4 참고, HUD 문제 아님) |
 
