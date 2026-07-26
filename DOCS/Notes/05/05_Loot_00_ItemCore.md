@@ -7,16 +7,19 @@
 
 ## 목표
 
-`ItemId → Definition → Instance` 경로를 **처음으로 실제로 돌게 만든다.** 게임플레이 기능은 하나도 추가하지 않는다. 눈에 보이는 결과가 없는 대신 콘솔 커맨드 하나로 독립 검증된다.
+`ItemId → Definition → FEPItemState` 경로를 **처음으로 실제로 돌게 만든다.** 게임플레이 기능은 하나도 추가하지 않는다. 눈에 보이는 결과가 없는 대신 콘솔 커맨드 하나로 독립 검증된다.
 
 **완료 조건**
 
-- [ ] `EP.Item.Make Weapon_AK74_HitScan` → `UEPWeaponInstance`가 생성되고 `CurrentAmmo == 30`으로 초기화됨
-- [ ] `EP.Item.Make Resume` → **`UEPItemInstance`**(기본 클래스)가 생성됨 — `DA_Resume` 필요 (00-8)
-- [ ] `EP.Item.Make Ammo_762` → 스택 아이템이므로 **인스턴스를 만들지 않고** `INDEX_NONE` 반환
-- [ ] `EP.Item.Dump` → `DataCache=7  Definitions=4  LiveInstances=0`
+- [ ] `EP.Item.State Weapon_AK74_HitScan` → `Charges=30 Durability=100` (무기 오버라이드 경로)
+- [ ] `EP.Item.State AmmoBox_545` → `Charges=100` (기본 클래스 + `InitialCharges` 경로)
+- [ ] `EP.Item.State Resume` → `Charges=0` (기본값 그대로)
+- [ ] `EP.Item.Dump` → `DataCache=9  Definitions=9`
 - [ ] 에디터에서 DT ↔ Definition 참조를 일부러 어긋나게 하면 `IsDataValid()`가 잡아냄
-- [ ] **데디케이티드 서버로 실행해도 `EP.Item.Dump`가 `Definitions=4`** — Definition 상주가 넷모드와 무관함을 확인
+- [ ] **데디케이티드 서버로 실행해도 `Definitions=9`** — Definition 상주가 넷모드와 무관함을 확인
+- [ ] `UEPItemInstance` / `UEPWeaponInstance` 파일이 프로젝트에서 사라졌고 빌드가 통과한다
+
+> **★ 개체 상태가 `UObject`가 아니라 `USTRUCT`다.** 이 결정의 근거와 검증 기록은 `05_Loot_DOCS.md` §4-1 / `05_Loot_REVIEW_StructMigration.md`. **아이템은 스택되지 않으며**, 인벤토리 용량은 칸 수 합산이다 (§4-6).
 
 ---
 
@@ -37,9 +40,33 @@ return FPrimaryAssetId(TEXT("WeaponDef"), GetFName());   // ← 서브클래스�
 
 ---
 
-## 00-1. `UEPItemDefinition` — 팩토리와 검증
+## 00-1. `FEPItemState` — 개체 상태는 값 타입이다
 
-### 핵심 설계: `CreateInstance`는 non-virtual, `GetInstanceClass`만 virtual
+```cpp
+// EPTypes.h (또는 EPItemData.h 옆)
+USTRUCT(BlueprintType)
+struct FEPItemState
+{
+    GENERATED_BODY()
+
+    // 이 개체가 담고 있는 소모 단위
+    //   무기      : 장전된 발수        탄약상자 : 남은 발수
+    //   현금뭉치  : 금액               소모품   : 남은 사용 횟수
+    UPROPERTY(BlueprintReadWrite, Category = "Item")
+    int32 Charges = 0;
+
+    UPROPERTY(BlueprintReadWrite, Category = "Item")
+    float Durability = 100.f;
+};
+```
+
+`Outer`도, 핸들도, 소유 서브시스템도, 수명 관리도 없다. 인벤토리 엔트리(Step 03)와 픽업(Step 01)에 **값으로 내장**되고, 이관은 대입 한 줄이다.
+
+> **필드 이름이 `Ammo`가 아닌 이유:** 같은 값을 탄약상자·현금뭉치·소모품이 공유한다. 특히 **스택이 없으므로 돈을 인벤토리 아이템으로 두려면 현금뭉치 하나가 금액을 들고 있어야** 하고(안 그러면 10,000원이 엔트리 10,000개가 된다), 그 필드가 `Ammo`면 안 된다.
+
+---
+
+## 00-2. `UEPItemDefinition` — 상태 초기화와 검증
 
 ```cpp
 // EPItemDefinition.h
@@ -65,11 +92,8 @@ public:
     UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Item|GAS")
     TSubclassOf<UGameplayAbility> GrantedAbility;
 
-    // 이 Definition이 만들 인스턴스 클래스 — 서브클래스는 이것만 오버라이드한다
-    virtual TSubclassOf<UEPItemInstance> GetInstanceClass() const;
-
-    // 실제 생성. 오버라이드하지 않는다 (const가 아니다 — 아래 참조)
-    UEPItemInstance* CreateInstance(UObject* Outer);
+    // ★ 서브클래스가 오버라이드하는 유일한 지점
+    virtual void InitState(const FEPItemData& Data, FEPItemState& State) const;
 
     virtual FPrimaryAssetId GetPrimaryAssetId() const override;
 
@@ -81,25 +105,42 @@ public:
 
 ```cpp
 // EPItemDefinition.cpp
-TSubclassOf<UEPItemInstance> UEPItemDefinition::GetInstanceClass() const
+void UEPItemDefinition::InitState(const FEPItemData& Data, FEPItemState& State) const
 {
-    return UEPItemInstance::StaticClass();
-}
-
-UEPItemInstance* UEPItemDefinition::CreateInstance(UObject* Outer)
-{
-    const TSubclassOf<UEPItemInstance> Class = GetInstanceClass();
-    if (!Class) return nullptr;
-
-    UEPItemInstance* Instance = NewObject<UEPItemInstance>(Outer, Class);
-    Instance->InitFromDefinition(this);
-    return Instance;
+    State.Charges = Data.InitialCharges;      // ★ DT에서 온다
 }
 ```
 
-**왜 `CreateInstance`를 virtual로 두지 않는가:** virtual로 두면 서브클래스마다 `NewObject` + `InitFromDefinition` 호출을 복붙하게 되고, 나중에 생성 경로에 공통 처리(로그, 통계, GUID 발급)를 넣을 때 전부 고쳐야 한다. **생성 절차는 한 곳, 타입 결정만 분기**가 맞다.
+**호출부는 아이템 타입을 전혀 모른다.**
 
-> **왜 `const`를 붙이지 않는가:** `const`로 두면 `InitFromDefinition(this)`가 `const UEPItemDefinition*`를 넘기게 되고, 인스턴스가 `CachedDefinition`(비const)에 담으려면 `const_cast`가 필요해진다. 팩토리가 논리적으로 const일 이유도 없으니 애초에 붙이지 않는다. `GetInstanceClass()`만 `const`로 남긴다.
+```cpp
+FEPItemState NewState;
+Def->InitState(*Row, NewState);        // ← 이 한 줄이 전부
+```
+
+`NewObject`도, `Outer` 결정도, 핸들 발급도, 실패 경로도 없다. 새 아이템 종류를 추가하는 비용은 **Definition 서브클래스 하나**이고 기존 코드 수정은 0이다.
+
+### ★ 필드를 DT에 둘지 DA에 둘지 — 원칙 두 줄
+
+> **① 여러 아이템을 표로 나란히 놓고 조정하는 값은 `FEPItemData`(DataTable).**
+> **② 그 아이템 한 종류에만 의미 있는 것 — 에셋 참조, `virtual` 동작, 타입 전용 필드 — 은 `UEPItemDefinition`(DataAsset).**
+
+판정선은 **"모든 아이템이 값을 갖는가"** 다.
+
+| 필드 | 위치 | 근거 |
+|---|---|---|
+| `SlotSize` / `SellPrice` / `Rarity` / `MaxStack` / `bFungible` | **DT** | 전형적인 밸런싱 열 |
+| **`InitialCharges`** | **DT** | 탄약상자 100 / 현금뭉치 10000 / 붕대 1 — 표로 조정한다 |
+| **`ContainerCapacity`** | **DT** | 소형 12 / 중형 20 / 대형 30 — 동상 |
+| `WorldMesh` / `Icon` / `GrantedAbility` | DA | 에셋 참조 |
+| `InitState()` | DA | `virtual` |
+| `MaxAmmo` | DA (Weapon) | **무기 전용.** DT에 넣으면 나머지 행이 전부 빈칸이 된다 |
+
+`InitialCharges`/`ContainerCapacity`는 **전부 값을 갖는다**(대부분 0). `MaxAmmo`는 무기만 갖는다. 그게 판정선이고, 이 배치면 원칙에 예외가 없다.
+
+> **비용은 인자 하나뿐이다.** `InitState` 호출부는 `MakeItemState` 하나이고(00-6) 거기서 Row와 Definition을 이미 둘 다 들고 있다.
+
+> **두 계층을 유지하는 이유:** 합치면 양방향 참조 동기화·`IsDataValid` 오버라이드·캐시 2개·`FindData` null 무증상 버그가 전부 사라진다. 그럼에도 유지하는 것은 **아이템이 수십 종이 되면 밸런싱 표(CSV·일괄 수정·diff)가 확실히 낫기 때문**이다. DataAsset은 그중 아무것도 안 된다.
 
 ### `IsDataValid` — 양방향 참조 검증
 
@@ -146,7 +187,7 @@ EDataValidationResult UEPItemDefinition::IsDataValid(FDataValidationContext& Con
 
 ---
 
-## 00-2. `UEPWeaponDefinition` — 3가지 변경
+## 00-3. `UEPWeaponDefinition` — 3가지 변경
 
 ```cpp
 // 1) GetPrimaryAssetId() 오버라이드 제거 (선언·정의 둘 다)      ← 00-0
@@ -155,89 +196,45 @@ EDataValidationResult UEPItemDefinition::IsDataValid(FDataValidationContext& Con
 UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Combat")
 int32 MaxAmmo = 30;        // was: uint8
 
-// 3) 인스턴스 클래스만 선언
-virtual TSubclassOf<UEPItemInstance> GetInstanceClass() const override
+// 3) 상태 초기화 오버라이드
+virtual void InitState(const FEPItemData& Data, FEPItemState& State) const override
 {
-    return UEPWeaponInstance::StaticClass();
+    State.Charges = MaxAmmo;       // 새로 만든 무기는 만탄. Data.InitialCharges를 안 쓴다
 }
 ```
 
-**`MaxAmmo`를 `int32`로 바꾸는 이유:** 지금 `uint8`(Definition) → `int32`(Instance) → `float`(GAS 어트리뷰트) 3중 캐스팅이 낀다. Step 05의 주입/write-back 경로가 이 위를 왕복하므로 최소한 정수 쪽은 통일한다. 폭 확대라 기존 DataAsset 값은 손실 없이 유지된다.
+`InitialCharges`가 아니라 `MaxAmmo`를 쓴다 — 무기는 이미 그 값을 갖고 있으므로 두 곳에 적게 하지 않는다.
+
+**`MaxAmmo`를 `int32`로 바꾸는 이유:** 지금 `uint8`(Definition) → `int32`(`Charges`) → `float`(GAS 어트리뷰트) 3중 캐스팅이 낀다. Step 05의 주입/write-back 경로가 이 위를 왕복하므로 최소한 정수 쪽은 통일한다. 폭 확대라 기존 DataAsset 값은 손실 없이 유지된다.
 
 > `EPCombatComponent.cpp:177-178`의 `static_cast<float>(NewWeapon->WeaponDef->MaxAmmo)`는 `int32`로 바뀌어도 그대로 컴파일된다. 이 줄의 **제거는 Step 05**다 — 지금 건드리지 않는다.
 
 ---
 
-## 00-3. `UEPItemInstance` — 3개 제거, 1개 추가
+## 00-4. ★ `UEPItemInstance` / `UEPWeaponInstance` — 파일째 삭제한다
 
-```cpp
-// EPItemInstance.h
-UCLASS(BlueprintType)
-class EMPLOYMENTPROJ_API UEPItemInstance : public UObject
-{
-    GENERATED_BODY()
-
-public:
-    // DB 영속용. 복제·RPC에는 UEPItemInstanceSubsystem의 int32 핸들을 쓴다 (§4-1)
-    UPROPERTY(BlueprintReadOnly, Category = "Item")
-    FGuid InstanceId;
-
-    UPROPERTY(BlueprintReadOnly, Category = "Item")
-    FName ItemId;
-
-    UPROPERTY()
-    int32 SchemaVersion = 1;
-
-    UPROPERTY(Transient)
-    TObjectPtr<UEPItemDefinition> CachedDefinition;
-
-    virtual void InitFromDefinition(UEPItemDefinition* Definition);
-};
+```
+Public/Data/EPItemInstance.h      Private/Data/EPItemInstance.cpp
+Public/Data/EPWeaponInstance.h    Private/Data/EPWeaponInstance.cpp
 ```
 
-| 제거 | 이유 |
+**호출처가 0이므로 삭제 비용이 없다.** 이 클래스들이 담고 있던 것과 그 행선지:
+
+| 기존 | 행선지 |
 |---|---|
-| `Quantity` | 수량의 진실은 `FEPInventoryEntry::Quantity`(인벤토리) 또는 `AEPPickup::Quantity`(월드) **하나뿐**이다. 여기 남겨두면 §4-8의 "탄약의 진실이 두 곳" 문제가 스택에서 그대로 재발한다 |
-| `IsSupportedForNetworking()` | 인스턴스는 복제하지 않기로 확정했다(§4-6). `return true`가 남아 있으면 "복제되는 줄 알았다"는 오해의 씨앗이 된다 |
-| `static CreateInstance()` | Definition의 팩토리로 대체 (00-1) |
+| `UEPWeaponInstance::CurrentAmmo` | `FEPItemState::Charges` |
+| `UEPWeaponInstance::Durability` | `FEPItemState::Durability` |
+| `UEPItemInstance::ItemId` | `FEPInventoryEntry::ItemId` / `AEPPickup::ItemId` |
+| `UEPItemInstance::CachedDefinition` | `UEPItemDefinitionSubsystem::FindDefinition(ItemId)` — O(1) 조회라 캐시할 이유가 없다 |
+| `UEPItemInstance::Quantity` | **없어진다.** 스택이 없다 (§4-1) |
+| `UEPItemInstance::InstanceId` (FGuid) | **없어진다.** 읽는 코드가 없고, DB 영구 식별자는 저장 시점에 발급한다 |
+| `UEPItemInstance::SchemaVersion` | **없어진다.** 아이템이 아니라 **세이브 포맷의 속성**이다 — `USaveGame`/DB 행 봉투에 하나만 둔다 |
+| `UEPItemInstance::IsSupportedForNetworking()` | **없어진다.** 복제할 UObject 자체가 없다 |
+| `static CreateInstance()` / `CreateWeaponInstance()` | Definition의 `InitState()` (00-2) |
 
-```cpp
-// EPItemInstance.cpp
-void UEPItemInstance::InitFromDefinition(UEPItemDefinition* Definition)
-{
-    if (!Definition) return;
-    InstanceId       = FGuid::NewGuid();
-    ItemId           = Definition->ItemId;
-    CachedDefinition = Definition;
-}
-```
+> **`CachedDefinition`이 사라지는 것이 이 전환의 축소판이다.** 그 필드는 "인스턴스가 UObject라서 뭔가를 들고 있어야 한다"는 사실 때문에 존재했지, 성능이나 정합성 때문이 아니었다. 조회를 서브시스템 한 곳으로 모으면 각 개체가 참조를 들 이유가 없어진다.
 
----
-
-## 00-4. `UEPWeaponInstance`
-
-```cpp
-// EPWeaponInstance.h — static CreateWeaponInstance() 제거
-UPROPERTY(BlueprintReadWrite, Category = "Weapon")
-int32 CurrentAmmo = 0;
-
-UPROPERTY(BlueprintReadWrite, Category = "Weapon")
-float Durability = 100.f;
-
-virtual void InitFromDefinition(UEPItemDefinition* Definition) override;
-```
-
-```cpp
-// EPWeaponInstance.cpp
-void UEPWeaponInstance::InitFromDefinition(UEPItemDefinition* Definition)
-{
-    Super::InitFromDefinition(Definition);
-    if (const UEPWeaponDefinition* WeaponDef = Cast<UEPWeaponDefinition>(Definition))
-        CurrentAmmo = WeaponDef->MaxAmmo;      // 새로 만든 무기는 만탄
-}
-```
-
-> `Cast<>`가 여기 한 번 나오지만 문제없다. **자기 Definition 타입을 아는 건 인스턴스 자신뿐**이고, 이 캐스트는 인벤토리·픽업·자판기로 번지지 않는다. §4-9가 막으려던 건 "호출부의 타입 분기"이지 "구현부의 다운캐스트"가 아니다.
+> **`UEPItemInstanceSubsystem`은 만들지 않는다.** 이전 설계에서 이 서브시스템의 유일한 존재 이유는 인스턴스의 `Outer` 문제를 푸는 것이었다 — 소유할 UObject가 없으면 소유자도 필요 없다.
 
 ---
 
@@ -337,7 +334,7 @@ void UEPItemDefinitionSubsystem::LoadAllDefinitions()
 
 `BuildDefinitionCache()`는 로드된 에셋을 `ItemId → Definition`으로 담는다. 로드된 에셋의 `ItemId` 필드를 키로 쓰되, `DataCache`에 없는 `ItemId`는 경고를 남긴다. **`DefinitionCache`가 비었으면 에러 로그를 남긴다** — 조용히 0개로 진행하는 것이 함정 #2의 증상이다.
 
-**왜 소프트 참조로 지연 로드하지 않는가:** 픽업 획득은 RPC 응답 안에서 성패가 결정돼야 하는 **동기 경로**인데, `Definition->CreateInstance()`는 Definition이 메모리에 있어야 호출된다. 로드를 기다리는 사이 "줍기 성공/실패"를 유보할 수 없다. 반면 `WorldMesh`/`Icon`은 지연이 허용되므로 소프트로 남긴다 (§4-1).
+**왜 소프트 참조로 지연 로드하지 않는가:** 픽업 획득은 RPC 응답 안에서 성패가 결정돼야 하는 **동기 경로**인데, `Definition->InitState()`도 `SlotSize` 조회를 통한 칸 여유 판정(§4-6)도 Definition이 메모리에 있어야 한다. 로드를 기다리는 사이 "줍기 성공/실패"를 유보할 수 없다. 반면 `WorldMesh`/`Icon`은 지연이 허용되므로 소프트로 남긴다 (§4-1).
 
 Definition은 수치·참조만 담은 메타데이터라 개당 수 KB다. 수백 개여도 상주 비용이 문제되지 않는다.
 
@@ -345,76 +342,45 @@ Definition은 수치·참조만 담은 메타데이터라 개당 수 KB다. 수�
 
 ---
 
-## 00-6. `UEPItemInstanceSubsystem` (World, 서버 전용)
+## 00-6. 아이템 생성 헬퍼 — 서브시스템이 아니라 함수 하나
+
+새 아이템을 만드는 경로(스포너, 기본 지급, 자판기)가 공유할 것은 **함수 하나**다.
 
 ```cpp
-UCLASS()
-class EMPLOYMENTPROJ_API UEPItemInstanceSubsystem : public UWorldSubsystem
+// UEPItemDefinitionSubsystem
+// 반환: 성공 여부. 실패 시 State는 건드리지 않는다
+bool MakeItemState(FName ItemId, FEPItemState& OutState) const
 {
-    GENERATED_BODY()
-
-public:
-    // 반환: 유효 핸들, 또는 INDEX_NONE(스택 아이템이라 인스턴스를 만들지 않음 / 실패)
-    int32 CreateInstance(FName ItemId);
-
-    UEPItemInstance* Find(int32 Handle) const;
-    void Destroy(int32 Handle);
-
-private:
-    UPROPERTY()
-    TMap<int32, TObjectPtr<UEPItemInstance>> Instances;   // ★ 유일한 강참조
-
-    int32 NextHandle = 1;
-};
-```
-
-### ★ 상태 없는 아이템은 인스턴스를 만들지 않는다
-
-```cpp
-int32 UEPItemInstanceSubsystem::CreateInstance(FName ItemId)
-{
-    checkf(GetWorld()->GetNetMode() != NM_Client,
-           TEXT("아이템 인스턴스는 서버에서만 생성된다."));
-
-    const UEPItemDefinitionSubsystem* Defs = /* GameInstance에서 획득 */;
-    const FEPItemData* Data = Defs->FindData(ItemId);
-    if (!Data) return INDEX_NONE;
-
-    // 스택 아이템(탄약·붕대·잡템)은 개체 상태가 없다 → 인스턴스 자체를 만들지 않는다
-    if (Data->MaxStack > 1) return INDEX_NONE;
-
-    UEPItemDefinition* Def = Defs->FindDefinition(ItemId);
-    if (!Def)
+    const FEPItemData*       Row = FindData(ItemId);
+    const UEPItemDefinition* Def = FindDefinition(ItemId);
+    if (!Row || !Def)
     {
-        // 비스택 아이템인데 Definition이 없다 = 에셋 누락. 조용히 넘기면 안 된다
-        UE_LOG(LogTemp, Error, TEXT("[ItemCore] '%s'는 MaxStack==1인데 Definition 에셋이 없습니다."),
-               *ItemId.ToString());
-        return INDEX_NONE;
+        UE_LOG(LogTemp, Error, TEXT("[ItemCore] '%s' — Row=%s Definition=%s"),
+               *ItemId.ToString(), Row ? TEXT("OK") : TEXT("없음"),
+               Def ? TEXT("OK") : TEXT("없음"));
+        return false;
     }
-
-    UEPItemInstance* Instance = Def->CreateInstance(this);   // Outer = 서브시스템
-    if (!Instance) return INDEX_NONE;
-
-    const int32 Handle = NextHandle++;
-    Instances.Add(Handle, Instance);
-    return Handle;
+    Def->InitState(*Row, OutState);      // ★ Row와 Definition을 둘 다 여기서 들고 있다
+    return true;
 }
 ```
 
-| 조건 | 인스턴스 | 핸들 |
+> **`InitState`가 `FEPItemData`를 받는 비용이 여기서 0인 이유** — 이 함수가 유일한 호출부이고 조회를 이미 둘 다 한다. 그래서 `InitialCharges`를 DT로 옮기는 데 드는 것이 **인자 하나**뿐이다 (00-2).
+
+- **넷모드 가드가 필요 없다.** 값을 채우는 순수 함수라 클라에서 불러도 아무 부작용이 없다. 권한 검사는 이 값을 **어디에 쓰는가**(서버 인벤토리 삽입 / 픽업 스폰)에서 이미 하고 있다
+- 이전 설계의 `checkf(NetMode != NM_Client)`가 필요했던 이유는 **서버·클라의 인스턴스 그래프가 갈라지는 것**을 막기 위해서였다. 갈라질 그래프가 없어졌다
+
+### ★ 모든 아이템이 Definition을 가진다 — 예외 없음
+
+스택이 없어지면서 "상태 없는 아이템"이라는 범주가 사라졌다. 게다가 세 가지가 전부 Definition에만 있다.
+
+| 필요한 것 | 있는 곳 | 쓰는 곳 |
 |---|---|---|
-| `MaxStack > 1` (탄약·붕대·잡템) | 만들지 않는다 | `INDEX_NONE` |
-| `MaxStack == 1` (무기·방어구) | 만든다 | 유효 |
+| `WorldMesh` | Definition | 바닥 픽업 표시 (Step 01) |
+| `Icon` | Definition | 인벤토리 UI (Step 04) |
+| `InitState()` | Definition | 생성 전 경로 |
 
-**이 규칙이 사는 이유:** 스택 아이템의 인벤토리 엔트리는 순수 `(ItemId, Quantity)`가 되어 **병합은 정수 덧셈, 분할은 정수 뺄셈**으로 끝난다. 인스턴스를 지우거나 새로 만들 일이 없다. 비스택 아이템은 병합 자체가 불가능하므로 분할 문제가 생기지 않고, 잔탄·내구도 보존이 필요한 것도 이 경우뿐이다.
-
-> `INDEX_NONE`이 "실패"와 "인스턴스 불필요" 둘 다를 의미한다. 호출부(Step 03 `AddItem`)는 **`FindData()`로 이미 유효성을 확인한 뒤** 부르므로 혼동이 없다. 구분이 필요해지면 그때 `EEPCreateResult`를 도입한다 — 지금 넣으면 쓰지 않는 분기만 생긴다.
->
-> 다만 **"비스택인데 Definition이 없다"는 데이터 오류**이지 정상 흐름이 아니므로, 반환값으로 구분하는 대신 **에러 로그로 드러낸다.** 이게 없으면 `DA_Resume` 누락(함정 2d)이 무증상으로 지나간다.
-
-**Outer는 끝까지 서브시스템이다.** 인벤토리 → 픽업 → 인벤토리를 오가도 바뀌는 것은 "누가 그 핸들을 들고 있는가"뿐이고 `Rename()`은 일어나지 않는다 (§4-1).
-
-> **서버 전용 강제:** `UWorldSubsystem::ShouldCreateSubsystem`에서 넷모드로 거르는 방법은 **쓰지 않는다** — 서브시스템 생성 시점에 월드의 넷모드가 확정되지 않은 경우가 있다. 대신 위처럼 **API 진입점에서 `checkf`로 막는다.** 클라이언트에 객체가 존재하되 절대 쓰이지 않는 상태가 되고, 잘못 부르면 개발 빌드에서 즉시 터진다.
+따라서 `Definition`이 없는 `ItemId`는 **정상 흐름이 아니라 에셋 누락**이고, 위 함수는 그것을 에러 로그로 드러낸다. 조용히 기본값으로 넘어가면 나중 Step에서 "메시가 안 보인다"로 나타나 원인 추적이 길어진다.
 
 ---
 
@@ -450,46 +416,51 @@ public:
 
 ---
 
-## 00-8. `DT_Items`에 스택 아이템 행 추가
+## 00-8. `DT_Items`에 무기 이외 행 추가 + **각각 Definition 에셋**
 
-현재 3행이 **전부 무기**다(`Weapon_AK74_HitScan` / `FastProj` / `SlowProj`, 모두 `EEPItemType::Weapon`, `Rarity::Rare`). 이 상태로는 00-6의 `MaxStack > 1` 분기를 **검증할 대상이 없다.**
+현재 3행이 **전부 무기**다(`Weapon_AK74_HitScan` / `FastProj` / `SlowProj`, 모두 `EEPItemType::Weapon`, `Rarity::Rare`, `SlotSize` 미검증). 이 상태로는 기본 `InitState()` 경로도, 칸 수 합산도 **검증할 대상이 없다.**
 
-최소 이만큼 추가한다.
+| ItemId | ItemType | Rarity | `SlotSize` | `InitialCharges` | `bFungible` | `ContainerCapacity` | `SellPrice` | Definition |
+|---|---|---|---|---|---|---|---|---|
+| `AmmoBox_545` | Ammo | Common | 1 | **100** | **✅** | 0 | 500 | `DA_AmmoBox_545` |
+| `Bandage` | Consumable | Common | 1 | 1 | ❌ | 0 | 200 | `DA_Bandage` |
+| `Scrap_Paper` | Misc | Common | 1 | 0 | ❌ | 0 | 50 | `DA_Scrap_Paper` |
+| `Resume` | QuestItem | Rare | 1 | 0 | ❌ | 0 | 0 | `DA_Resume` |
+| `Cash_10000` | Misc | Common | 1 | **10000** | **✅** | 0 | **0** ★ | `DA_Cash_10000` |
+| `Backpack_Small` | Misc | Uncommon | **2** | 0 | ❌ | **12** | 1500 | `DA_Backpack_Small` |
 
-| ItemId | ItemType | Rarity | MaxStack | Definition 에셋 | 용도 |
-|---|---|---|---|---|---|
-| `Ammo_762` | Ammo | Common | 60 | **불필요** | 스택 병합·부분 획득 검증의 주력 |
-| `Bandage` | Consumable | Common | 5 | **불필요** | 소모품 자리 확인 |
-| `Scrap_Paper` | Misc | Common | 10 | **불필요** | 잡템 — 등급 테이블의 "일반" 채우기 |
-| `Resume` | QuestItem | Rare | **1** | **★ `DA_Resume` 필요** | **비스택 비무기** — `GetInstanceClass()` 기본 분기 검증 |
+> **★ `SellPrice` 열을 반드시 채운다.** `FEPItemData::SellPrice`의 기본값이 **`100`** 이라(`EPItemData.h:43`) 비워두면 `Cash_10000`을 **10,000원짜리를 100원에 파는** 상태가 된다.
+>
+> **`bFungible` 아이템은 판매가가 `SellPrice`가 아니라 `Charges` 자체다.** 현금뭉치는 판매 대상이 아니라 그 자체가 돈이므로 `SellPrice = 0`으로 두고, 경제 시스템이 `bFungible`을 예외로 다룬다. 이 규칙을 지금 적어두지 않으면 판매 기능이 붙는 순간 조용히 틀린다.
 
-**스택 아이템 3종은 Definition 에셋이 필요 없다** — `MaxStack > 1`이라 00-6의 `CreateInstance`가 `FindDefinition` 앞에서 `INDEX_NONE`으로 빠진다.
+각 행의 검증 목적:
 
-### ★ `Resume`은 예외다 — `DA_Resume`을 반드시 만든다
+| 행 | 검증하는 것 |
+|---|---|
+| `AmmoBox_545` | 기본 `InitState()` + `InitialCharges` 경로 |
+| `Bandage` | **3개 주우면 엔트리 3개**인지 (스택 안 됨) |
+| `Cash_10000` | **둘 주우면 엔트리 1개, `Charges=20000`** 인지 (`bFungible`) |
+| `Backpack_Small` | **본체 10칸과 별개로 12칸이 열리는지.** 버리면 안의 아이템이 같이 나가는지 |
+| `Resume` | 비무기 Definition이 AssetManager에 잡히는지 |
 
-`Resume`은 `MaxStack == 1`이므로 **`CreateInstance` 경로를 그대로 탄다.** Definition이 없으면 00-6에서 이렇게 끝난다.
+그리고 **기존 무기 3행의 `SlotSize`를 4~5로 올린다.** 전부 1이면 "칸 수 합산"과 "엔트리 개수 세기"가 구분되지 않아 Step 03에서 합산 로직의 버그가 무증상으로 지나간다.
 
-```cpp
-if (Data->MaxStack > 1) return INDEX_NONE;      // Resume은 통과한다
-UEPItemDefinition* Def = Defs->FindDefinition(ItemId);
-if (!Def) return INDEX_NONE;                    // ← DA_Resume이 없으면 여기서 탈락
-```
+> **본체가 10칸이므로**(GAME.md) 무기 5칸 + 배낭 2칸이면 벌써 7칸이다. Step 03의 "칸이 모자라 못 줍는" 경로를 손쉽게 재현할 수 있다 — 의도한 것이다.
 
-`Resume`을 넣은 목적이 정확히 이 경로(기본 `UEPItemInstance` 생성)를 한 번이라도 실행시키는 것이므로, 에셋이 없으면 항목 자체가 무의미해진다.
+### ★ 모든 행이 Definition 에셋을 가진다
+
+이전 설계에서는 "스택 아이템은 인스턴스를 안 만드니 Definition이 불필요"였다. **스택이 없어지면서 그 예외가 사라졌고**, 게다가 바닥 픽업의 `WorldMesh`와 UI의 `Icon`이 전부 Definition에만 있으므로 애초에 예외가 성립하지 않았다 (00-6).
 
 | 항목 | 값 |
 |---|---|
-| 에셋 | `/Game/Data/Items/DA_Resume` — 클래스는 **`UEPItemDefinition`**(무기가 아니다) |
-| `ItemId` | `Resume` |
-| `ItemDataRow` | `DT_Items` / `Resume` |
-| `WorldMesh` / `Icon` | 비워둔다 |
-| DT 쪽 `ItemDefinition` | `DA_Resume`을 가리키게 한다 (`IsDataValid` 역참조 검사 대상) |
+| 위치 | `/Game/Data/Items/DA_*` — 클래스는 **`UEPItemDefinition`**(무기가 아니다) |
+| `ItemId` | 대응 Row Name과 동일 |
+| `ItemDataRow` | `DT_Items` / 해당 Row |
+| `InitialCharges` | 위 표대로 |
+| `WorldMesh` / `Icon` | 비워둔다 — 픽업 표시는 Step 01, 아이콘은 Step 04에서 플레이스홀더 |
+| DT 쪽 `ItemDefinition` | 각 DA를 가리키게 한다 (`IsDataValid` 역참조 검사 대상) |
 
-부수 효과로 **AssetManager 등록(00-7)이 무기 이외 Definition도 잡는지**가 여기서 검증된다 — 00-0의 타입 통일이 실제로 먹혔는지 확인하는 유일한 케이스다. `/Game/Data/Items`는 `/Game/Data` 재귀 스캔에 포함된다.
-
-> `Resume`이 중요한 이유: 이게 없으면 "비스택 = 무기"라는 우연한 등식이 성립해버려, `UEPItemInstance`(기본 클래스) 생성 경로가 한 번도 실행되지 않는다.
-
-> 스택 아이템 3종의 `WorldMesh`/`Icon`은 비워둔다. 픽업 표시는 Step 01이고 거기서 플레이스홀더를 쓴다.
+부수 효과로 **AssetManager 등록(00-7)이 무기 이외 Definition도 잡는지**가 검증된다 — 00-0의 타입 통일이 실제로 먹혔는지 확인하는 경로다. `/Game/Data/Items`는 `/Game/Data` 재귀 스캔에 포함된다.
 
 ---
 
@@ -498,29 +469,31 @@ if (!Def) return INDEX_NONE;                    // ← DA_Resume이 없으면 �
 ```cpp
 // #if !(UE_BUILD_SHIPPING || UE_BUILD_TEST) 가드 — SSR 디버그와 동일
 
-EP.Item.Make <ItemId>    // CreateInstance 후 핸들·클래스명·CurrentAmmo를 출력하고 즉시 Destroy
-EP.Item.Dump             // DataCache 행 수 / DefinitionCache 상주 수 / 살아있는 인스턴스 수
+EP.Item.State <ItemId>   // MakeItemState() 결과를 출력 (Charges / Durability / SlotSize)
+EP.Item.Dump             // DataCache 행 수 / DefinitionCache 상주 수
 ```
 
-`FAutoConsoleCommandWithWorldAndArgs`로 등록한다. `EP.Item.Make`는 서브시스템이 서버 전용이므로 **리슨서버 호스트나 PIE 단독**에서 실행한다.
+`FAutoConsoleCommandWithWorldAndArgs`로 등록한다. 순수 조회라 **클라이언트에서 실행해도 된다** — 이전 설계의 `EP.Item.Make`가 서버 전용이었던 것과 다르다.
 
 기대 출력:
 
 ```
-> EP.Item.Make Weapon_AK74_HitScan
-[ItemCore] Handle=1  Class=UEPWeaponInstance  ItemId=Weapon_AK74_HitScan  CurrentAmmo=30
+> EP.Item.State Weapon_AK74_HitScan
+[ItemCore] Weapon_AK74_HitScan  Charges=30  Durability=100.0  SlotSize=5   (WeaponDefinition)
 
-> EP.Item.Make Resume
-[ItemCore] Handle=2  Class=UEPItemInstance    ItemId=Resume
+> EP.Item.State AmmoBox_545
+[ItemCore] AmmoBox_545          Charges=100 Durability=100.0  SlotSize=1   (ItemDefinition)
 
-> EP.Item.Make Ammo_762
-[ItemCore] Handle=INDEX_NONE (MaxStack=60 > 1 — 인스턴스 불필요)
+> EP.Item.State Resume
+[ItemCore] Resume               Charges=0   Durability=100.0  SlotSize=1   (ItemDefinition)
 
 > EP.Item.Dump
-[ItemCore] DataCache=7  Definitions=4  LiveInstances=0
+[ItemCore] DataCache=9  Definitions=9
 ```
 
-> `Definitions=4` = `DA_AK74_HitScan` / `FastProj` / `SlowProj` + **`DA_Resume`**(00-8). `3`이 나오면 `DA_Resume`이 없거나 AssetManager 스캔 경로에서 빠진 것이고, 그 경우 `EP.Item.Make Resume`이 `INDEX_NONE`을 돌려준다.
+> **`Definitions=9`이 핵심 수치다.** `3`이 나오면 새 DA를 안 만들었거나 AssetManager 스캔 경로에서 빠진 것이고, `4`가 나오면 일부만 만든 것이다. `EP.Item.State`가 해당 아이템에서 에러 로그를 남기므로 어느 것이 빠졌는지 바로 나온다.
+>
+> **살아있는 인스턴스 수(`LiveInstances`)를 세지 않는다.** 셀 인스턴스가 없다 — 상태는 엔트리와 픽업 안에 값으로 들어 있고, 소유자가 사라지면 같이 사라진다. 이전 설계에서 누수 감시용으로 필요했던 수치다.
 
 ---
 
@@ -528,16 +501,16 @@ EP.Item.Dump             // DataCache 행 수 / DefinitionCache 상주 수 / 살
 
 | # | 함정 | 증상 | 대응 |
 |---|---|---|---|
-| 1 | `WeaponDef` 타입이 남아 있음 | 무기 Definition만 로드 안 됨. `EP.Item.Make Weapon_*`이 null | 00-0 오버라이드 제거 |
+| 1 | `WeaponDef` 타입이 남아 있음 | 무기 Definition만 로드 안 됨. `EP.Item.State Weapon_*`이 에러 | 00-0 오버라이드 제거 |
 | 2 | AssetManager 미등록 | `Definitions=0`. 00-5의 에러 로그가 없으면 무증상 | 00-7 등록 + `LoadPrimaryAssetsWithType` 실패 시 에러 로그 |
 | 2b | `Is Editor Only` 체크됨 | 에디터에서는 되는데 **패키지 빌드에서만** `Definitions=0` | 00-7 표 참조. 기존 `Map`/`PrimaryAssetLabel` 항목을 따라 하면 걸린다 |
 | 2c | Definition 로드를 비동기로 둠 | 초반 몇 프레임 동안 `FindDefinition`이 null. 재현이 타이밍 의존적 | `WaitUntilComplete()` (00-5) |
-| 2d | `DA_Resume` 미생성 | `EP.Item.Make Resume`이 `INDEX_NONE`. 기본 인스턴스 경로가 한 번도 안 돌아 다음 Step에서 처음 터진다 | 00-8 |
+| 2d | 신규 DA 4종 중 일부 미생성 | `Definitions`가 7 미만. 해당 아이템이 다음 Step에서 메시 없이 나타난다 | 00-8 |
 | 3 | `FEPItemData*` 캐시 | 에디터에서 DT 리임포트 후 크래시. 패키지에선 재현 안 됨 | 값 복사 (00-5) |
 | 4 | `IsDataValid` 구버전 시그니처 | 5.7에서 deprecated 경고, 검증이 안 불림 | `FDataValidationContext&` const 버전 |
-| 5 | `Quantity`를 인스턴스에 남겨둠 | Step 03에서 수량이 두 곳에 생겨 스택 병합이 어긋남 | 00-3에서 제거 |
-| 6 | 클라이언트에서 `CreateInstance` 호출 | 서버·클라 인스턴스가 갈라짐 | `checkf` 가드 (00-6) |
-| 7 | `Instances` 맵을 `UPROPERTY` 없이 선언 | GC가 인스턴스를 수거해 핸들이 죽은 객체를 가리킴 | `UPROPERTY()` 필수 |
+| 5 | `FEPItemState`를 `UPROPERTY` 없이 선언 | 복제·직렬화가 조용히 빠짐. Step 03에서 잔탄이 클라에 안 감 | 필드마다 `UPROPERTY()` |
+| 6 | 모든 행의 `SlotSize`가 1 | 칸 수 합산과 엔트리 개수 세기가 구분 안 됨 → Step 03 합산 버그가 무증상 | 무기를 4~5로 (00-8) |
+| 7 | 인스턴스 클래스를 "혹시 몰라" 남겨둠 | 두 표현이 공존해 다음 Step에서 어느 쪽이 진실인지 갈린다 | 00-4에서 **파일째 삭제** |
 
 ---
 
@@ -548,3 +521,4 @@ EP.Item.Dump             // DataCache 행 수 / DefinitionCache 상주 수 / 살
 - `UEPLootTable` / `EPLootTable` PrimaryAssetType 등록 → **Step 01**
 - `GrantedAbility` 실제 사용(어빌리티 부여/발동) → 소모품 구현 시점
 - `WorldMesh` 비동기 로드 → **Step 01** (`AEPPickup`)
+- `FEPItemState`를 실제로 보관하는 곳(엔트리·픽업) → **Step 01·03**. 이번 단계는 **타입 선언과 초기화 경로까지**다

@@ -14,7 +14,7 @@
 [스포너]  맵 배치, 확률 테이블로 판정      ← 이번 단계
     ↓ 서버 스폰
 [픽업]    바닥에 놓인 아이템 액터           ← 이번 단계
-    ↕ 상호작용(E) / 버리기(G)              ← 이번 단계 (양방향)
+    ↕ 상호작용(F) / 버리기(G)              ← 이번 단계 (양방향)
 [인벤토리] 서버 권한 보관 + UI              ← 이번 단계
     ↓ 장착
 [무기]    AEPWeapon 스폰·부착              ← 이번 단계 (기존 흐름 이관)
@@ -23,7 +23,11 @@
 [자판기]   돈 투입 → 5초 → 배출            ← 추후 (§7)
 ```
 
-**이번 단계에서 하지 않는 것:** 컨테이너, 자판기, 드래그앤드롭 UI, 격자(그리드) 인벤토리, 무게, 소모품 사용, 사망 시 드랍, 무기 2정 이상 슬롯.
+**이번 단계에서 하지 않는 것:** 월드 컨테이너(§7-1), 자판기, 무기 부착물(§7-3), 드래그앤드롭 UI, 2D 격자(테트리스) 인벤토리, 소모품 사용, 재장전의 탄약 소비, 사망 시 드랍, 무기 2정 이상 슬롯.
+
+> **인벤토리 용량은 아이템별 칸 수의 합산**이다(§4-6) — 무게 시스템과 동형이고 2D 배치 문제가 아니다.
+>
+> **배낭은 이번 범위에 포함된다.** 본체 10칸과 배낭의 칸 수는 **통합되지 않고 각자 독립**이며, 배낭을 버리면 안의 아이템이 같이 나간다(GAME.md). 이 때문에 엔트리가 `ParentEntryId`를 갖고, 그 구조가 §7-3 부착물과 동일하다.
 
 ---
 
@@ -53,9 +57,9 @@
 
 ### 왜 Step 00이 앞에 오는가
 
-§2가 진단한 대로 아이템 데이터 계층은 **전부 데드코드**다. 스포너가 `ItemId`로 아이템을 뽑으려면 `ItemId → DataTable → Definition` 조회 경로와 인스턴스 팩토리가 **먼저** 있어야 한다. 이걸 Step 01 안에서 같이 만들면 "스포너 작업"이 사실상 "데이터 계층 재설계 + 스포너"가 되어, 확률이 안 맞을 때 원인이 테이블인지 조회 경로인지 구분이 안 된다.
+§2가 진단한 대로 아이템 데이터 계층은 **전부 데드코드**다. 스포너가 `ItemId`로 아이템을 뽑으려면 `ItemId → DataTable → Definition` 조회 경로와 상태 초기화가 **먼저** 있어야 한다. 이걸 Step 01 안에서 같이 만들면 "스포너 작업"이 사실상 "데이터 계층 재설계 + 스포너"가 되어, 확률이 안 맞을 때 원인이 테이블인지 조회 경로인지 구분이 안 된다.
 
-Step 00은 눈에 보이는 결과가 없는 대신 **콘솔 커맨드 하나로 독립 검증된다** — `ItemId`를 주면 올바른 타입의 인스턴스가 나오는가. 그게 확인된 뒤에 스포너를 붙인다.
+Step 00은 눈에 보이는 결과가 없는 대신 **콘솔 커맨드 하나로 독립 검증된다** — `ItemId`를 주면 올바른 초기 `FEPItemState`가 나오는가. 그게 확인된 뒤에 스포너를 붙인다.
 
 ### 왜 인벤토리가 아니라 스포너가 그 다음인가
 
@@ -73,14 +77,61 @@ Step 00은 눈에 보이는 결과가 없는 대신 **콘솔 커맨드 하나로
 
 ## 4. 아키텍처 결정사항
 
-### 4-1. 아이템 인프라 — 서브시스템 **2개**로 분리한다
+### 4-1. 아이템 인프라 — 조회 서브시스템 **하나**, 개체 상태는 **값 타입**
 
-수명이 다르므로 하나로 합치지 않는다.
+| 계층 | 형태 | 역할 |
+|---|---|---|
+| `UEPItemDefinition` (+서브클래스) | `UPrimaryDataAsset` — **UObject 계층 유지** | 타입 데이터와 다형성. `ItemId`별 1개, 불변 |
+| `FEPItemState` | **`USTRUCT` (순수 값 타입)** | 개체별 런타임 상태. 엔트리·픽업에 **내장** |
+| `UEPItemDefinitionSubsystem` | `UGameInstanceSubsystem` | `ItemId → FEPItemData / UEPItemDefinition` 조회 |
 
-| 서브시스템 | 종류 | 역할 | 수명 |
-|---|---|---|---|
-| `UEPItemDefinitionSubsystem` | `UGameInstanceSubsystem` | `ItemId → FEPItemData / UEPItemDefinition` 조회 (정적 데이터) | 앱 전체. 레벨 전환에도 유지 |
-| `UEPItemInstanceSubsystem` | `UWorldSubsystem` (**서버 전용**) | 런타임 `UEPItemInstance` **소유**와 핸들 조회 | 월드(매치) 단위. 종료 시 일괄 정리 |
+#### ★ 개체 상태를 `UObject`로 두지 않는다
+
+기존 설계는 `UEPItemInstance`(UObject) + `UEPItemInstanceSubsystem`(소유) + `int32` 핸들이었다. **폐기한다.**
+
+| 항목 | 실제 내용 |
+|---|---|
+| `UEPWeaponInstance`가 담는 것 | `CurrentAmmo`(int) + `Durability`(float) — **숫자 둘** |
+| 타입별 다형성 | **이미 `UEPItemDefinition`에 있다.** 인스턴스에 남는 건 값뿐 |
+| 진짜 개체 행동 (`CurrentSpread` / `LastFireTime` / `ConsecutiveShots`) | **이미 `AEPWeapon` 액터에 있고 복제도 하지 않는다** |
+| 부착물·모듈 트리 (Lyra가 UObject를 쓰는 제1 이유) | **계획에 있다.** 그런데 트리는 UObject의 비용이 **최대**가 되는 지점이다 — 근거는 §7-3 |
+| 중첩 컨테이너 (배낭) | **계획에 있다.** 부착물과 **같은 구조**(부모를 갖는 엔트리)로 풀린다 — §4-6 |
+
+```cpp
+// 개체 상태 — 순수 값 타입. Outer도, 핸들도, 소유 서브시스템도 없다
+USTRUCT()
+struct FEPItemState
+{
+    GENERATED_BODY()
+
+    // 이 개체가 담고 있는 소모 단위
+    //   무기      : 장전된 발수        탄약상자 : 남은 발수
+    //   현금뭉치  : 금액               소모품   : 남은 사용 횟수
+    UPROPERTY() int32 Charges    = 0;
+
+    UPROPERTY() float Durability = 100.f;
+};
+```
+
+**이관이 값 대입으로 끝난다.** `Entry.State = Pickup->State;` / `Pickup->State = Entry.State;` — 소유권 공백이 없고, 이관 프로토콜도 `EndPlay` 정리도 고아 누수도 성립하지 않는다. 버린 무기의 잔탄이 보존되는 이유가 **"규칙을 지켜서"가 아니라 "값을 복사했으니까"** 가 된다.
+
+부수 효과로 **가방 속 두 번째 소총의 잔탄을 UI에 표시할 수 있게 된다.** 핸들 방식에서는 서버 전용 인스턴스라 클라가 읽을 방법이 없었고, GAS `Ammo` 어트리뷰트는 장착 무기 하나만 커버했다.
+
+> **비대화의 전환 기준:** `FEPItemState`는 지금 8바이트다. 대역폭이 아니라 **"모든 아이템이 다른 타입의 필드값을 지불한다"** 가 진짜 비용이고, 필드 4개에서는 보이지 않다가 타입 전용 필드가 8~10개쯤 되면 추해진다. **세 번째 아이템 카테고리가 자기 전용 필드를 요구하면 그때 `FInstancedStruct`로 간다.** 지금 도입하면 프로퍼티 델타 상실 + 엔트리당 `UScriptStruct*` 전송 + BP/DB 복잡도를 사놓고 아무것도 못 받는다.
+
+#### ★ 아이템은 스택되지 않는다 (확정)
+
+붕대 3개는 겹치지 않고 **엔트리 3개**다. 대신 아이템마다 **차지하는 칸 수**가 있고, 인벤토리는 **수용 가능한 총 칸 수**를 가진다. 무게 시스템과 같은 합산 방식이다 (§4-6).
+
+| 개념 | 표현 |
+|---|---|
+| 아이템의 칸 수 | `FEPItemData::SlotSize` — **이미 있는 필드**. 지금까지 안 읽었을 뿐 |
+| 인벤토리 용량 | `UEPInventoryComponent::MaxSlots` |
+| 점유량 | `UsedSlots = Σ SlotSize` — 파생값, 복제하지 않는다 |
+
+탄약은 **탄약상자**라는 아이템이 발수를 `Charges`로 들고 있고, 그것으로 탄창을 채운다. 돈도 같은 방식(현금뭉치 하나가 금액을 `Charges`로 보유)이라 **엔트리가 폭발하지 않는다.**
+
+> **`FEPItemData::MaxStack`은 남겨두되 읽지 않는다.** 나중에 스택을 되살릴 여지를 위한 예약 필드다. 되살릴 때는 `FEPInventoryEntry`에 `Quantity`를 추가하고 병합 로직을 넣으면 되며, **복제 구조(FastArray + POD)는 그대로 유효하다.**
 
 #### `UEPItemDefinitionSubsystem` — 조회
 
@@ -91,7 +142,7 @@ Step 00은 눈에 보이는 결과가 없는 대신 **콘솔 커맨드 하나로
 
 ##### ★ Definition은 상주시킨다 — 소프트 참조는 시각 에셋에만
 
-`FEPItemData::ItemDefinition`이 `TSoftObjectPtr`이라 "Definition도 비동기 로드"로 읽히기 쉬우나, **그러면 인스턴스를 만들 수 없다.** 픽업 획득은 RPC 응답 안에서 성패가 결정돼야 하는 동기 경로인데, §4-9의 `Definition->CreateInstance()`는 Definition이 메모리에 있어야 호출된다. 로드를 기다리는 사이에 "줍기 성공/실패"를 유보할 수 없다.
+`FEPItemData::ItemDefinition`이 `TSoftObjectPtr`이라 "Definition도 비동기 로드"로 읽히기 쉬우나, **그러면 아이템을 만들 수 없다.** 픽업 획득은 RPC 응답 안에서 성패가 결정돼야 하는 동기 경로인데, §4-9의 `Definition->InitState()`도 `SlotSize` 조회(§4-6)도 Definition이 메모리에 있어야 한다. 로드를 기다리는 사이에 "줍기 성공/실패"를 유보할 수 없다.
 
 | 대상 | 정책 |
 |---|---|
@@ -102,71 +153,23 @@ Step 00은 눈에 보이는 결과가 없는 대신 **콘솔 커맨드 하나로
 - 데디케이티드 서버는 Definition만 로드하고 시각 에셋 로드는 건너뛴다 — 이 분리가 성립하는 이유가 위 표다
 - `AssetManager` 설정(Project Settings → Asset Manager)에 `EPItemDefinition` PrimaryAssetType을 등록해야 한다. Step 00의 완료 조건에 포함
 
-#### `UEPItemInstanceSubsystem` — 소유 (★ Outer 문제 해결)
+#### 개체 식별자: `FEPInventoryEntry::EntryId` (`int32`)
 
-인스턴스의 `Outer`를 인벤토리 컴포넌트로 두면, 버리기(§4-7)에서 픽업으로 넘길 때 `Rename()`으로 Outer를 옮겨야 하고 컴포넌트 파괴 시 GC 위험이 생긴다. **인스턴스는 서브시스템이 소유하고, 인벤토리·픽업은 참조만 갖는다.**
+**배열 인덱스**를 식별자로 쓰면 안 된다 — 제거·정렬로 인덱스가 밀리는 사이에 클라 요청이 도착하면 엉뚱한 아이템을 버린다. 그리고 `FFastArraySerializer`는 **클라이언트 배열의 순서가 서버와 같다는 보장을 하지 않는다**(`FastArraySerializer.h:54`). 그래서 명시적 키가 필요하다.
 
 ```
-UEPItemInstanceSubsystem (서버 전용)
-├─ TMap<int32, TObjectPtr<UEPItemInstance>> Instances   ← 유일한 강참조
-├─ int32 NextHandle = 1                                  ← 단조 증가 발급
-├─ CreateInstance(FName ItemId) → int32                  ← 상태 보유 아이템만 (아래 참조)
-├─ Find(int32 Handle) → UEPItemInstance*
-└─ Destroy(int32 Handle)
+UEPInventoryComponent
+├─ int32 NextEntryId = 1        ← 서버가 단조 증가로 발급
+└─ 재번호하지 않는다. 매치 내 유일하고, 제거해도 다른 엔트리의 값이 바뀌지 않는다
 ```
 
-- **이관이 핸들 대입으로 끝난다.** 인벤토리 → 픽업 → 인벤토리를 오가도 `Rename()`이 없고, 인스턴스는 처음부터 끝까지 서브시스템 소유다
-- 핸들 조회가 O(1)이다
-- 인벤토리·픽업은 **`int32` 핸들만** 들고 있는다. `UEPItemInstance*`를 멤버로 두면 강참조가 둘이 되어 "유일한 강참조" 전제가 깨진다
-
-#### ★ 인스턴스를 언제 만드는가 — 상태 없는 아이템은 만들지 않는다
-
-`FEPInventoryEntry`는 핸들 1개 + `Quantity` N개인데 `UEPItemInstance`에도 `Quantity`가 있다(`EPItemInstance.h:27`). 그대로 두면 **§4-8에서 지적한 "탄약의 진실이 두 곳" 문제가 스택에서 재발한다.** 게다가 스택 병합·분할이 인스턴스를 어떻게 처리하는지 정의되지 않으면 구현자마다 갈린다.
-
-| 조건 | 인스턴스 | 핸들 |
-|---|---|---|
-| `MaxStack > 1` (탄약·붕대·잡템 — 개체 상태 없음) | **만들지 않는다** | `INDEX_NONE` |
-| `MaxStack == 1` 이고 개체 상태 보유 (무기·방어구) | 만든다 | 유효 |
-
-- 스택 아이템의 엔트리는 순수 `(ItemId, Quantity)`다. **병합은 정수 덧셈, 분할은 정수 뺄셈으로 끝난다** — 인스턴스를 지우거나 새로 만들 일이 없다
-- 비스택 아이템은 병합 자체가 불가능하므로 분할 문제가 생기지 않는다. 잔탄·내구도가 온전히 보존되는 것도 이 경우뿐이고, 실제로 보존이 필요한 것도 이 경우뿐이다
-- 판정은 `MaxStack`으로 충분하다. "스택 가능하면서 개체 상태도 갖는" 아이템이 실제로 생기면 그때 `UEPItemDefinition`에 `bHasInstanceState`를 추가한다
-- **`UEPItemInstance::Quantity` 필드는 제거한다.** 수량의 진실은 `FEPInventoryEntry::Quantity`(인벤토리) 또는 `AEPPickup::Quantity`(월드) 하나뿐이다
-
-#### 인스턴스 수명 — 해제 시점을 명시한다
-
-"매치 종료 시 서브시스템 파괴로 일괄 정리"만으로는 부족하다. 30분 매치에서 사망·리스폰이 반복되면 그때까지 누적된다.
-
-| 시점 | 처리 |
+| 쓰이는 곳 | |
 |---|---|
-| `UEPInventoryComponent::EndPlay` | 자기 엔트리의 유효 핸들을 전부 `Destroy(Handle)` |
-| `AEPPickup::EndPlay` (`ClearLoot`, 월드 밖 낙하 등) | 보유 핸들이 유효하면 `Destroy(Handle)` |
-| 획득/버리기로 **이관 중** | **호출 금지** — 아래 순서를 지킨다 |
-| 매치 종료 | 서브시스템 `Deinitialize()`가 최종 안전망 |
+| 드랍 RPC | `Server_DropItem(int32 EntryId)` |
+| 장착 RPC / `EquippedEntryId` | §4-8 |
+| UI 정렬 키 | 오름차순 고정 → 줍고 버려도 목록이 튀지 않는다 (§4-6) |
 
-```
-이관 프로토콜 (소유권 공백이 없도록 이 순서로)
-  인벤토리 → 픽업 : 픽업에 핸들 대입 → 인벤토리 엔트리 제거
-  픽업 → 인벤토리 : 인벤토리 삽입 성공 확인 → 픽업 핸들을 INDEX_NONE으로 → Destroy()
-```
-
-> 픽업 핸들을 비우기 전에 `Destroy()`하면 `AEPPickup::EndPlay`가 방금 인벤토리로 넘긴 인스턴스를 지운다. 획득 직후 무기 잔탄이 사라지는 형태로 나타난다.
-
-> **★ 사망 시 드랍(§8 미정 #4)을 넣을 때의 함정:** 드랍은 **반드시 `UEPInventoryComponent::EndPlay`보다 먼저** 돌아야 한다. 순서가 뒤집히면 `EndPlay`가 핸들을 전부 `Destroy()`한 뒤 드랍이 빈 인벤토리를 뿌려, **"죽으면 아이템이 그냥 사라진다"** 로 나타난다. 원인이 인벤토리 로직이 아니라 수명 관리에 있어 추적이 오래 걸린다. 사망 처리(`AEPCharacter`의 사망 진입점)에서 드랍을 먼저 호출하고, `EndPlay` 정리는 "그때까지 남아 있으면 지운다"는 안전망으로만 남긴다.
-
-#### 식별자: `FGuid`가 아니라 `int32` 핸들
-
-`UEPItemInstance::InstanceId`(FGuid)는 **DB 영속용으로 남긴다.** 복제와 RPC에는 서버가 발급한 `int32` 핸들을 쓴다.
-
-| | `FGuid` | `int32` 핸들 |
-|---|---|---|
-| 크기 | 16바이트 × 슬롯 수 | 4바이트 |
-| 유일성 범위 | 전역·영구 | 매치 내 |
-| 위조 방지 | 서버 검증 필요 | 서버 검증 필요 (동일) |
-
-**배열 인덱스**를 식별자로 쓰면 안 된다 — 제거·정렬로 인덱스가 밀리는 사이에 클라 요청이 도착하면 엉뚱한 아이템을 버린다. 핸들은 그 경쟁을 원천 차단한다.
-
-> 단, §4-6에서 도입하는 `FEPInventoryEntry::SlotIndex`는 **배열 인덱스가 아니라 화면 칸 번호**이고, 엔트리를 제거해도 다른 엔트리의 값이 재배치되지 않는다. 그래서 드랍 RPC의 파라미터로는 안전하며, 스택 아이템(핸들 없음)까지 하나의 경로로 다룰 수 있다 (§4-7).
+> **`FGuid InstanceId`와 `SchemaVersion`은 제거한다** (`EPItemInstance.h`). 전자는 읽는 코드가 없고, 후자는 **아이템의 속성이 아니라 세이브 포맷의 속성**이다 — 한 세이브 안의 모든 아이템을 같은 빌드가 쓰므로 `USaveGame`/DB 행 봉투에 하나만 둔다. DB 스태시의 영구 식별자는 **저장 시점에 발급**하고, 복사 탐지 안티치트가 실제로 필요해지면 그때 POD에 필드를 추가한다 — 세이브 포맷 범프이지 아키텍처 변경이 아니다.
 
 ### 4-2. 루트 테이블 — 가중치 + **중첩**
 
@@ -175,10 +178,11 @@ UEPLootTable : UPrimaryDataAsset
 ├─ TArray<FEPLootEntry> Entries
 │    ├─ float Weight                    (상대 가중치)
 │    ├─ FName ItemId                    ┐ 둘 중 하나만 채운다
-│    ├─ TObjectPtr<UEPLootTable> SubTable ┘ (유효하면 재귀 롤. 하드 참조)
-│    └─ int32 MinQuantity / MaxQuantity (ItemId일 때만)
+│    └─ TObjectPtr<UEPLootTable> SubTable ┘ (유효하면 재귀 롤. 하드 참조)
 └─ float EmptyWeight                    (아무것도 안 나올 가중치)
 ```
+
+> **수량 필드가 없다.** 스택이 없으므로 롤 결과는 **아이템 하나**다. "탄약 20~60발"은 수량이 아니라 **탄약상자 하나의 `Charges`** 이고, 그 초기값은 `Definition->InitState()`가 정한다 (§4-9). 스포너에서 굴릴 때마다 발수를 흔들고 싶다는 요구가 생기면 그때 `UEPItemDefinition`에 범위를 넣는다 — 루트 테이블이 아이템 타입별 상태를 알게 하지 않는다.
 
 **퍼센트가 아니라 가중치를 쓰는 이유:** 항목을 추가·삭제할 때마다 합계 100을 다시 맞출 필요가 없다.
 
@@ -200,9 +204,9 @@ LT_VendingMachine
 ├─ SubTable: LT_Rarity_Rare       Weight 15
 └─ SubTable: LT_Rarity_Legendary  Weight  5
       └─ LT_Rarity_Common
-           ├─ ItemId: Ammo_762    Weight 1, Qty 20~60
-           ├─ ItemId: Bandage     Weight 1, Qty 1~2
-           └─ ItemId: Scrap_Paper Weight 1, Qty 1~3   ← 여기에 추가해도 "일반 50%"는 그대로
+           ├─ ItemId: AmmoBox_545  Weight 1
+           ├─ ItemId: Bandage      Weight 1
+           └─ ItemId: Scrap_Paper  Weight 1   ← 여기에 추가해도 "일반 50%"는 그대로
 ```
 
 등급 테이블은 자판기·컨테이너·바닥 스포너가 **공유**한다. 오브젝트별로 다른 건 "어느 등급을 몇 %로 뽑느냐"이고, 등급 안의 아이템 풀은 대개 같기 때문이다. 구급상자면 `LT_Rarity_Medical_*`처럼 갈래를 나눈다.
@@ -269,26 +273,26 @@ AEPGameMode::HandleMatchHasStarted()
 
 ```
 AEPPickup : AActor
-├─ FName ItemId                        (Replicated, OnRep로 메시 적용)
-├─ int32 Quantity                      (Replicated)
-├─ int32 InstanceHandle = INDEX_NONE   ← 서버 전용. 복제하지 않음. 포인터가 아니라 핸들 (§4-1)
+├─ FName ItemId          (Replicated, OnRep로 메시 적용)   ← 클라가 알아야 하는 것
+├─ FEPItemState State    ★ 서버 전용. 복제하지 않는다      ← 소유자만 알아야 하는 것
 └─ UStaticMeshComponent* Mesh
 ```
 
-**결정: 인스턴스는 서버에만 존재하고, 클라이언트에는 `ItemId + Quantity`만 복제한다.** 인벤토리(§4-6)와 정확히 같은 원칙이다.
+**★ 개체 상태를 복제하지 않는 이유는 비용이 아니라 정보 은폐다.**
 
-| 픽업의 출처 / 종류 | `InstanceHandle` | 획득 시 서버 동작 |
+`FEPItemState`는 8바이트라 대역폭은 이유가 못 된다. 문제는 **바닥 무기의 잔탄이 복제되면 치트 클라이언트가 릴러번시 범위 내 모든 픽업의 잔탄을 읽어 "어디서 얼마 전에 교전이 있었는지"를 추론한다**는 것이다. `12/30`짜리 라이플이 바닥에 있다 = **여기서 누가 죽었다.** GAME.md가 두 번 명시한 정보 은폐 기둥(플레이어 수 비공개, 사망 여부 미노출, 킬 피드백은 킬러에게만)을 **사고로** 뒤집는다.
+
+쪼개는 축이 "무엇인가 / 어떤 상태인가"가 아니라 **"클라가 알아도 되는가"** 이고, 양쪽 다 값 타입이라 값 복사 이관의 이점은 하나도 잃지 않는다. 누출이 *규율*이 아니라 *구조*로 불가능해진다.
+
+> **기각한 대안:** ① 상태를 복제하고 노출을 수용 → 정보 은폐와 정면 충돌. ② 픽업에 서버 전용 `ItemId`를 하나 더 → **"정체성의 진실이 두 곳"**, 이 설계가 죽이려던 바로 그 버그류. ③ 커스텀 `NetSerialize`로 필드별 조건 → 8바이트 아끼자고 직렬화기를 손으로 쓴다.
+
+| 픽업의 출처 | `State` | 획득 시 서버 동작 |
 |---|---|---|
-| 스포너가 뿌린 스택 아이템 (`MaxStack > 1`) | `INDEX_NONE` | 인스턴스 없이 수량만 인벤토리에 병합 (§4-1) |
-| 스포너가 뿌린 비스택 아이템 | `INDEX_NONE` | 획득 시점에 `CreateInstance()` → 인벤토리 삽입 |
-| 플레이어가 버린 비스택 아이템 (§4-7) | **유효** | 핸들을 **그대로** 인벤토리로 이관 (재생성 금지) |
-| 플레이어가 버린 스택 아이템 | `INDEX_NONE` | 수량만 병합 |
+| 스포너가 뿌린 것 | `Definition->InitState()`로 초기화 (스폰 시점) | `Entry.State = Pickup->State` |
+| 플레이어가 버린 것 (§4-7) | 버릴 때 엔트리에서 **값 복사** | 동일 |
 
-> 스포너가 뿌리는 시점에는 비스택 아이템도 인스턴스를 만들지 않는다. 맵에 200~300개가 깔리는데 그중 대부분은 아무도 줍지 않는다 — 주울 때 만드는 편이 싸고, 버려진 픽업만 이관 대상이라 규칙도 단순하다.
+**두 경로가 같다.** 핸들 유무로 갈리던 분기가 사라진다 — 픽업은 언제나 유효한 `State`를 들고 있고, 획득은 언제나 값 대입이다. 버린 무기의 잔탄이 보존되는 것은 규칙을 지켜서가 아니라 값을 복사했기 때문이다.
 
-- 인스턴스를 복제하지 않는 이유: `UObject` 서브오브젝트 복제를 픽업 액터마다 붙이면 맵에 깔린 수십~수백 개가 전부 복제 대상이 된다. **클라이언트가 바닥 아이템에 대해 알아야 할 건 "무엇이 몇 개인지"뿐이다** — 아이콘·이름은 `ItemId`로 조회되고, 잔탄 같은 인스턴스 상태는 줍기 전에는 볼 필요가 없다.
-- 버려진 무기의 잔탄·내구도가 보존되는 것은 **인스턴스를 재생성하지 않고 핸들만 이관**하기 때문이다. 이 규칙을 어기면 버렸다 줍기만 해도 만탄이 되는 익스플로잇이 생긴다 (§4-8 참조 — 현재 코드가 정확히 그 상태다).
-- 클라가 바닥 무기의 잔탄을 표시해야 하는 요구가 생기면, 액터를 서브오브젝트 복제로 바꾸지 말고 `FEPPickupPayload` 구조체를 하나 더 복제하는 쪽으로 확장한다.
 - 메시: `OnRep_ItemId`에서 레지스트리 조회 → `Definition->WorldMesh` 비동기 로드 → 도착하면 세팅. 로드 전에는 공용 플레이스홀더 메시를 쓴다. **`WorldMesh`가 비어 있는 아이템이 대부분일 것이므로**(현재 무기 외 메시 없음) 플레이스홀더 박스는 선택이 아니라 필수다.
 
 **동시 획득 경쟁 (★ 멀티 필수 처리)**
@@ -305,20 +309,18 @@ Server_Interact(Target)
        DropCooldown, 컨테이너 "이미 검색됨", 자판기 돈 부족이 전부 여기서 걸린다
   5. bClaimed == false 인가        ← 이 프레임에 이미 다른 요청이 선점했는지
   6. bClaimed = true 로 즉시 마킹  ← 인벤토리 삽입보다 먼저
-  7. Added = AddItem(ItemId, Quantity)      (§4-6, 실제 삽입된 개수)
-  8. Added == Quantity  → 핸들 이관 후 Destroy()            (전량 획득)
-     0 < Added < Quantity → Quantity -= Added
-                            FlushNetDormancy()
-                            bClaimed = false                (부분 획득 — 픽업은 남는다)
-     Added == 0        → bClaimed = false
-                         Client_OnInteractFailed(사유)      (인벤 가득 참 등)
+  7. EntryId = AddItem(본체, ItemId, Pickup->State)   (§4-6)
+       실패하고 배낭을 매고 있으면 배낭에 재시도. 순서를 뒤집으면 본체가 늘 빈다
+  8. EntryId != INDEX_NONE → Destroy()                       (성공)
+     EntryId == INDEX_NONE → bClaimed = false
+                             Client_OnInteractFailed(사유)   (칸 부족 등)
 
   1~4 중 하나라도 실패 → Client_OnInteractFailed(사유). 조용히 return 하지 않는다
 ```
 
 - **★ 3·4단계를 빠뜨리면 서버 검증이 사실상 없어진다.** §4-5가 "서버가 거리와 대상 유효성을 재검증한다", "`CanInteract()`는 서버가 다시 호출해 판정한다"고 선언해놓고 이 절차에 호출이 없으면, **클라이언트가 프롬프트를 안 그릴 뿐 RPC는 그대로 통과한다.** 특히 §4-7의 `DropCooldown`(버린 직후 0.5초 재획득 금지)이 `CanInteract()`로 구현되므로, 4단계가 없으면 쿨다운이 서버에서 강제되지 않는다. 이 절차는 구현 체크리스트로 읽히는 자리라 누락이 그대로 코드가 된다.
-- **★ 부분 획득에서 `bClaimed`를 반드시 되돌린다.** "성공→파괴 / 실패→해제" 두 갈래로만 쓰면, 픽업이 살아남는 부분 획득 경로에서 `bClaimed`가 true로 굳어 **그 아이템을 아무도 다시 줍지 못한다.** 부분 획득은 §4-6에서 정식 지원하는 경로라 반드시 발생한다.
-- `bClaimed`는 **복제하지 않는다.** 서버 내부 상태이고, 결과는 액터 파괴(또는 `Quantity` 갱신)로 클라에 전달된다.
+- **획득은 전부 아니면 전무다.** 스택이 없으므로 픽업 하나 = 아이템 하나이고, 칸이 모자라면 아무것도 들어가지 않는다. 부분 획득 경로가 없어져 `bClaimed`를 되돌리는 갈래도 실패 하나뿐이다.
+- `bClaimed`는 **복제하지 않는다.** 서버 내부 상태이고, 결과는 액터 파괴로 클라에 전달된다.
 - 늦은 요청은 조용히 무시하지 않고 요청자에게 실패 사유를 회신한다(`Client_OnInteractFailed`). 아무 반응이 없으면 플레이어는 입력이 씹혔다고 느낀다.
 
 **네트워크 예산**
@@ -332,7 +334,7 @@ Server_Interact(Target)
 | `bAlwaysRelevant` | **false** | 기본값이지만 명시. true면 전 맵 픽업이 모든 클라에 복제된다 |
 | `SetNetCullDistanceSquared()` | **제곱값**. 5000cm를 원하면 `25000000.f` | 멀리 있는 픽업은 복제 대상에서 제외 |
 | `SetReplicateMovement` | **false** | 정적으로 놓인 아이템이라 이동 복제 불필요 |
-| `NetDormancy` | **`DORM_Initial`** | ★ 아래 참조 |
+| `NetDormancy` | **`DORM_Initial`** | ★ 아래 참조. 스택이 없어 복제 상태가 아예 불변이다 |
 
 > **★ 5.5부터 직접 대입은 deprecated다.** `NetCullDistanceSquared` 필드는 `UE_DEPRECATED(5.5, "Public access to NetCullDistanceSquared has been deprecated...")`가 붙어 있다(`Actor.h:869`). 생성자에서 `NetCullDistanceSquared = ...`로 쓰면 5.7에서 경고가 난다. **`SetNetCullDistanceSquared(25000000.f)`** 를 쓴다. 같은 이유로 `NetUpdateFrequency`도 `SetNetUpdateFrequency()`다(`Actor.h:874`). `bReplicates` / `bAlwaysRelevant` / `NetDormancy`는 deprecated가 아니라 생성자 대입 그대로 둔다.
 
@@ -340,15 +342,14 @@ Server_Interact(Target)
 
 **★ Net Dormancy가 이 액터에 정확히 맞는 이유**
 
-픽업은 스폰된 뒤 파괴될 때까지 상태가 **거의 변하지 않는다**(`ItemId`는 불변, `Quantity`는 부분 획득 때만). `DORM_Initial`로 두면 초기 복제 후 관련성·복제 검사에서 아예 빠진다. 맵에 200~300개가 깔리는 액터에서 이 차이는 크다.
+스택이 없어진 지금 픽업의 **복제 상태는 완전히 불변이다.** 클라에 나가는 값은 `ItemId` 하나뿐이고 그것은 스폰 시점에 정해져 파괴될 때까지 바뀌지 않는다(`State`는 서버 전용). `DORM_Initial`로 두면 초기 복제 후 관련성·복제 검사에서 아예 빠진다. 맵에 200~300개가 깔리는 액터에서 이 차이는 크다.
 
 ```
-스폰            → DORM_Initial (초기 1회 복제 후 휴면)
-Quantity 변경   → FlushNetDormancy()  ← 부분 획득 시 반드시 호출
-획득 완료       → Destroy()           ← 파괴는 휴면과 무관하게 전달된다
+스폰       → DORM_Initial (초기 1회 복제 후 휴면)
+획득 완료  → Destroy()    ← 파괴는 휴면과 무관하게 전달된다
 ```
 
-> `FlushNetDormancy()` 호출을 빠뜨리면 **클라이언트 화면의 개수만 옛날 값으로 남는다.** 서버는 정상이라 재현이 까다로운 종류의 버그다. 부분 획득 경로에 반드시 넣는다.
+> **`FlushNetDormancy()`를 부를 일이 없다.** 스택이 있던 설계에서는 부분 획득 시 `Quantity`를 낮추고 반드시 이걸 불러야 했고, 빠뜨리면 "서버는 정상인데 클라 화면의 개수만 옛날 값"이라는 재현 까다로운 버그가 났다. 그 함정 자체가 성립하지 않는다.
 
 > 물리로 튕기는 드랍(사망 시 드랍 등)이 생기면 그때만 이동 복제를 켜고 `DORM_Awake`로 둔다. 정지 후 `SetReplicateMovement(false)` + 다시 휴면시키는 게 정석이다.
 
@@ -358,7 +359,7 @@ Quantity 변경   → FlushNetDormancy()  ← 부분 획득 시 반드시 호출
 UEPInteractionComponent (Character에 부착)
 ├─ Tick: 로컬 컨트롤러만 카메라 전방 트레이스 → 대상 갱신 → HUD 프롬프트
 │         SetComponentTickInterval(0.1f)  ← 매 프레임 트레이스 금지
-└─ Input(E) → Server_Interact(AActor* Target)
+└─ Input(F) → Server_Interact(AActor* Target)
 ```
 
 - **트레이스 주기는 0.1초로 낮춘다.** 프롬프트 표시는 100ms 지연이 체감되지 않는데, 매 프레임 트레이스는 그대로 낭비다. 로컬 컨트롤러가 아니면 아예 틱을 끈다(`SetComponentTickEnabled(false)`).
@@ -369,7 +370,7 @@ UEPInteractionComponent (Character에 부착)
 
 | 함수 | 이번 단계 픽업의 구현 | 나중에 쓰는 곳 |
 |---|---|---|
-| `GetInteractText()` | "줍기 — 붕대 x2" | 컨테이너 "검색", 자판기 "1000원 투입" |
+| `GetInteractText()` | "줍기 — 붕대" | 컨테이너 "검색", 자판기 "1000원 투입" |
 | `CanInteract(Instigator)` | 인벤토리 여유 확인 | 자판기 돈 부족, 컨테이너 이미 검색됨, 탈출 조건 미달 |
 | `GetInteractDuration()` | 0 | 컨테이너 검색 N초, 자판기 5초, 탈출 대기 |
 | `OnInteract(Instigator)` | 인벤토리 삽입 후 파괴 | 각 오브젝트의 실제 동작 |
@@ -378,287 +379,211 @@ UEPInteractionComponent (Character에 부착)
 - 클라이언트에서도 `CanInteract()`를 호출해 프롬프트를 그리되, **서버가 다시 호출해 판정한다.** 클라 결과는 표시용일 뿐이다.
 - `GetInteractDuration() > 0`인 경우의 채널링은 **GAS 어빌리티로 구현**한다 (§7-1 참조). 상호작용 컴포넌트는 채널링을 직접 구현하지 않고 어빌리티를 활성화만 한다.
 
-### 4-6. 인벤토리 복제 — FastArray + 서버 권한 인스턴스
+### 4-6. 인벤토리 — 컨테이너별 칸 합산
+
+> 구현 스펙(자료구조·코드·함정표)은 `05_Loot_03_Inventory.md`. 여기에는 **결정과 근거만** 둔다.
+
+**칸은 합산이고 격자 위치가 아니다.** 아이템마다 `FEPItemData::SlotSize`가 있고, UI에서는 전부 한 줄로 보이되 소비하는 칸 수가 다르다 — 붕대 1칸, 구급상자 3칸, 소총 5칸. 무게 시스템과 동형이라 **단편화 처리가 필요 없다**("3칸이 연속으로 비었는가"가 아니라 "총 3칸이 남았는가").
+
+**용량은 스칼라 하나가 아니라 컨테이너마다 독립된 풀이다.** GAME.md의 인벤토리는 본체 10칸 + 배낭의 칸 수이고 **둘이 통합되지 않는다.** 배낭을 버리면 안의 아이템이 같이 나간다.
 
 ```
-UEPInventoryComponent (Character에 부착)
-├─ FEPInventoryList Entries          : FFastArraySerializer   ← COND_OwnerOnly
-│    └─ FEPInventoryEntry            : FFastArraySerializerItem
-│         ├─ int32 SlotIndex         ★ 화면상 몇 번 칸인가 (배열 순서와 무관)
-│         ├─ int32 Handle            (§4-1. 스택 아이템은 INDEX_NONE)
-│         ├─ FName ItemId
-│         └─ int32 Quantity
-├─ int32 MaxSlots                    (Replicated, COND_OwnerOnly — UI가 빈 칸 수를 알아야 함)
-└─ int32 EquippedHandle              (§4-8)
+EntryId=1  Parent=NONE  Bandage         1칸    ← 본체 (10칸)
+EntryId=2  Parent=NONE  Backpack_Small         ← 매고 있는 배낭
+EntryId=3  Parent=2     MedKit          3칸    ← 배낭 내부 (배낭 용량)
+EntryId=4  Parent=2     Weapon_AK74     5칸
+EntryId=5  Parent=4     Scope_4x               ← 배낭 속 총의 부착물 (§7-3)
 ```
 
-**★ `SlotIndex`가 반드시 필요한 이유 — FastArray는 순서를 보장하지 않는다**
+| 결정 | 근거 |
+|---|---|
+| **`ParentEntryId`로 컨테이너를 표현한다** | 자기 타입 재귀는 `Class.cpp:974`에서 **Fatal**이라 무제한 깊이를 중첩으로 못 만든다. 무엇보다 **배낭·부착물·상자가 같은 표현**을 쓰게 되어 위 `EntryId=5`가 특수 케이스 없이 성립한다 |
+| **`SlotId`를 지금 넣는다** | 용량 합산이 "수납된 자식"과 "부착된 자식"을 구분해야 한다(부착물은 칸을 안 먹는다). `ParentEntryId`가 어차피 들어오므로 함께 넣는 편이 싸다. Step 03에서는 항상 `NAME_None` |
+| **`UsedSlots`를 캐시하지 않는다** | 추가·제거·복제 수신 세 경로를 전부 갱신해야 하고 하나만 빠지면 "안 찼는데 가득 찼다"가 된다. 엔트리 30개 × `TMap` 룩업은 수백 나노초다 |
+| **`UsedSlots`를 복제하지 않는다** | 클라는 `COND_OwnerOnly`로 엔트리 전부를 갖고 `SlotSize`는 Definition 조회로 나온다. 복제하면 진실이 두 곳이 된다 |
+| **`EntryId`로 정렬한다** | FastArray는 클라 배열 순서를 보장하지 않는다(`FastArraySerializer.h:54`). 삭제가 `RemoveAtSwap`이라(`:1191`) 실제로 뒤섞인다 |
+| **복제 조건은 `COND_OwnerOnly`** | 조건 없이 복제하면 패킷만 봐도 상대 소지품을 아는 치트가 되고 8인 매치면 대역폭도 8배다. `PlayerState::Kills`/`Extracted`가 이미 같은 조건이다 |
 
-`FFastArraySerializer`는 항목을 **ReplicationID로 식별**할 뿐, 클라이언트 배열의 **순서가 서버와 같다는 보장이 없다.** 추가·제거가 섞이면 클라마다 배열 순서가 달라진다.
+> **시체 루팅이 생겨도 조건을 풀지 않는다.** 시체 액터가 자기 인벤토리를 별도로 노출하는 방식으로 간다. 살아있는 플레이어의 가방은 끝까지 소유자 전용이다.
 
-Step 04는 "1x1 고정 슬롯"을 그리므로, 배열 인덱스를 그대로 칸 번호로 쓰면 **아이템을 하나 줍거나 버릴 때마다 기존 아이콘들이 다른 칸으로 튄다.** 산발적으로 나고 서버는 멀쩡해서 재현이 어려운 부류다.
+#### 삽입 — 전부 아니면 전무
 
-- `AddItem()`이 **가장 낮은 빈 `SlotIndex`** 를 배정한다. 제거해도 다른 엔트리의 `SlotIndex`는 건드리지 않는다
-- UI는 배열을 순회하지 않고 `SlotIndex`로 그린다 (칸 N개를 먼저 만들고 엔트리를 꽂는 방식)
-- 이 필드가 나중에 그리드 인벤토리의 `GridX/GridY`로 자연스럽게 확장된다
+칸이 모자라면 아무것도 들어가지 않고 픽업은 그대로 남는다. 픽업 하나 = 아이템 하나이므로 "몇 개 들어갔나"라는 질문이 성립하지 않는다. 그래서 `AddItem`은 개수가 아니라 **발급된 `EntryId`** 를 돌려준다 — 삽입 직후 그 엔트리를 바로 가리킬 수 있어 "기본 지급 후 자동 장착"에 재검색이 필요 없다.
 
-**★ 복제 조건은 `COND_OwnerOnly`다.**
+#### ★ 균질(fungible) 아이템은 합친다 — 스택이 아니다
 
-조건 없이 복제하면 **모든 클라이언트가 모든 플레이어의 인벤토리를 받는다.** 패킷만 봐도 상대 소지품을 아는 치트가 되고, 8인 매치면 대역폭도 8배가 된다. GAME.md의 "정보 은폐" 기조와도 정면으로 어긋난다.
+현금뭉치 두 개를 주웠을 때 엔트리가 둘로 늘면 칸만 낭비된다. `FEPItemData::bFungible`이면 **`Charges`를 더한다.**
 
-```cpp
-DOREPLIFETIME_CONDITION(UEPInventoryComponent, Entries, COND_OwnerOnly);
-```
+> **균질 = 같은 `ItemId`면 개체 간 구별할 근거가 없다는 뜻.** 현금뭉치·탄약상자는 ✅(탄종은 `ItemId`가 이미 가른다), 무기·탄창은 ❌(`Durability`와 부착물 자식을 갖는다).
 
-프로젝트 관례와도 일치한다 — `PlayerState::Kills` / `Extracted`가 이미 `COND_OwnerOnly`다.
+**스택의 부담이 하나도 안 따라오는 이유는 칸 수가 `Charges`와 무관하기 때문이다.**
 
-> 나중에 "시체 루팅"이 생기면 남의 인벤토리를 봐야 하는데, 그때 조건을 푸는 게 아니라 **시체 액터가 자기 인벤토리를 별도로 노출**하는 방식으로 간다. 살아있는 플레이어의 가방은 끝까지 소유자 전용이다.
+| 스택이 데려오던 것 | `Charges` 합치기 |
+|---|---|
+| `SlotSize × Quantity` 계산 | **없음.** 엔트리당 고정 |
+| 부분 획득 (60발 중 40발) | **없음.** 칸이 안 늘어 실패가 성립 불가 |
+| 병합 순서 규칙 | **없음.** 합칠 대상이 최대 하나다 |
+| 분할 | 자료구조 요구가 아니라 UI 기능이다 |
 
-**결정: `UEPItemInstance`를 복제하지 않는다.** 인스턴스는 서버에만 존재하고, 클라이언트에는 위 POD 구조체만 델타 복제한다.
+**부수 이득 둘.** 가방이 꽉 차도 **돈과 탄약은 항상 들어가** 부분 획득을 없애며 잃은 완충 장치가 복원된다. 그리고 `bMergeable`이 아니라 `bFungible`이라 **"균질 아이템은 `Durability`를 쓰지 않는다"** 가 불변식으로 따라와, *합칠 때 내구도는 어떻게 하나*라는 질문이 아예 발생하지 않는다.
 
-- **왜 FastArray인가:** 일반 `TArray` UPROPERTY는 원소 하나만 바뀌어도 배열 전체를 다시 보낸다. `FFastArraySerializer`는 변경된 항목만 보내고 클라이언트에 `PostReplicatedAdd` / `PostReplicatedChange` / `PreReplicatedRemove` 콜백을 준다 — UI 갱신을 폴링 없이 이벤트로 처리할 수 있다.
-- **왜 UObject 서브오브젝트 복제를 안 쓰는가:** `bReplicateUsingRegisteredSubObjectList` + `AddReplicatedSubObject` 경로는 동작하지만, 인스턴스 수명(생성/파괴 타이밍)과 복제 등록을 손으로 맞춰야 하고 실수하면 클라에서 널 참조가 난다. **클라이언트 UI가 실제로 필요로 하는 건 아이콘·이름·개수뿐**이고 그건 `ItemId`로 전부 조회된다. 복잡도 대비 이득이 없다.
-- **인스턴스는 왜 남기는가:** 서버 권한 상태(무기 잔탄, 내구도, 퀘스트 아이템 식별자)와 향후 DB 직렬화(`SchemaVersion` 필드가 이미 있음)의 자리다. `int32 Handle`이 복제 항목과 서버 인스턴스를 잇는 키다 — **단 비스택 아이템에 한한다.** 탄약·붕대는 개체 상태가 없어 인스턴스 자체를 만들지 않고 `Handle`이 `INDEX_NONE`이다 (§4-1).
-- 확장 여지: 클라가 인스턴스별 상태를 알아야 하는 순간이 오면 `FEPInventoryEntry`에 필드를 추가한다. 구조 전체를 바꿀 필요가 없다.
+#### ★★ 불변식은 문서가 아니라 함수가 강제한다
 
-**슬롯 형태: 1x1 고정 슬롯 (확정)**
+이 설계의 위험은 셋이다 — **엔트리를 지운 뒤 잔탄을 write-back하면 소실**, **수정 후 `MarkItemDirty` 누락**, **컨테이너 제거 시 자식이 고아로 남음**. 셋 다 증상이 엉뚱하고 재현이 어렵다.
 
-아이템마다 크기를 갖고 격자에 테트리스처럼 채우는 방식은 **채용하지 않는다.**
+**규칙으로 남기면 안 된다.** 여러 문서에 적히고 한쪽만 고쳐지는 사고가 반드시 난다. 형태로 막는다.
 
-근거: `FEPItemData`의 크기 관련 필드는 `MaxStack`과 `SlotSize` 둘뿐이고, `SlotSize`는 **1차원 스칼라**라 "2x2"와 "1x4"를 구분할 수 없다. 즉 현재 데이터 모델에 2D 아이템 크기가 존재하지 않는다. 없는 것을 지금 만들어 붙이는 대신, 고정 슬롯 N칸으로 시작한다.
+| 위험 | 막는 형태 |
+|---|---|
+| write-back 순서 | **`RemoveEntry()`가 제거된 서브트리를 반환한다.** 스냅샷을 얻는 유일한 방법이 제거하는 것이므로 순서를 뒤집는 게 문법적으로 불가능해진다 |
+| 자식 고아 | **`RemoveEntry()`가 유일한 제거 지점.** 캐스케이드가 자기 자신을 재귀 호출하므로 장착 검사·write-back이 노드마다 자동으로 돈다 |
+| `MarkItemDirty` 누락 | **원시 엔트리를 밖으로 내보내지 않는다.** 수정은 `AddEntryCharges()` 같은 API로만 |
+| 중간 Broadcast | **스코프 가드.** 순회 중에는 알림이 나가지 않는다 |
 
-- 인벤토리는 `MaxSlots`(예: 20)를 가지며, 한 슬롯 = 한 스택이다
-- **`SlotSize`는 이번 단계에서 읽지 않는다.** 테트리스로 전환할 때를 위해 남겨둔다
+> 지금 남은 위험은 성능도 확장성도 아니라 **코드로 강제 가능한 불변식을 규율에 맡기는 것**이다. 1인 프로젝트에서도 3개월 뒤에는 깨진다.
 
-**스택 병합 순서 (반드시 이 순서로)**
+#### 부착 위치: Character (확정)
 
-정의해두지 않으면 구현자마다 달라지고 부분 획득 반환값이 흔들린다.
+타르코프식은 **사망 시 소지품 손실**이 규칙이다(GAME.md 코어 루프). Character와 수명을 같이하는 것이 규칙과 일치한다 — PlayerState에 두면 사망 시 명시적으로 비워야 하고 "비우는 걸 깜빡하는" 버그의 자리가 생긴다.
 
-```
-AddItem(ItemId, Count, InHandle = INDEX_NONE) → 실제로 들어간 개수
-  1. 같은 ItemId이면서 여유가 있는 기존 스택을 SlotIndex 오름차순으로 채운다
-  2. 남은 수량을 빈 SlotIndex(가장 낮은 것부터)에 MaxStack 단위로 새 엔트리로 만든다
-  3. 빈 슬롯이 떨어지면 거기서 멈추고, 그때까지 들어간 개수를 반환한다
-
-  비스택 아이템(MaxStack == 1)의 핸들 처리:
-    InHandle 유효   → 그대로 엔트리에 대입 (버린 것을 다시 주움 — 잔탄 보존)
-    InHandle 없음   → 빈 슬롯 확보에 성공한 뒤에만 CreateInstance()
-                      ★ 순서를 뒤집으면 삽입 실패 시 고아 인스턴스가 남는다
-```
-
-예: 탄약 60발 획득, `MaxStack` 30, 현재 [20발 스택 1개, 빈 슬롯 1개]
-→ 기존 스택을 30으로 채우고(10 소모) → 빈 슬롯에 30 → **40 삽입, 20 반환 잔여**
-→ 픽업의 `Quantity`를 20으로 낮추고 `FlushNetDormancy()` (§4-4)
-
-**기존 스택을 먼저 채우는 이유:** 반대로 하면 빈 슬롯이 먼저 소모되어, 합칠 수 있었던 상황에서 "가방이 가득 찼다"가 나온다. 플레이어가 납득하지 못한다.
-
-> 테트리스로 가는 이행 경로: `FEPItemData`에 `SlotWidth`/`SlotHeight`를 추가하고 `SlotSize`를 파생값으로 두거나 폐기한다. `FEPInventoryEntry`에 `int32 GridX, GridY, Rotation`을 추가하고, 배치/충돌 판정 로직만 교체하면 된다. **복제 구조(FastArray + POD)는 그대로 유효하다** — 그래서 지금 이 선택이 나중을 막지 않는다.
-
-**부분 획득 정책: 부분 획득을 허용한다.**
-
-탄약 60발을 주웠는데 인벤토리에 40발만 들어가는 경우, 40발을 넣고 픽업의 `Quantity`를 20으로 줄여 월드에 남긴다. 전량 거부는 플레이어 입장에서 납득이 안 된다.
-
-- `AddItem()`은 `bool`이 아니라 **실제로 들어간 개수(`int32`)** 를 반환한다. 0이면 완전 실패
-- 0이 반환되면 §4-4의 `bClaimed`를 되돌리고 `Client_OnInteractFailed`로 사유를 회신한다
-
-**부착 위치: Character (확정)**
-
-`UEPInventoryComponent`는 Character에 붙인다.
-
-- 타르코프식은 **사망 시 소지품 손실**이 규칙이다(GAME.md 코어 루프). Character와 수명을 같이하는 것이 규칙과 일치한다 — PlayerState에 두면 사망 시 명시적으로 비워야 하고, "비우는 걸 깜빡하는" 버그의 자리가 생긴다
-- ASC를 PlayerState에 둔 것과 대비되지만 이유가 다르다. ASC는 리스폰 후에도 **보존되어야** 해서 PlayerState였다. 인벤토리는 반대로 **소실되어야** 한다
-- 탈출 성공 시의 정산(가방 내용물 → 계정 잔고)은 탈출 처리 시점에 Character의 인벤토리를 읽어 PlayerState로 옮기면 된다. 탈출은 매치당 1회 이벤트라 이 방향이 비용이 낮다
+> ASC를 PlayerState에 둔 것과 반대지만 이유가 다르다. ASC는 리스폰 후에도 **보존되어야** 해서 PlayerState였다. 인벤토리는 반대로 **소실되어야** 한다.
 
 ### 4-7. 아이템 버리기 — 픽업의 역방향
 
+> 구현 스펙은 `05_Loot_03_Inventory.md` 03-5.
+
 ```
-Client: G키(장착 무기) 또는 인벤토리 UI에서 선택
-    → Server_DropItem(int32 SlotIndex, int32 Quantity)
-Server:
-    1. 그 SlotIndex에 엔트리가 실제로 있는가 (클라 요청은 신뢰하지 않는다)
-    2. 장착 중이면 먼저 해제 (§4-8 — 어트리뷰트 → 인스턴스 write-back 포함)
-    3. 캐릭터 전방에 AEPPickup 스폰 + 바닥 트레이스로 접지
-    4. 픽업에 핸들 대입 → 그 다음 인벤토리 엔트리 제거   ← §4-1 이관 프로토콜 순서
-       (스택 아이템이면 핸들 없이 수량만 분할)
+G키(장착 무기) 또는 인벤토리 UI에서 선택
+    → Server_DropItem(int32 EntryId)
+    → RemoveEntry가 서브트리를 반환 → 픽업에 값 복사 → DropCooldown 시작
 ```
 
-- **RPC 파라미터는 `FGuid`가 아니라 `int32`다** (§4-1). 여기서는 `SlotIndex`를 쓴다 — UI가 클릭한 칸을 그대로 보내면 되고, 서버는 그 칸의 엔트리를 확인만 하면 된다. 슬롯 인덱스가 요청 중에 바뀌는 경쟁이 문제였지만, `SlotIndex`는 §4-6에서 **제거해도 재배치되지 않는 고정 번호**가 되었으므로 그 문제가 없다.
-- 핸들을 보내도 되지만, 스택 아이템은 핸들이 `INDEX_NONE`이라 식별자가 되지 못한다. 두 경로를 하나로 유지하려면 `SlotIndex`가 맞다.
-
-**핵심 규칙: 비스택 아이템은 인스턴스를 파괴하지 않고 핸들만 픽업으로 넘긴다.** `CreateInstance`를 다시 부르면 잔탄·내구도·`InstanceId`가 전부 초기화된다. **인스턴스의 `Outer`는 끝까지 `UEPItemInstanceSubsystem`이며 바뀌지 않는다** — 바뀌는 것은 "누가 그 핸들을 들고 있는가"뿐이다 (§4-1).
-
-> 스택 아이템(탄약 등)은 애초에 인스턴스가 없으므로 버리기가 정수 뺄셈 + 픽업 스폰으로 끝난다. "버렸다 주우면 같은 개체인가"라는 질문 자체가 성립하지 않는다.
+- **RPC 파라미터는 `EntryId`다.** 배열 인덱스였다면 제거·정렬로 밀리는 사이에 요청이 도착해 엉뚱한 아이템을 버린다. `EntryId`는 재번호되지 않으므로 그 경쟁이 없다
+- **배낭을 버리면 안의 아이템이 같이 나간다**(GAME.md). 픽업이 엔트리 하나가 아니라 **서브트리**를 든다
+- 잔탄·내구도가 보존되는 이유는 **값을 복사했기 때문**이지 규칙을 지켰기 때문이 아니다. 인스턴스를 재생성하는 실수 자체가 성립하지 않는다
 
 | 항목 | 처리 |
 |---|---|
-| 스폰 위치 | 캐릭터 전방 약 100cm, 아래로 라인 트레이스해 접지. 트레이스 실패 시 발밑 |
-| 벽 끼임 | 스폰 위치가 막혀 있으면 발밑으로 폴백. `AlwaysSpawn`으로 두되 위치를 보정한다 |
-| 즉시 재획득 | 버린 직후 `DropCooldown`(약 0.5초) 동안 그 픽업은 `CanInteract()`가 false. 없으면 G를 누른 순간 E 프롬프트가 바로 떠서 실수로 다시 줍는다 |
-| 부분 버리기 | 스택 분할. 남은 수량은 인벤토리에 유지 |
-| 클라 예측 | **하지 않는다.** 버리기는 결과가 늦게 보여도 무해하고, 예측하면 롤백 처리가 필요해진다 |
+| 스폰 위치 | 캐릭터 전방 약 100cm, 아래로 라인 트레이스해 접지. 실패 시 발밑 |
+| 즉시 재획득 | `DropCooldown`(약 0.5초) 동안 `CanInteract()`가 false. 없으면 G를 누른 순간 F 프롬프트가 바로 떠서 실수로 다시 줍는다 |
+| 부분 버리기 | **없다.** 엔트리 하나가 최소 단위다 |
+| 클라 예측 | **하지 않는다.** 결과가 늦게 보여도 무해하고, 예측하면 롤백 처리가 필요해진다 |
 
-> 사망 시 전체 드랍은 이 경로를 N회 호출하면 되지만, **이번 단계 범위 밖이다.** 인벤토리를 통째로 뿌리면 액터가 한 번에 20개 생기므로 별도 설계(가방 컨테이너 하나로 드랍 등)가 필요하다.
+> **사망 시 전체 드랍**(§8 미정 #4)은 이 경로의 확장이다. 시체 위치에 픽업 하나를 스폰하고 **전 엔트리**를 서브트리로 넘긴다 — `ParentEntryId == INDEX_NONE`인 것들이 그 픽업의 루트가 된다. §7-1 컨테이너(시체 루팅)의 특수 케이스다.
 
 ### 4-8. 무기 장착 흐름 이관 (★ 탄약 소유권 충돌)
 
+> 구현 스펙은 `05_Loot_05_Equipment.md`.
+
 **현재 흐름:** `EPGameMode::HandleStartingNewPlayer` → `DefaultWeaponClass` 액터 직접 스폰 → `CombatComponent::EquipWeapon()`. 아이템 계층을 전혀 거치지 않는다.
 
-**목표 흐름:**
+**목표:** 인벤토리 UI/숫자키 → `Server_Equip(EntryId)` → `CombatComponent::EquipFromInventory(EntryId)`.
 
-```
-인벤토리 UI / 숫자키
-    → Inventory: EquippedHandle 갱신
-    → CombatComponent::EquipFromInventory(int32 Handle)      ← 무기 액터의 주인은 그대로 CombatComponent
-         → WeaponDef로 AEPWeapon 액터 스폰 + 소켓 부착 + LinkAnimClassLayers
-         → Instance.CurrentAmmo → GAS Ammo 어트리뷰트로 주입
-```
-
-- **인벤토리 컴포넌트가 `AEPWeapon`을 스폰하지 않는다.** 무기 액터의 수명·부착·애님 레이어·어빌리티 부여는 이미 `UEPCombatComponent`가 전부 쥐고 있다(`EPCombatComponent.cpp:161` `EquipWeapon(AEPWeapon*)`). 인벤토리는 **핸들만 넘긴다.**
-- 기존 `EquipWeapon(AEPWeapon*)`은 남겨두고 `EquipFromInventory(int32 Handle)`를 추가해 그쪽으로 위임한다. 기존 호출부(테스트 지급 등)를 한 번에 갈아엎지 않아도 된다.
+**인벤토리 컴포넌트가 `AEPWeapon`을 스폰하지 않는다.** 무기 액터의 수명·부착·애님 레이어·어빌리티 부여를 이미 `UEPCombatComponent`가 전부 쥐고 있다(`EPCombatComponent.cpp:161`). 인벤토리는 `EntryId`만 넘긴다.
 
 #### 문제: 탄약의 진실이 두 곳에 있다
 
 | 위치 | 성격 |
 |---|---|
-| `UEPAttributeSet::Ammo` / `MaxAmmo` | 캐릭터(ASC) 소유. **1인당 하나뿐.** 복제되고 HUD가 구독. GAS 발사·재장전이 읽고 쓰는 값 |
-| `UEPWeaponInstance::CurrentAmmo` | 아이템 인스턴스 소유. 무기마다 다름. 현재 데드코드 |
+| `UEPAttributeSet::Ammo` / `MaxAmmo` | 캐릭터(ASC) 소유. **1인당 하나뿐.** 복제되고 HUD가 구독 |
+| `FEPInventoryEntry::State.Charges` | 개체별. 무기마다 다름 |
 
-인벤토리에 무기 2정을 넣고 교체하려면 **정별로** 잔탄이 보존돼야 하는데, GAS 어트리뷰트는 캐릭터에 하나뿐이다.
+무기 2정을 넣고 교체하려면 **정별로** 잔탄이 보존돼야 하는데 어트리뷰트는 캐릭터에 하나뿐이다.
 
-#### 결정: 어트리뷰트는 "현재 장착 무기의 뷰", 인스턴스가 진실
+#### 결정: 어트리뷰트는 "현재 장착 무기의 뷰", 엔트리가 진실
 
 ```
-Equip   : Instance.CurrentAmmo  →  SetAmmo()        (주입)
-Unequip : GetAmmo()             →  Instance.CurrentAmmo   (write-back)
+Equip   : Entry.State.Charges  →  SetAmmo()
+Unequip : GetAmmo()            →  Entry.State.Charges
 ```
 
 - 발사·재장전은 지금처럼 GAS 어트리뷰트만 건드린다. **`GA_Item_PrimaryUse` / `GA_Item_Reload`는 수정하지 않는다**
-- 해제 시점의 write-back을 빠뜨리면 무기를 바꿨다 돌아올 때 잔탄이 되돌아간다. **`UnequipWeapon()`에 반드시 넣는다**
-- 사망 시에도 write-back이 필요하다 — 시체/드랍의 잔탄이 맞아야 한다
+- write-back이 필요한 지점은 교체·버리기·사망 셋이고 **전부 `UnequipWeapon()`을 거치게** 만들어 한 곳에만 둔다
+- **버리기 경로의 순서는 `RemoveEntry()`가 보장한다**(§4-6). 여기에 순서 규칙을 다시 적지 않는다
 
 #### 즉시 고쳐야 할 것: `EquipWeapon`의 만탄 리셋
 
-`EPCombatComponent.cpp:177-178`이 장착할 때마다 이렇게 한다.
-
-```cpp
-AS->InitAmmo(static_cast<float>(NewWeapon->WeaponDef->MaxAmmo));      // ← 만탄 리셋
-AS->InitMaxAmmo(static_cast<float>(NewWeapon->WeaponDef->MaxAmmo));
-```
-
-버리기(§4-7)가 들어오는 순간 이건 **익스플로잇이 된다** — 12/30 무기를 버렸다 줍기만 하면 30/30이 된다. 다음으로 바꾼다.
-
-```
-MaxAmmo ← WeaponDef->MaxAmmo      (무기 스펙, 유지)
-Ammo    ← Instance->CurrentAmmo   (인스턴스 상태)
-```
-
-> `Init*` 계열은 어트리뷰트 변경 델리게이트를 발생시키지 않는다. HUD가 장착 즉시 갱신되지 않으면 `SetAmmo()`를 쓰거나 `RefreshAmmo()`를 명시 호출해야 한다. 현재 코드가 `Init*`을 쓰고 있으니 이관 시 확인할 것.
-
-> **타입 정리:** `UEPWeaponDefinition::MaxAmmo`가 `uint8`(상한 255), `UEPWeaponInstance::CurrentAmmo`가 `int32`, GAS 어트리뷰트가 `float`이라 주입/write-back 경로마다 캐스팅이 낀다. `MaxAmmo`를 `int32`로 바꿔 최소한 정수 쪽은 통일한다. 데이터 에셋 값은 그대로 유지된다(폭 확대라 손실 없음).
+`EPCombatComponent.cpp:177-178`이 장착할 때마다 `InitAmmo(MaxAmmo)`로 만탄 리셋을 한다. **버리기가 들어오는 순간 익스플로잇이 된다** — 12/30 무기를 버렸다 줍기만 하면 30/30이다.
 
 #### 장착 슬롯 표현
 
-별도 장비 슬롯 배열을 만들지 않는다. 인벤토리 안의 인스턴스를 가리키기만 한다.
+별도 장비 슬롯 배열을 만들지 않고 인벤토리 엔트리를 가리킨다 — `EquippedEntryId`(무기) / `EquippedBackpackEntryId`(배낭), 둘 다 `COND_OwnerOnly`.
 
-```
-UEPInventoryComponent
-└─ int32 EquippedHandle   (Replicated, COND_OwnerOnly)
-```
+**`COND_OwnerOnly`로 충분하다.** 다른 클라이언트는 `AEPWeapon` 액터가 복제되고(`EPWeapon.cpp:19`) 소켓에 부착되므로 이미 보인다. 이 값은 순전히 소유자 UI를 위한 것이다.
 
-- **`COND_OwnerOnly`로 충분하다.** 다른 클라이언트는 `AEPWeapon` 액터가 복제되고(`EPWeapon.cpp:19` `bReplicates = true`) 캐릭터 소켓에 부착되므로 **이미 보인다.** 이 값은 순전히 소유자 UI("어느 슬롯이 장착 중인가")를 위한 것이다
-- 무기는 인벤토리 슬롯을 차지한 채로 장착된다. 1x1 고정 슬롯 단계에서 별도 장비 슬롯은 과하다
-- 확장 시 `TMap<EEPEquipSlot, int32>`로 바꾼다 (헬멧·가방·보조무기)
-- 장착된 인스턴스는 버리기 전에 자동 해제한다 (§4-7 2단계)
-
-#### GameMode 기본 지급의 이관
-
-`HandleStartingNewPlayer`에서 `AEPWeapon`을 직접 스폰하던 것을 다음으로 바꾼다.
-
-```
-DefaultWeaponClass (액터 클래스)  →  DefaultLoadout : TArray<FName ItemId>
-    → 인벤토리에 인스턴스 생성해 삽입
-    → 무기 타입 첫 항목을 자동 장착
-```
-
-`AEPWeapon` 액터 자체와 `UEPCombatComponent`의 발사 로직은 **건드리지 않는다.** 바뀌는 것은 "누가 언제 무기 액터를 만드는가"뿐이다.
+- **핸들이 두 개가 아니다.** 이전 설계는 인벤토리의 복제 핸들과 CombatComponent의 서버 전용 핸들을 별개로 뒀는데, 그건 "인벤토리가 먼저 비워져도 write-back 대상을 잃지 않게" 하려는 자료구조적 방어였다. `RemoveEntry()`의 반환값이 그 자리를 대신한다
+- **슬롯이 셋(주무기/보조/배낭)이 되면 `TMap<EEPEquipSlot, int32>`로 간다** — §8 미정 #5. 지금 넣으면 원소가 둘인 맵이다
 
 ### 4-9. 확장 지점 — 아이템 종류를 늘려도 인벤토리를 안 고치게
 
-#### ★ 팩토리를 Definition의 **virtual 함수**로 옮긴다
+#### ★ 다형성은 Definition의 virtual 초기화 함수에 남긴다
 
-현재 팩토리는 static이고 시그니처가 서로 다르다.
-
-```cpp
-static UEPItemInstance*   UEPItemInstance::CreateInstance(UObject*, FName, UEPItemDefinition*);
-static UEPWeaponInstance* UEPWeaponInstance::CreateWeaponInstance(UObject*, FName, int32 InMaxAmmo, ...);
-```
-
-이 상태로는 인벤토리가 무기를 만들 때 `EEPItemType`으로 분기하고 `Cast<UEPWeaponDefinition>`을 해야 한다. **방어구·소모품·퀘스트 아이템을 추가할 때마다 그 분기가 자란다.** 확장이 여기서 막힌다.
+기존 static 팩토리 2종(`UEPItemInstance::CreateInstance` / `UEPWeaponInstance::CreateWeaponInstance`)은 시그니처가 서로 달라서, 인벤토리가 무기를 만들 때 `EEPItemType`으로 분기하고 `Cast<UEPWeaponDefinition>`을 해야 했다. **방어구·소모품·퀘스트 아이템을 추가할 때마다 그 분기가 자란다.**
 
 ```
-UEPItemDefinition
-└─ virtual UEPItemInstance* CreateInstance(UObject* Outer) const;    ← 기본: UEPItemInstance
-
-UEPWeaponDefinition : UEPItemDefinition
-└─ virtual UEPItemInstance* CreateInstance(UObject* Outer) const override;
-      → UEPWeaponInstance 생성 + CurrentAmmo = MaxAmmo 초기화
+UEPItemDefinition::InitState(const FEPItemData& Data, FEPItemState& State) const
+    기본  → State.Charges = Data.InitialCharges
+    무기  → State.Charges = MaxAmmo
 ```
 
-- 호출부는 `Definition->CreateInstance(Outer)` 한 줄이다. **인벤토리·픽업·자판기가 아이템 타입을 전혀 모른다**
-- 새 아이템 종류 = Definition 서브클래스 하나 추가. 기존 코드 수정 0
-- 기존 static 팩토리 2개(`UEPItemInstance::CreateInstance`, `UEPWeaponInstance::CreateWeaponInstance`)는 **제거한다.** 어차피 호출처가 0이라 지금이 바꿀 적기다
-- 실제 `NewObject`는 `UEPItemInstanceSubsystem`이 호출하고 Definition의 virtual에 위임한다 (Outer 소유권은 §4-1 규칙 유지)
+호출부는 한 줄이고 **인벤토리·픽업·스포너·자판기가 아이템 타입을 전혀 모른다.** 새 아이템 종류 = Definition 서브클래스 하나, 기존 코드 수정 0.
 
-##### Step 00에서 같이 지울 것
+#### ★ 데이터를 DataTable에 둘지 DataAsset에 둘지
 
-| 심볼 | 이유 |
-|---|---|
-| `UEPItemInstance::Quantity` (`EPItemInstance.h:27`) | 수량의 진실은 `FEPInventoryEntry::Quantity` / `AEPPickup::Quantity` 하나뿐 (§4-1) |
-| `UEPItemInstance::IsSupportedForNetworking()` (`EPItemInstance.h:41`) | 인스턴스를 복제하지 않기로 확정했다(§4-6). `return true`가 남아 있으면 "복제되는 줄 알았다"는 오해의 씨앗이 된다 |
+> **① 여러 아이템을 표로 나란히 놓고 조정하는 값은 `FEPItemData`(DataTable).**
+> **② 그 아이템 한 종류에만 의미 있는 것 — 에셋 참조, `virtual` 동작, 타입 전용 필드 — 은 `UEPItemDefinition`(DataAsset).**
 
-#### 데이터 정합성 — 양방향 참조를 검증한다
+판정선은 **"모든 아이템이 값을 갖는가"** 다.
 
-`FEPItemData::ItemDefinition`(소프트 참조)과 `UEPItemDefinition::ItemDataRow`(`FDataTableRowHandle`)가 **서로를 가리키는 양방향 참조**라 손으로 동기화해야 한다. 아이템이 수십 개를 넘어가면 반드시 어긋나고, 어긋나도 컴파일·로드는 통과한다.
+| | DT | DA |
+|---|---|---|
+| `SlotSize` / `SellPrice` / `Rarity` / `bFungible` / `InitialCharges` / `ContainerCapacity` | ✅ 전부 값을 가짐(대부분 0이어도) | |
+| `WorldMesh` / `Icon` / `GrantedAbility` | | ✅ 에셋 참조 |
+| `MaxAmmo` / `InitState()` | | ✅ 무기 전용 / virtual |
 
-- **DataTable → Definition을 정본으로 정한다.** 조회는 항상 `ItemId → Row → ItemDefinition` 방향으로만 한다
-- `UEPItemDefinition::IsDataValid()`를 오버라이드해 에디터에서 검증한다
-  - `ItemId`가 비어 있지 않은가
-  - `ItemDataRow`가 가리키는 Row Name == 자기 `ItemId`인가
-  - 그 Row의 `ItemDefinition`이 자기 자신을 가리키는가
-- `UEPItemDefinitionSubsystem::Initialize()`에서도 캐시를 만들며 같은 검사를 돌리고, 불일치는 경고 로그를 남긴다 (패키지 빌드에서 조용히 null이 되는 것보다 낫다)
+`MaxAmmo`를 DT에 넣으면 무기 아닌 행이 전부 빈칸이 된다. 그게 판정선이다.
+
+> **두 계층을 유지하는 이유:** 합치면 양방향 참조 동기화·`IsDataValid` 오버라이드·캐시 2개·`FindData` null 무증상 버그가 전부 사라진다. 그럼에도 유지하는 것은 **아이템이 수십 종이 되면 밸런싱 표(CSV·일괄 수정·diff)가 확실히 낫기 때문**이다. DataAsset은 그중 아무것도 안 된다.
 
 #### 소모품이 들어갈 자리를 지금 판다
 
-루트 테이블에 붕대·회복키트가 들어가는데 **사용할 방법이 없다.** 이번 단계에서 구현하지는 않되, 자리는 지금 잡는다.
-
-```
-UEPItemDefinition
-└─ TSubclassOf<UGameplayAbility> GrantedAbility;   ← 사용 시 발동할 어빌리티
-```
+루트 테이블에 붕대·회복키트가 들어가는데 **사용할 방법이 없다.** 구현하지는 않되 자리는 잡는다 — `UEPItemDefinition::GrantedAbility`.
 
 - 장착/선택 시 `GiveAbility`, 해제 시 `ClearAbility`. 사용 입력은 그 어빌리티를 활성화만 한다
-- **힐 스킬이 이미 GAS로 있다.** `UEPGA_Skill_Base`의 `CastTime` + `State.Casting` 구조를 그대로 상속하면 "붕대 3초 시전, 피격 시 취소, 중앙 게이지 표시"가 코드 추가 없이 된다
-- 필드 하나를 지금 넣어두는 비용은 0에 가깝고, 나중에 `UEPItemDefinition`을 다시 열지 않아도 된다
+- **힐 스킬이 이미 GAS로 있다.** `UEPGA_Skill_Base`의 `CastTime` + `State.Casting` 구조를 상속하면 "붕대 3초 시전, 피격 시 취소, 중앙 게이지"가 코드 추가 없이 된다
 
----
+#### 데이터 정합성 — 양방향 참조를 검증한다
+
+`FEPItemData::ItemDefinition`(소프트 참조)과 `UEPItemDefinition::ItemDataRow`가 서로를 가리켜 손으로 동기화해야 한다. 아이템이 수십 개를 넘으면 반드시 어긋나고, 어긋나도 컴파일·로드는 통과한다.
+
+- **DataTable → Definition을 정본으로 정한다.** 조회는 항상 `ItemId → Row → ItemDefinition` 방향으로만
+- `IsDataValid()`로 에디터에서 검증하고, 서브시스템 초기화 때 같은 검사를 런타임에서도 돌린다
+
+##### Step 00에서 지울 것
+
+| 심볼 | 이유 |
+|---|---|
+| `UEPItemInstance` / `UEPWeaponInstance` 클래스 전체 | 개체 상태가 `FEPItemState`로 대체됐다. 호출처 0이라 지금이 지울 적기다 |
+| `InstanceId` (FGuid) | 읽는 코드가 없다. DB 영구 식별자는 저장 시점에 발급한다 |
+| `SchemaVersion` | 아이템이 아니라 **세이브 포맷의 속성**이다. `USaveGame`/DB 행 봉투에 하나만 둔다 |
 
 ## 5. 단계 계획
 
 | Step | 문서 | 내용 | 완료 조건 |
 |---|---|---|---|
-| 00 | `05_Loot_00_ItemCore.md` | **기존 아이템 계층 정비** — Definition의 virtual 팩토리, static 팩토리 2종 제거, `Quantity`/`IsSupportedForNetworking` 제거, `GrantedAbility` 필드, `MaxAmmo` → `int32`, 서브시스템 2종, AssetManager에 `EPItemDefinition` 등록 | 매치 시작 시 Definition이 전량 상주하고, `DT_Items`에서 조회한 Definition으로 인스턴스가 생성되며, 무기면 `UEPWeaponInstance`가 나온다 (콘솔 커맨드로 확인). `IsDataValid()`가 DT↔Definition 불일치를 잡아낸다 |
-| 01 | `05_Loot_01_Spawner.md` | `UEPLootTable`(중첩), `AEPItemSpawner`, `AEPPickup`(Dormancy), `EP.Loot.RollTable` | 맵에 스포너를 놓고 PIE 2인 → 서버·클라 양쪽에서 같은 아이템이 같은 위치에 보인다. `RollTable` 1000회로 등급 비율이 기획표와 일치 |
-| 02 | `05_Loot_02_Interaction.md` | `IEPInteractable`(4함수), `UEPInteractionComponent`(틱 0.1s), **서버 거리 재검증 + `CanInteract()` 재호출**, `bClaimed` 경쟁 처리, HUD 프롬프트 | E키를 누르면 서버가 거리·`CanInteract()`를 재검증하고 픽업이 파괴된다. 사거리 밖 요청 거부. 2인이 동시에 눌러도 한 명만 성공 |
-| 03 | `05_Loot_03_Inventory.md` | `UEPInventoryComponent`(Character 부착), `FEPInventoryList`(FastArray + `SlotIndex`), 스택 병합, 부분 획득 + `bClaimed` 되돌리기, 인스턴스 수명, **버리기(G) + `DropCooldown`** | 주운 아이템이 인벤토리에 쌓이고 델타 복제된다. 탄약을 인벤 여유보다 많이 주우면 **픽업이 줄어든 수량으로 남고 다시 주울 수 있다.** 무기를 버렸다 다시 주우면 **같은 `Handle`** 이 돌아온다 |
-| 04 | `05_Loot_04_InventoryUI.md` | 1x1 고정 슬롯 위젯(`SlotIndex` 기준 배치), FastArray 콜백 기반 갱신, 슬롯에서 버리기 | 인벤토리 화면(Tab)에 아이콘·개수가 표시되고, 획득 즉시 갱신된다 (폴링 없음). **아이템을 줍고 버려도 기존 아이콘의 칸 위치가 바뀌지 않는다** |
-| 05 | `05_Loot_05_Equipment.md` | `EquippedHandle` 복제, `CombatComponent::EquipFromInventory(Handle)`, 탄약 주입/write-back, `EquipWeapon` 만탄 리셋 제거, `DefaultLoadout` 이관 | 무기를 12/30까지 쏘고 버렸다 다시 주워 장착하면 **12/30 그대로**. 다른 클라에서도 장착 무기가 보인다 |
+| 00 | `05_Loot_00_ItemCore.md` | **기존 아이템 계층 정비** — `FEPItemState` 도입, `UEPItemInstance`/`UEPWeaponInstance` 삭제, Definition의 virtual `InitState()`, `GrantedAbility`/`InitialCharges` 필드, `MaxAmmo` → `int32`, `UEPItemDefinitionSubsystem`, AssetManager에 `ItemDef` 등록 | 매치 시작 시 Definition이 전량 상주하고, `ItemId`를 주면 올바른 초기 `State`가 나온다 (무기 → `Charges = MaxAmmo`). `IsDataValid()`가 DT↔Definition 불일치를 잡아낸다 |
+| 01 | `05_Loot_01_Spawner.md` | `UEPLootTable`(중첩), `AEPItemSpawner`, `AEPPickup`(`ItemId` 복제 + `State` 서버 전용, Dormancy), `EP.Loot.RollTable` | 맵에 스포너를 놓고 PIE 2인 → 서버·클라 양쪽에서 같은 아이템이 같은 위치에 보인다. `RollTable` 1000회로 등급 비율이 기획표와 일치 |
+| 02 | `05_Loot_02_Interaction.md` | `IEPInteractable`(4함수), `UEPInteractionComponent`(틱 0.1s), **서버 거리 재검증 + `CanInteract()` 재호출**, `bClaimed` 경쟁 처리, HUD 프롬프트 | F키를 누르면 서버가 거리·`CanInteract()`를 재검증하고 픽업이 파괴된다. 사거리 밖 요청 거부. 2인이 동시에 눌러도 한 명만 성공 |
+| 03 | `05_Loot_03_Inventory.md` | `UEPInventoryComponent`(Character 부착), `FEPInventoryList`(FastArray + `EntryId`/`ParentEntryId` + 내장 `State`), **컨테이너별 칸 합산 + 배낭**, `bFungible` 합치기, `RemoveEntry()` 불변식(write-back + 자식 캐스케이드), **버리기(G) + `DropCooldown`** | 주운 아이템이 인벤토리에 쌓이고 델타 복제된다. 칸이 모자라면 **아무것도 안 들어가고 픽업이 그대로 남는다.** **배낭을 매면 별도 칸이 열리고, 배낭을 버리면 안의 아이템이 같이 나간다.** 현금뭉치 둘을 주우면 **금액이 합쳐진다.** 무기를 버렸다 다시 주우면 **잔탄이 그대로**다 |
+| 04 | `05_Loot_04_InventoryUI.md` | 아이템 목록 위젯(`EntryId` 오름차순), **본체/배낭 두 구획 + 각각의 칸 게이지**, FastArray 콜백 기반 갱신, 목록에서 버리기 | 인벤토리 화면(Tab)에 아이콘·이름·칸 수가 표시되고, 획득 즉시 갱신된다 (폴링 없음). **아이템을 줍고 버려도 기존 항목의 순서가 바뀌지 않는다** |
+| 05 | `05_Loot_05_Equipment.md` | `EquippedEntryId` 복제, `CombatComponent::EquipFromInventory(EntryId)`, 탄약 주입/write-back + `MarkItemDirty`, `EquipWeapon` 만탄 리셋 제거, `DefaultLoadout` 이관 | 무기를 12/30까지 쏘고 버렸다 다시 주워 장착하면 **12/30 그대로**. 다른 클라에서도 장착 무기가 보인다 |
 
 각 Step 완료 시 `LOOT_STATUS.md`와 해당 `05_Loot_0X_XXX_STATUS.md`를 코드 기준으로 갱신한다.
 
 > **★ Step 02와 03의 경계:** Step 02 시점에는 인벤토리가 없다. `CanInteract()`의 "인벤토리 여유 확인"과 `OnInteract()`의 "인벤토리 삽입"은 **Step 03에서 채운다.**
 > - Step 02의 범위 = 인터페이스 4함수 + 트레이스/프롬프트 + **서버 거리·대상 재검증** + `bClaimed` 경쟁 처리
 > - Step 02의 `OnInteract()`는 `Destroy()`만 하고 로그를 남긴다. §3이 내세운 "임시 코드가 안 생긴다"를 지키려면, 이 한 줄이 **Step 03에서 `AddItem()` 호출로 대체되는 유일한 지점**이어야 한다
-> - 여유 확인 없이 파괴하므로 Step 02 단독으로는 부분 획득을 검증할 수 없다. 그건 Step 03 완료 조건이다
+> - 칸 여유 확인 없이 파괴하므로 Step 02 단독으로는 "가방이 가득 찼을 때 픽업이 남는가"를 검증할 수 없다. 그건 Step 03 완료 조건이다
 
 > **UI 범위 통제:** Step 04는 표시 전용이다. 드래그앤드롭·정렬·아이템 이동은 넣지 않는다. 조작이 필요하면 숫자키/컨텍스트 메뉴로 처리한다.
 
@@ -668,16 +593,15 @@ UEPItemDefinition
 
 | 기존 자산 | 이번 단계에서의 역할 |
 |---|---|
-| `FEPItemData` / `DT_Items` | `UEPItemDefinitionSubsystem`이 처음으로 읽는다. `MaxStack`은 스택 병합에, `SlotSize`는 추후 그리드 인벤토리에 쓰인다 |
-| `UEPItemDefinition` / `WorldMesh` / `Icon` | 픽업 메시와 인벤토리 아이콘의 출처. **Step 00에서 `virtual CreateInstance()`와 `GrantedAbility`가 추가된다** |
-| `UEPItemInstance::CreateInstance()` (static) | **Step 00에서 제거.** Definition의 virtual 팩토리로 대체 (§4-9) |
-| `UEPWeaponInstance::CreateWeaponInstance()` (static) | **Step 00에서 제거.** 동상 |
-| `UEPItemInstance::InstanceId` (FGuid) | 유지하되 **DB 영속용**. 복제·RPC에는 `int32` 핸들을 쓴다 (§4-1) |
-| `UEPItemInstance::Quantity` | **Step 00에서 제거.** 수량의 진실은 엔트리/픽업 하나뿐 (§4-1) |
-| `UEPItemInstance::IsSupportedForNetworking()` | **Step 00에서 제거.** 인스턴스는 복제하지 않는다 (§4-6) |
-| `UEPWeaponDefinition::MaxAmmo` (`uint8`) | **Step 00에서 `int32`로.** 인스턴스·어트리뷰트와의 3중 캐스팅 정리 (§4-8) |
+| `FEPItemData` / `DT_Items` | `UEPItemDefinitionSubsystem`이 처음으로 읽는다. **`SlotSize`가 인벤토리 용량 판정의 핵심 필드가 된다** (§4-6). `MaxStack`은 읽지 않는다 — 스택 부활용 예약 필드 |
+| `UEPItemDefinition` / `WorldMesh` / `Icon` | 픽업 메시와 인벤토리 아이콘의 출처. **Step 00에서 `virtual InitState()` / `GrantedAbility` / `InitialCharges`가 추가된다** |
+| `UEPItemInstance` / `UEPWeaponInstance` **클래스 전체** | **Step 00에서 삭제.** 개체 상태는 `FEPItemState`(USTRUCT)로 대체 (§4-1) |
+| `UEPItemInstance::CreateInstance()` (static) | 위 삭제에 포함. 다형성은 Definition의 `InitState()`로 (§4-9) |
+| `UEPWeaponInstance::CreateWeaponInstance()` (static) | 동상 |
+| `UEPItemInstance::InstanceId` (FGuid) / `SchemaVersion` | 위 삭제에 포함. 각각 "읽는 코드 없음" / "세이브 포맷의 속성" (§4-1) |
+| `UEPWeaponDefinition::MaxAmmo` (`uint8`) | **Step 00에서 `int32`로.** `FEPItemState::Charges`·어트리뷰트와의 3중 캐스팅 정리 (§4-8) |
 | `EEPItemType` / `EEPItemRarity` | 루트 테이블 필터링과 UI 색상에 사용 |
-| `UEPWeaponInstance::CurrentAmmo` / `Durability` | Step 05에서 처음으로 실제 값이 된다. 장착 시 GAS `Ammo`로 주입, 해제 시 write-back (§4-8) |
+| `UEPWeaponInstance::CurrentAmmo` / `Durability` | `FEPItemState::Charges` / `Durability`로 이름을 바꿔 살아남는다. Step 05에서 처음으로 실제 값이 된다 (§4-8) |
 | `AEPWeapon` 액터 / `UEPCombatComponent` 발사 로직 | **건드리지 않는다.** 바뀌는 건 "누가 언제 무기 액터를 만드는가"뿐 |
 | `EPGameMode::HandleStartingNewPlayer` (`DefaultWeaponClass`) | Step 05에서 `DefaultLoadout : TArray<FName>` 기반 인벤토리 지급으로 교체 |
 | `EPCombatComponent.cpp:177` `InitAmmo(MaxAmmo)` | Step 05에서 **반드시 제거.** 버리기가 들어오면 만탄 익스플로잇이 된다 (§4-8) |
@@ -716,6 +640,129 @@ GAME.md §자판기 기획 유지 (1000원 → 5초 진동 + 소리 전파 → �
 
 상자는 §7-1 컨테이너의 특수 케이스로 구현한다 — 검색 시간 0, 1회용, 파괴됨.
 
+> **상자를 안 열고 가방에 넣어 탈출하는 것도 가능하다.** 초안에서는 이걸 "값 타입 설계가 아픈 유일한 시나리오"로 보고 금지하려 했으나, **배낭(§4-6)이 들어오면서 중첩 컨테이너를 어차피 만들게 되어 제약이 소멸했다.** 상자는 자기 용량을 가진 컨테이너 아이템이고, 내용물은 `ParentEntryId`로 매달린 엔트리다 — 배낭과 완전히 같은 구조다. 다른 점은 "열기 전까지 내용물을 복제하지 않는다"뿐이다.
+
+### 7-3. 무기 부착물 (배그식 — 깊이 1)
+
+**결정: 무기에 고정 슬롯 N개, 부착물은 자기 슬롯을 갖지 않는다.**
+
+```
+AK-74
+├─ [Optic]  4배율 스코프     ← 여기서 끝
+├─ [Muzzle] 소음기
+├─ [Grip]   수직손잡이
+└─ [Mag]    탄창             (State.Charges = 장전된 발수)
+```
+
+타르코프처럼 부착물 위에 또 부착물을 다는 무제한 중첩은 채용하지 않는다. **부착물 자체는 인벤토리 아이템**이라 따로 줍고 버리고 팔 수 있다.
+
+#### 값 타입 설계가 부착물을 막지 않는다
+
+먼저 엔진 제약 두 개를 **정확히** 못박는다. 대충 알면 "안 된다"고 포기하거나, 반대로 해보고 "되는데?"가 되어 문서 신뢰를 잃는다.
+
+```
+Class.cpp:974   Fatal    "Struct recursion via arrays is unsupported for properties."
+                         ★ 조건: StructProp->Struct == this — 즉 자기 타입 재귀일 때만
+Class.cpp:5512  Warning  "nested NetDeltaSerialize struct ... not supported."
+                         + "Struct will replicate using non-delta serialization."
+```
+
+| 시도 | 결과 |
+|---|---|
+| `FEPItemState` 안에 `TArray<FEPItemState>` (자기 재귀) | **Fatal.** 무제한 깊이를 중첩으로 표현하는 길이 막힌다 |
+| `FEPInventoryEntry` 안에 `TArray<FEPAttachmentEntry>` (이종, 깊이 1) | **동작한다.** 다만 그 페이로드가 **프로퍼티 델타를 잃는다** |
+| FastArray를 struct 안에 중첩 | **동작한다.** 비델타로 강등 + 경고 |
+
+즉 **금지가 아니라 "무제한 깊이는 불가, 깊이 1은 델타 손실"** 이다. 그럼에도 중첩을 쓰지 않는다 — 델타를 잃고, 깊이 1에 갇히며, 배낭(§4-6)과 부착물이 서로 다른 표현을 갖게 되기 때문이다.
+
+**평면 배열 + 부모 참조**로 통일한다. 이 표현은 **깊이와 무관**하다.
+
+```cpp
+FEPInventoryEntry {
+    int32 EntryId;
+    int32 ParentEntryId = INDEX_NONE;   // ← 부착물일 때만 유효. 나중에 추가
+    FName SlotId;                        // "Optic" / "Muzzle" / "Grip" / "Mag"
+    FName ItemId;
+    FEPItemState State;
+}
+```
+
+```
+EntryId=7   Parent=NONE  Weapon_AK74   Charges=0
+EntryId=12  Parent=7     Optic   Scope_4x
+EntryId=13  Parent=7     Muzzle  Suppressor
+EntryId=14  Parent=7     Mag     Mag_STD   Charges=30     ← 장전된 30발
+EntryId=20  Parent=NONE  AmmoBox_545       Charges=100    ← 인벤토리에 따로
+```
+
+- **기존 FastArray가 그대로 동작한다.** 노드마다 델타 복제되고, 복제 구조가 바뀌지 않는다
+- **DB에 그대로 들어간다.** 이건 관계형 모델 그 자체다 (로드맵 5단계)
+- 깊이 1이므로 순회는 `Parent == 무기EntryId` 한 번 훑기다. **재귀도, 순환 참조 방어도 필요 없다**
+
+#### ★ 왜 UObject 트리가 아닌가 — 부착물은 오히려 값 타입에 유리하다
+
+"부착물이 생기면 UObject가 필요해지지 않나"가 자연스러운 반론이고, **반대다.**
+
+| | UObject 트리 | 평면 + 부모 참조 |
+|---|---|---|
+| 순회 | 자연스러움 (포인터 추적) | 한 번 훑기. **가독성만 손해** |
+| 소유권 | 노드마다 Outer·수명·핸들 — **§4-1이 제거한 부담이 노드 수만큼 곱해진다** | 없음 |
+| 복제 | **서브오브젝트 트리 복제는 UObject 복제 중 가장 아픈 경우.** 노드마다 등록, 클라가 트리 재구성, 부착·탈착 순서에 널 참조 | 기존 FastArray 무변경 |
+| 이관 (버리기·거래) | 서브트리 전체의 소유권 이동 | 값 복사 |
+| DB 직렬화 | 트리 → 행 변환 필요 | 이미 행이다 |
+
+UObject의 약점은 애초에 "숫자 둘을 담는 게 무겁다"가 아니라 **소유권과 복제**였고, 트리는 그 둘을 정확히 증폭시킨다.
+
+**UObject가 진짜로 이기는 지점은 노드별 *행동*이다** — 조준경이 ADS 로직을 직접 갖는 식. 이 프로젝트에서 부착물이 하는 일은 **수치 합산**(`Recoil = Base + Σ Modifier`)이고, 무기 속성은 이미 Definition 레벨, 전투 행동은 `AEPWeapon`/GAS에 있다. 시각 효과는 `AEPWeapon`이 소켓에 메시를 붙이면 된다.
+
+> Lyra가 `UItemInstance`를 UObject로 두는 이유는 **런타임에 붙였다 떼는 Fragment**인데, 부착물은 Fragment가 아니라 **자기도 아이템**이다. 인벤토리에 따로 들어가고 팔 수 있으므로 어차피 인벤토리 엔트리와 같은 표현이어야 한다.
+
+#### 지금 확보돼 있는 것
+
+부착물의 전제 조건은 **개체를 안정적으로 가리킬 수 있는 식별자** 하나다. `EntryId`(서버 발급, 단조 증가, **재번호 없음** — §4-1)가 정확히 그것이다.
+
+배열 인덱스를 썼거나 번호를 재사용했다면 부모 참조가 성립하지 않아 부착물이 원천 봉쇄됐을 것이다. FastArray 순서 미보장 때문에 넣은 필드인데 결과적으로 이 문이 열려 있다. **Step 00~05에서 이 성질을 깨지 않는 것이 부착물을 위해 지켜야 할 유일한 것이다.**
+
+> **배낭(§4-6)이 Step 03에 들어오면서 `ParentEntryId`·서브트리 픽업·자식 캐스케이드가 전부 먼저 만들어진다.** 부착물은 그 위에 슬롯 제약(이름 있는 자리, 1개, 타입 필터)만 얹는 것이 된다.
+
+#### 실제로 구현할 때 드는 비용
+
+| 항목 | 비용 | Step 03에서 이미? |
+|---|---|---|
+| 엔트리에 `ParentEntryId` / `SlotId` | — | **✅ 배낭 때문에 이미 들어간다** (§4-6) |
+| `AEPPickup`이 서브트리를 든다 | — | **✅ 배낭 버리기 때문에 이미 필요하다** (§4-7) |
+| `AddSubtree()` + `EntryId` 재매핑 | — | **✅ 배낭 되줍기 때문에 이미 필요하다** (§4-6) |
+| `RemoveEntry()`의 자식 캐스케이드 | — | **✅ 이미 필요하다** (§4-7) |
+| `UsedSlots`가 부착 자식을 제외 | 판정식 한 줄 | ✅ `SlotId` 유무로 이미 구분 |
+| Definition에 슬롯 스키마 (`SlotId` + 허용 `ItemId` 목록) | 신규 | ❌ |
+| 스탯 합산 (`Recoil`/`Spread`/`MaxAmmo`) | 신규 — 아래 | ❌ |
+| `AEPWeapon`이 부착물 메시를 소켓에 부착 | 신규 | ❌ |
+| 부착/탈착 RPC + 허용 타입 검증 | 신규 | ❌ |
+
+**배낭이 Step 03에 들어오면서 부착물의 구조적 비용이 거의 전부 선불된다.** 남는 것은 부착물 고유의 것(슬롯 스키마·스탯 합산·메시·부착 RPC)뿐이다.
+
+##### ★ 지금 미리 해둘 수 있는 유일한 준비 — 스탯 읽는 지점 일원화
+
+현재 `Recoil` / `Spread` / `MaxAmmo`는 GAS 어트리뷰트가 아니라 **`WeaponDef->` 직접 읽기**다. 그래서 부착물 보정을 GE로 줄 수가 없다.
+
+```
+지금 : UEPCombatComponent → WeaponDef->Recoil        (여러 곳에서 직접)
+이후 : UEPCombatComponent → AEPWeapon의 캐시된 합산값  (한 곳)
+```
+
+**합산 결과를 `AEPWeapon`에 캐시하고 읽는 지점을 한 곳으로 모으는 것**이 부착물 전에 할 수 있는 준비다. 읽는 곳이 흩어져 있으면 부착물이 올 때 전부 찾아 고쳐야 한다. Step 05에서 무기 장착 흐름을 손댈 때 같이 정리하면 추가 비용이 거의 없다.
+
+##### 안심해도 되는 것 — `AddItem`의 원자성
+
+부착물 달린 무기 획득 = 엔트리 4개 삽입이지만, **칸은 부모만 먹으므로 부모가 들어가면 자식은 반드시 들어간다.** 부분 실패가 성립하지 않아 롤백 로직이 필요 없다.
+
+#### 무제한 중첩으로 넓히고 싶어지면
+
+**필드 추가가 없다.** 자료구조가 이미 무제한 깊이를 표현할 수 있다. 붙는 것은 둘뿐이다.
+
+- 재귀 순회 (부모를 따라 올라가며 스탯 누적)
+- **순환 참조 방어** — 부착 시 "대상이 내 조상인가" 검사. A에 B를 달고 B에 A를 다는 실수는 반드시 나온다 (§4-2의 루트 테이블 순환과 같은 부류)
+
 ---
 
 ## 8. 열린 결정사항
@@ -724,38 +771,41 @@ GAME.md §자판기 기획 유지 (1000원 → 5초 진동 + 소리 전파 → �
 
 | 항목 | 결정 | 근거 |
 |---|---|---|
+| 개체 상태의 형태 | **`FEPItemState` (USTRUCT, 값 타입).** `UEPItemInstance`/`UEPWeaponInstance`/인스턴스 서브시스템 **전부 삭제** | 담는 게 숫자 둘이고 다형성은 이미 Definition에 있다. UObject성이 Outer·핸들·이관 프로토콜을 강제했다 (§4-1) |
+| 스택 | **없다.** 붕대 3개 = 엔트리 3개 | 타르코프식. 탄약은 탄약상자의 `Charges`, 돈은 현금뭉치의 `Charges` (§4-1) |
+| 균질 아이템 합치기 | **한다** (`FEPItemData::bFungible` — 현금뭉치·탄약상자) | 칸 수가 `Charges`와 무관해 스택의 부담이 하나도 안 따라온다. 가방이 차도 돈·탄약은 들어간다 (§4-6) |
+| 인벤토리 용량 | **컨테이너별 칸 수 합산.** 본체 10칸 + 배낭은 **별도 풀** | 무게 시스템과 동형. 격자 배치가 아니라 스칼라 판정 (§4-6) |
+| 컨테이너 중첩 | **`ParentEntryId`.** 배낭·부착물·상자가 전부 같은 표현 | 자기 타입 재귀는 `Fatal`이고, 평면 표현은 깊이와 무관하다 (§4-6, §7-3) |
+| 불변식 강제 | **`RemoveEntry()`의 반환값 + `AddEntryCharges()` 내부**에서. 문서 규칙 금지 | write-back 순서·`MarkItemDirty`를 규율에 맡기면 3개월 뒤 깨진다 (§4-7) |
 | 인벤토리 부착 위치 | **Character** | 사망 시 소실이 규칙과 일치 (§4-6) |
-| 슬롯 형태 | **1x1 고정 슬롯** | 데이터 모델에 2D 크기가 없음 (§4-6) |
-| 픽업의 인스턴스 **복제** | **하지 않음** — 클라에는 `ItemId` + `Quantity`만 | 복제 비용 (§4-4) |
-| 픽업의 인스턴스 **참조** | 서버 전용 `int32 InstanceHandle` 보유 (버려진 비스택 아이템일 때만 유효) | 버린 무기의 잔탄·내구도 보존이 여기 걸려 있다 (§4-4, §4-7) |
-| 인벤토리 복제 | **FastArray + POD**, 인스턴스는 서버 전용 | 서브오브젝트 수명 관리 회피 (§4-6) |
-| 루트 테이블 | **가중치 + 중첩** | GAME.md 등급 확률 보존 (§4-2) |
-| 부분 획득 | **허용** | `AddItem()`이 삽입된 개수를 반환 (§4-6) |
-| 아이템 버리기 | **포함** (Step 03) | 인스턴스를 재생성하지 않고 픽업으로 이관 (§4-7) |
-| 무기 장착 흐름 이관 | **포함** (Step 05) | 탄약은 인스턴스가 진실, 어트리뷰트는 뷰 (§4-8) |
-| 장비 슬롯 | **별도 배열 없음** — `EquippedHandle` 하나 | 1x1 단계에서 별도 슬롯은 과함 (§4-8) |
+| 픽업이 복제하는 것 | **`ItemId`만.** `FEPItemState`는 서버 전용 | 바닥 무기의 잔탄이 보이면 "여기서 누가 죽었다"가 추론된다 — GAME.md 정보 은폐 (§4-4) |
+| 인벤토리 복제 | **FastArray + POD**, `State`를 엔트리에 **내장** | 내부 struct 델타가 기본 활성이라 변경 필드만 나간다 (§4-6) |
+| 루트 테이블 | **가중치 + 중첩.** 수량 필드 없음 | GAME.md 등급 확률 보존 (§4-2) |
+| 부분 획득 | **없다** — 전부 아니면 전무 | 픽업 하나 = 아이템 하나 (§4-4, §4-6) |
+| 아이템 버리기 | **포함** (Step 03) | `Pickup->State = Entry.State` 값 복사 (§4-7) |
+| 무기 장착 흐름 이관 | **포함** (Step 05) | 탄약은 엔트리가 진실, 어트리뷰트는 뷰 (§4-8) |
+| 장비 슬롯 | **별도 배열 없음** — `EquippedEntryId` **하나** | 값 타입에서는 핸들 이중화가 불필요. §4-7의 순서 규칙으로 대체 (§4-8) |
 | 인벤토리 복제 조건 | **`COND_OwnerOnly`** | 남의 가방이 보이면 치트 + 대역폭 (§4-6) |
-| 식별자 | **`int32` 핸들** (FGuid는 DB 영속용) | 4바이트, 슬롯 인덱스의 경쟁 문제 회피 (§4-1) |
-| 인스턴스 소유 | **`UEPItemInstanceSubsystem`** (World, 서버 전용) | Outer `Rename()` 회피, O(1) 조회, 매치 종료 시 일괄 정리 (§4-1) |
-| 인스턴스 생성 | **Definition의 virtual 팩토리** | static 팩토리로는 타입 분기가 계속 자란다 (§4-9) |
-| 픽업 복제 | **`DORM_Initial`** + Tick off | 수백 개 액터의 관련성 검사 비용 (§4-4) |
-| 인스턴스 생성 대상 | **`MaxStack == 1`인 아이템만.** 스택 아이템은 `Handle = INDEX_NONE` | 스택 병합·분할이 정수 연산으로 끝난다. "수량의 진실이 두 곳" 회피 (§4-1) |
-| 슬롯 번호 | **`FEPInventoryEntry::SlotIndex`** 명시 필드 | FastArray는 클라이언트 배열 순서를 보장하지 않는다 (§4-6) |
+| 식별자 | **`FEPInventoryEntry::EntryId` (`int32`, 서버 발급, 재번호 없음)** | FastArray는 클라 배열 순서를 보장하지 않는다. `FGuid`/`SchemaVersion`은 제거 (§4-1) |
+| 상태 초기화 | **Definition의 virtual `InitState()`** + 기본 클래스 `InitialCharges` | static 팩토리로는 타입 분기가 계속 자란다 (§4-9) |
+| 픽업 복제 | **`DORM_Initial`** + Tick off | 복제 상태가 아예 불변이라 `FlushNetDormancy()`조차 필요 없다 (§4-4) |
+| Definition 보유 대상 | **모든 아이템.** 예외 없음 | 바닥 픽업은 `WorldMesh`가, UI는 `Icon`이, 생성은 `InitState()`가 필요하다 (§4-9) |
 | Definition 로딩 | **매치 전 전량 상주** (AssetManager). 소프트는 `WorldMesh`/`Icon`/`WeaponMesh`만 | 획득은 동기 경로라 로드를 기다릴 수 없다 (§4-1) |
-| 무기 액터 스폰 책임 | **`UEPCombatComponent`** 유지. 인벤토리는 핸들만 넘긴다 | 무기 수명·부착·애님·어빌리티를 이미 쥐고 있다 (§4-8) |
-| 드랍 RPC 파라미터 | **`SlotIndex`** (핸들 아님) | 스택 아이템은 핸들이 없어 식별자가 못 된다. `SlotIndex`는 고정 번호라 경쟁 없음 (§4-7) |
+| 무기 액터 스폰 책임 | **`UEPCombatComponent`** 유지. 인벤토리는 `EntryId`만 넘긴다 | 무기 수명·부착·애님·어빌리티를 이미 쥐고 있다 (§4-8) |
+| 드랍 / 장착 RPC 파라미터 | **`EntryId`** | 재번호되지 않는 고정 번호라 경쟁이 없다 (§4-7) |
+| `FInstancedStruct` 전환 기준 | **세 번째 아이템 카테고리가 자기 전용 필드를 요구할 때** | 지금 도입하면 프로퍼티 델타를 잃고 아무것도 못 받는다 (§4-1) |
 
 ### 미정
 
 | # | 항목 | 선택지 | 비고 |
 |---|---|---|---|
-| 1 | 돈 아이템화 | GAME.md는 "돈 = 인벤토리 아이템" | 자판기 단계에서 결정해도 늦지 않음 |
+| 1 | **탄창이 별도 아이템인가** | ⓐ `[Mag]` 슬롯의 부착물 (탄창마다 `Charges`, 미리 채워 여러 개 휴대 — 타르코프) / ⓑ 무기 자신의 `Charges` + 확장탄창은 `MaxAmmo`를 올리는 스탯 부착물 (배그) | **깊이는 어느 쪽이든 1이고 자료구조가 같다** (§7-3). ⓐ면 `FEPItemState`에 `FName AmmoType`이 필요할 수 있다. **Step 00~05 범위 밖** — Step 05는 무기 자신의 `Charges`(=ⓑ)로 만들고, ⓐ로 갈 때 장착 시 읽는 대상만 자식 엔트리로 바꾼다 |
 | 2 | 스폰 시드 | 매치마다 랜덤 / 시드 고정 | 재현 가능한 테스트가 필요하면 `FRandomStream` + 서버 시드 복제 |
-| 3 | 인벤토리 슬롯 수 | `MaxSlots` 기본값 | 밸런싱 사항. 20 전후에서 시작 |
-| 4 | 사망 시 드랍 | 인벤토리 통째 / 가방 컨테이너 1개 | 액터 20개가 한 번에 생기는 문제. **이번 단계 범위 밖** (§4-7) |
-| 5 | 무기 2정 이상 | 주무기/보조 슬롯 | `TMap<EEPEquipSlot, int32>`로 확장 가능하게만 설계 (§4-8) |
-| 6 | **재장전의 탄약 소비** | 무한 재장전 유지 / 인벤토리 탄약 차감 | 루트 테이블에 `Ammo_762`가 들어가는데 `GA_Item_Reload`는 인벤토리를 보지 않는다 — §4-9의 소모품과 같은 "있는데 쓸 수 없는" 상태. **이번 단계 범위 밖**이지만, Step 05의 `Instance.CurrentAmmo` 주입 구조가 들어오면 차감 지점이 자연스럽게 생긴다 |
-| 7 | DB 영속화 대상 | 어떤 필드를 저장할 것인가 | `InstanceId`(FGuid) + `SchemaVersion` 자리는 이미 있으나 직렬화 스키마가 없다. 탈출 정산·계정 창고가 생길 때 결정 |
+| 3 | 배낭 종류·용량 | 소형/중형/대형 몇 칸씩인가 | 밸런싱 사항. 본체 10칸은 GAME.md 확정 |
+| 4 | 사망 시 드랍 — **구현 시점만 미정** | ~~인벤토리 통째 / 배낭 하나로~~ | **선택지가 아니다.** GAME.md 인벤토리 절이 **"사망 시 전부 드랍"** 으로 이미 정했다. 시체 위치에 픽업 하나 + **전 엔트리**를 서브트리로 (§4-7). **이번 단계 범위 밖** |
+| 5 | 무기 2정 이상 | 주무기/보조 슬롯 | **GAME.md:163이 "주무기 1 + 보조무기 1"로 코어 스펙이다.** Step 05는 1정으로 만들고 `TMap<EEPEquipSlot, int32>`로 확장 (§4-8) |
+| 6 | **재장전의 탄약 소비** | 무한 재장전 유지 / 탄약상자 `Charges` 차감 | 루트 테이블에 `AmmoBox_545`가 들어가는데 `GA_Item_Reload`는 인벤토리를 보지 않는다 — §4-9의 소모품과 같은 "있는데 쓸 수 없는" 상태. **이번 단계 범위 밖**이지만, Step 05의 `Entry.State.Charges` 주입 구조가 들어오면 `AddEntryCharges(Id, -N)`이 차감 지점이 된다. #1의 답에 직접 걸린다 |
+| 7 | DB 영속화 대상 | 어떤 필드를 저장할 것인가 | `FEPItemState`는 `FJsonObjectConverter` 한 줄로 직렬화된다. 영구 식별자와 스키마 버전은 **행 봉투**에 둔다 (§4-1). **★ 셋을 같이 저장한다 — `NextEntryId` / `EquippedEntryId` / `EquippedBackpackEntryId`.** `NextEntryId`를 빠뜨리면 로드 후 1부터 재발급해 기존 엔트리와 충돌하고 `ParentEntryId`를 오염시킨다. 장착 번호만 저장하고 `NextEntryId`를 빠뜨리면 **죽은 번호를 가리킨다** |
 
 ---
 

@@ -15,8 +15,9 @@
 - [ ] `EP.Loot.RollTable LT_Floor_Common 1000` → 등급 비율이 기획표(50/30/15/5)와 오차 범위 내
 - [ ] 어떤 스포너도 참조하지 않는 테이블도 `RollTable`이 이름으로 찾는다
 - [ ] `EP.Loot.Respawn` → 기존 픽업이 정리되고 새로 굴려진다 (`ClearLoot`이 자기 것만 지우는지는 버리기가 생기는 **Step 03에서 재확인**)
-- [ ] `WorldMesh`가 없는 아이템(`Ammo_762` 등)도 플레이스홀더로 보인다
+- [ ] `WorldMesh`가 없는 아이템(`AmmoBox_545` 등)도 플레이스홀더로 보인다
 - [ ] 멀리 있는 픽업이 컬링되고, 가까이 가면 나타난다
+- [ ] **클라이언트 패킷에 픽업의 `Charges`가 나가지 않는다** (`State`는 서버 전용 — 01-4)
 
 ---
 
@@ -37,12 +38,6 @@ struct FEPLootEntry
 
     UPROPERTY(EditAnywhere)
     TObjectPtr<UEPLootTable> SubTable;
-
-    UPROPERTY(EditAnywhere, meta = (ClampMin = "1", EditCondition = "SubTable == nullptr"))
-    int32 MinQuantity = 1;
-
-    UPROPERTY(EditAnywhere, meta = (ClampMin = "1", EditCondition = "SubTable == nullptr"))
-    int32 MaxQuantity = 1;
 };
 
 UCLASS()
@@ -66,11 +61,11 @@ public:
 
 ### 롤 함수 — 깊이 상한과 `EmptyWeight` 규칙
 
-```cpp
-// 반환: 뽑힌 아이템. ItemId가 None이면 "빈 결과"
-struct FEPLootRollResult { FName ItemId; int32 Quantity = 0; };
+**수량 필드가 없다.** 스택이 없으므로 롤 결과는 **아이템 하나**다. "탄약 20~60발"은 수량이 아니라 **탄약상자 하나의 `Charges`** 이고, 그 초기값은 `Definition->InitState()`가 정한다 (Step 00). 루트 테이블이 아이템 타입별 상태를 알게 하지 않는다.
 
-bool RollLootTable(const UEPLootTable* Table, FEPLootRollResult& Out, int32 Depth = 0)
+```cpp
+// 반환: 뽑힌 ItemId. None이면 "빈 결과"
+bool RollLootTable(const UEPLootTable* Table, FName& OutItemId, int32 Depth = 0)
 {
     static constexpr int32 MaxDepth = 8;
     if (!Table || Depth > MaxDepth)
@@ -93,16 +88,15 @@ bool RollLootTable(const UEPLootTable* Table, FEPLootRollResult& Out, int32 Dept
     float Pick = FMath::FRandRange(0.f, TotalWeight);
 
     if (Depth == 0 && (Pick -= Table->EmptyWeight) < 0.f)
-        return true;                       // 빈 결과 (Out.ItemId == None)
+        return true;                       // 빈 결과 (OutItemId == None)
 
     for (const FEPLootEntry& E : Table->Entries)
     {
         if ((Pick -= E.Weight) >= 0.f) continue;
 
-        if (E.SubTable) return RollLootTable(E.SubTable, Out, Depth + 1);
+        if (E.SubTable) return RollLootTable(E.SubTable, OutItemId, Depth + 1);
 
-        Out.ItemId   = E.ItemId;
-        Out.Quantity = FMath::RandRange(E.MinQuantity, E.MaxQuantity);
+        OutItemId = E.ItemId;
         return true;
     }
     return false;
@@ -123,9 +117,9 @@ LT_Floor_Common          (루트 — 바닥 스포너용, EmptyWeight 있음)
 └─ SubTable: LT_Rarity_Legendary   Weight  5
 
 LT_Rarity_Common         (등급 — 자판기·컨테이너가 공유, EmptyWeight = 0)
-├─ Ammo_762      Weight 1, Qty 20~60
-├─ Bandage       Weight 1, Qty 1~2
-└─ Scrap_Paper   Weight 1, Qty 1~3
+├─ AmmoBox_545   Weight 1
+├─ Bandage       Weight 1
+└─ Scrap_Paper   Weight 1
 ...
 ```
 
@@ -230,18 +224,18 @@ class EMPLOYMENTPROJ_API AEPPickup : public AActor
 public:
     AEPPickup();
 
-    void InitFromSpawn(FName InItemId, int32 InQuantity);         // 서버, 스포너가 호출
-    void InitFromDrop(FName InItemId, int32 InQuantity, int32 InHandle);  // 서버, Step 03
+    // 서버 전용. 두 경로 모두 유효한 State를 들고 시작한다
+    void InitPickup(FName InItemId, const FEPItemState& InState);
+
+    const FEPItemState& GetState() const { return State; }      // 서버에서만 의미 있다
 
 protected:
     UPROPERTY(ReplicatedUsing = OnRep_ItemId)
     FName ItemId;
 
-    UPROPERTY(Replicated)
-    int32 Quantity = 0;
-
-    // ★ 서버 전용. 복제하지 않는다. 포인터가 아니라 핸들 (§4-1)
-    int32 InstanceHandle = INDEX_NONE;
+    // ★ 서버 전용. 복제하지 않는다 (아래 참조)
+    UPROPERTY()
+    FEPItemState State;
 
     UPROPERTY(VisibleAnywhere)
     TObjectPtr<UStaticMeshComponent> Mesh;
@@ -249,13 +243,35 @@ protected:
     UFUNCTION()
     void OnRep_ItemId();
 
-    virtual void EndPlay(const EEndPlayReason::Type Reason) override;
-
 private:
     bool bClaimed = false;      // 서버 전용, 복제 안 함 (Step 02)
     TSharedPtr<FStreamableHandle> MeshHandle;
 };
 ```
+
+**스포너가 뿌린 것도 플레이어가 버린 것도 같은 진입점을 쓴다.**
+
+```cpp
+// 스포너 (01-2)
+FEPItemState NewState;
+if (Defs->MakeItemState(RolledItemId, NewState))
+    Pickup->InitPickup(RolledItemId, NewState);
+
+// 버리기 (Step 03)
+Pickup->InitPickup(Entry.ItemId, Entry.State);      // ← 값 복사. 잔탄이 여기서 보존된다
+```
+
+핸들 유무로 갈리던 두 경로가 하나가 된다. **버린 무기의 잔탄이 보존되는 이유는 규칙을 지켜서가 아니라 값을 복사했기 때문**이므로, 이관 프로토콜도 `EndPlay` 정리도 필요 없다.
+
+### ★ `State`를 복제하지 않는 이유는 비용이 아니라 정보 은폐다
+
+`FEPItemState`는 8바이트라 대역폭은 이유가 못 된다. 문제는 **바닥 무기의 잔탄이 복제되면 치트 클라이언트가 릴러번시 범위 내 모든 픽업을 읽어 "어디서 얼마 전에 교전이 있었는지"를 추론한다**는 것이다. `12/30`짜리 라이플이 바닥에 있다 = **여기서 누가 죽었다.** GAME.md가 두 번 명시한 정보 은폐 기둥을 사고로 뒤집는다.
+
+`UPROPERTY()`를 붙이되 `GetLifetimeReplicatedProps`에 등록하지 않는다 — 직렬화·GC 대상이면서 복제는 안 되는 상태다.
+
+> **★ Step 03에서 이 필드가 `TArray<FEPInventoryEntry> Payload`로 교체된다** (추가가 아니라 **교체**). 배낭을 버리면 안의 아이템이 같이 나가야 하고(GAME.md), 나중에 부착물 달린 총도 마찬가지다(§7-3). `InitPickup`의 시그니처도 같이 바뀌고, 스포너 경로는 **원소 1개짜리 배열**을 넘기게 된다. **`AEPPickup`에서 모양이 바뀌는 유일한 곳**이다.
+>
+> **지금 배열로 만들지 않는다.** 스포너가 뿌리는 것은 언제나 아이템 하나이고, 원소가 항상 1개인 배열은 읽는 쪽에 군더더기만 남긴다. 컨테이너를 버리는 경로가 실제로 생기는 Step 03에서 확장한다 — 그때 이 절을 함께 고친다.
 
 > **★ `IEPInteractable`은 아직 상속하지 않는다.** 그 인터페이스는 Step 02에서 만들어지므로, Step 01의 클래스 선언에 `public IEPInteractable`을 미리 써두면 **이 단계만으로는 컴파일되지 않는다.** Step 02에서 상속과 4함수 구현을 함께 추가한다. `bClaimed`는 필드만 미리 두어도 무해하므로 여기 남긴다.
 
@@ -287,12 +303,11 @@ AEPPickup::AEPPickup()
 ### Dormancy 규칙
 
 ```
-스폰            → DORM_Initial (초기 1회 복제 후 휴면)
-Quantity 변경   → FlushNetDormancy()   ← 부분 획득 시 필수 (Step 03)
-획득 완료       → Destroy()            ← 파괴는 휴면과 무관하게 전달된다
+스폰       → DORM_Initial (초기 1회 복제 후 휴면)
+획득 완료  → Destroy()    ← 파괴는 휴면과 무관하게 전달된다
 ```
 
-> `FlushNetDormancy()`를 빠뜨리면 **클라이언트 화면의 개수만 옛날 값으로 남는다.** 서버는 정상이라 재현이 까다로운 종류다. 이번 단계에는 `Quantity` 변경 경로가 없지만, Step 03에서 반드시 넣는다.
+**복제되는 값이 `ItemId` 하나뿐이고 그것은 스폰 시점에 정해져 바뀌지 않는다.** 스택이 있던 설계에서는 부분 획득 시 `Quantity`를 낮추고 `FlushNetDormancy()`를 불러야 했고, 빠뜨리면 "서버는 정상인데 클라 화면의 개수만 옛날 값"이라는 재현 까다로운 버그가 났다. **그 호출도 그 함정도 이제 없다.**
 
 ### 메시 적용 — 플레이스홀더가 필수다
 
@@ -323,21 +338,9 @@ void AEPPickup::OnRep_ItemId()
 
 > `CreateWeakLambda`를 쓴다. 로드가 도착하기 전에 픽업이 파괴되면(다른 플레이어가 먼저 주움) 일반 람다는 죽은 객체를 건드린다.
 
-### `EndPlay` — 인스턴스 정리
+### `EndPlay` 오버라이드가 필요 없다
 
-```cpp
-void AEPPickup::EndPlay(const EEndPlayReason::Type Reason)
-{
-    if (HasAuthority() && InstanceHandle != INDEX_NONE)
-    {
-        /* InstanceSubsystem->Destroy(InstanceHandle); */
-        InstanceHandle = INDEX_NONE;
-    }
-    Super::EndPlay(Reason);
-}
-```
-
-> **★ 이관 프로토콜을 지켜야 한다** (§4-1). 획득 시 `InstanceHandle`을 `INDEX_NONE`으로 **먼저** 비운 뒤 `Destroy()`한다. 순서를 뒤집으면 `EndPlay`가 방금 인벤토리로 넘긴 인스턴스를 지운다 — **획득 직후 무기 잔탄이 사라지는** 형태로 나타난다. 이번 단계에는 획득 경로가 없지만 Step 02/03에서 바로 걸린다.
+이전 설계는 여기서 `InstanceSubsystem->Destroy(Handle)`을 불러야 했고, **획득 시 핸들을 비우는 순서를 지키지 않으면 방금 인벤토리로 넘긴 인스턴스를 지워 잔탄이 사라졌다.** `State`가 값이므로 픽업이 파괴되면 그냥 같이 사라진다 — 지울 대상도, 지키는 순서도 없다.
 
 ---
 
@@ -365,6 +368,24 @@ class EMPLOYMENTPROJ_API UEPLootDeveloperSettings : public UDeveloperSettings   
 |---|---|
 | `EP.Loot.RollTable <이름> <횟수>` | N회 굴려 아이템별·등급별 집계 출력. 이름 해석은 `UAssetManager::GetPrimaryAssetObject` |
 | `EP.Loot.Respawn` | 모든 스포너 `ClearLoot()` 후 `SpawnLoot()` (서버 전용) |
+| `EP.Loot.List` | 월드의 모든 `AEPPickup` (서버 전용) |
+
+```
+> EP.Loot.List
+  Idx  ItemId          Location            Claimed  Cooldown  Payload
+  0    Bandage         (1200, 340, 92)     false    -         1
+  1    Backpack_Small  (880, -20, 90)      false    0.31      4      ← 방금 버린 것
+```
+
+**`EP.Loot.List`가 Step 03의 검증 수단이기도 하다.** 이 문서의 완료 조건 3번이 *"`ClearLoot`이 자기 것만 지우는지는 **Step 03에서 재확인**"* 이라고 적었는데, 확인할 수단이 없으면 그 줄이 공수표다.
+
+| 열 | 증명하는 것 |
+|---|---|
+| `Cooldown` | Step 03의 "버린 직후 0.5초 회색" |
+| `Payload` | **배낭 안의 것이 같이 나갔는가** (Step 03 서브트리) |
+| `Idx` 목록 | `ClearLoot`이 플레이어가 버린 것을 안 지웠는가 |
+
+> 픽업 도구를 Step 03에 두지 않는 이유는 **두 문서로 갈리지 않게** 하기 위함이다. 인벤토리는 `EP.Inv.*`, 월드 픽업은 `EP.Loot.*`로 나눈다.
 
 **`RollTable`이 이 단계의 핵심 검증 수단이다.** 확률은 눈으로 못 믿는다 — 1000회 굴려 등급 비율이 50/30/15/5에 수렴하는지 확인해야 중첩 롤과 `EmptyWeight` 규칙이 맞게 구현됐음을 안다.
 
@@ -383,6 +404,8 @@ class EMPLOYMENTPROJ_API UEPLootDeveloperSettings : public UDeveloperSettings   
 | 7 | `LootTable` AssetManager 미등록 | `RollTable`이 새 테이블을 못 찾음 | 01-1 등록 |
 | 8 | 비동기 메시 로드에 일반 람다 | 로드 도착 전 픽업이 파괴되면 크래시 | `CreateWeakLambda` |
 | 9 | 서버에서 시각 에셋 로드 | 데디서버 메모리 낭비 | `IsNetMode(NM_DedicatedServer)` 가드 |
+| 10 | `State`를 `DOREPLIFETIME`에 등록 | 바닥 무기 잔탄이 전 클라에 노출 → 교전 흔적 추론 | 01-4. `UPROPERTY()`만, 복제 등록 없음 |
+| 11 | `MakeItemState` 실패를 무시하고 픽업 스폰 | Definition 없는 아이템이 기본값으로 깔림. Step 04에서 아이콘 없이 나타나 원인이 멀어짐 | 실패 시 스폰 생략 + 에러 로그 |
 
 ---
 
@@ -390,5 +413,4 @@ class EMPLOYMENTPROJ_API UEPLootDeveloperSettings : public UDeveloperSettings   
 
 - 줍기 / `bClaimed` 사용 → **Step 02** (필드는 미리 선언만)
 - `IEPInteractable` 구현 → **Step 02**
-- `Quantity` 변경 + `FlushNetDormancy()` → **Step 03** (부분 획득이 생길 때)
-- `InitFromDrop()` 실제 호출 → **Step 03**
+- 버리기 경로에서 `InitPickup()` 호출 → **Step 03** (이번엔 스포너 경로만)

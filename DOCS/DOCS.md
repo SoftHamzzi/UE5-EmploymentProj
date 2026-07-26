@@ -42,7 +42,7 @@
 | Map/Level Design | 맵 제작 (창고/컨테이너 구역, 파밍 포인트, 탈출 지점, 자판기 배치) |
 | UI/HUD | 체력바, 탄약, 타이머, 킬 피드, 인벤토리 UI (UMG, 최소한으로) |
 | Inventory + Economy | 슬롯 기반 인벤토리, 아이템 판매, 자판기 비용 |
-| Asset & Data Driven | `FTableRowBase` + `UItemDefinition(UPrimaryDataAsset)` + `ItemInstance` |
+| Asset & Data Driven | `FTableRowBase` + `UItemDefinition(UPrimaryDataAsset)` + `FItemState`(값 타입 개체 상태) |
 
 ### 후순위
 
@@ -62,7 +62,7 @@
 - PlayerState에 Kills, Extracted 복제 (COND_OwnerOnly). Money는 인벤토리 아이템으로 처리.
 - 모든 핵심 변수 UPROPERTY로 노출/복제
 - 핵심 함수 UFUNCTION(Server, Reliable) / BlueprintCallable 등 적절히 표시
-- Data-driven: `DataTable Row + ItemDefinition + ItemInstance` 구조로 무기/아이템 정의
+- Data-driven: `DataTable Row + ItemDefinition(DataAsset) + FItemState(USTRUCT)` 구조로 무기/아이템 정의
 
 ### 2단계: Replication + Movement Component
 - 기본 이동/점프는 CharacterMovement가 네트워크 처리
@@ -173,10 +173,10 @@
 | AI 적 | Behavior Tree, 감지/추적/사격, 서버 권한 AI 로직 |
 | 사격/히트 | 서버 권한 레이캐스트, Lag Compensation, Hit Validation |
 | Extraction | Zone 진입 판정(서버), 탈출 상태 복제(PlayerState), 타이머 |
-| Inventory | 슬롯 기반 아이템 관리, 장비 장착/해제 |
+| Inventory | 칸 수 합산 기반 아이템 관리(스택 없음), 장비 장착/해제 |
 | Economy | 아이템 판매, 자판기 비용, 킬/탈출 보상 |
 | Quest | 퀘스트 아이템 수집 진행도 관리, 완료 조건 판정 |
-| Data Driven | DataTable(Row) + ItemDefinition(DataAsset) + ItemInstance 분리 |
+| Data Driven | DataTable(Row) + ItemDefinition(DataAsset) + FItemState(USTRUCT) 분리 |
 | Animation | AnimBP 스테이트 머신, 몽타주 (사격/재장전/사망), 네트워크 복제 (SimulatedProxy 동기화) |
 | Map | 레벨 디자인, 파밍 포인트/자판기/탈출 지점 배치, 라이팅, 내비메시 (AI 이동용) |
 | UI/HUD | UMG 위젯 (체력바, 탄약, 타이머, 킬 피드, 인벤토리 화면) |

@@ -7,16 +7,16 @@
 
 ## 목표
 
-E키로 픽업에 상호작용하고 **서버가 판정**한다. 이 단계에는 인벤토리가 없으므로 픽업은 파괴되고 로그만 남는다.
+**F키**로 픽업에 상호작용하고 **서버가 판정**한다. 이 단계에는 인벤토리가 없으므로 픽업은 파괴되고 로그만 남는다.
 
 **이 컴포넌트는 이번 단계에서 가장 오래 쓰이는 자산이다.** 픽업·컨테이너(§7-1)·자판기(§7-2)·탈출 지점(로드맵 12)이 전부 같은 진입점을 쓴다.
 
 **완료 조건**
 
-- [ ] 조준선에 픽업을 담으면 HUD에 "줍기 — 붕대 x2" 프롬프트가 뜬다
-- [ ] E → 픽업이 파괴되고 서버 로그에 획득이 찍힌다
+- [ ] 조준선에 픽업을 담으면 HUD에 "줍기 — 붕대" 프롬프트가 뜬다
+- [ ] F → 픽업이 파괴되고 서버 로그에 획득이 찍힌다
 - [ ] **사거리 밖에서 보낸 요청을 서버가 거부**한다 (치트 시뮬레이션: RPC 직접 호출)
-- [ ] PIE 2인이 동시에 E → **한 명만 성공**하고 나머지는 실패 사유를 받는다
+- [ ] PIE 2인이 동시에 F → **한 명만 성공**하고 나머지는 실패 사유를 받는다
 - [ ] 로컬 컨트롤러가 아닌 캐릭터에서는 트레이스 틱이 아예 안 돈다
 
 ---
@@ -48,7 +48,7 @@ public:
 
 | 함수 | 픽업(이번) | 컨테이너(§7-1) | 자판기(§7-2) | 탈출(로드맵 12) |
 |---|---|---|---|---|
-| `GetInteractText` | "줍기 — 붕대 x2" | "검색" | "1000원 투입" | "탈출" |
+| `GetInteractText` | "줍기 — 붕대" | "검색" | "1000원 투입" | "탈출" |
 | `CanInteract` | `DropCooldown` / 인벤 여유 | 이미 검색됨 | 돈 부족 | 조건 미달 |
 | `GetInteractDuration` | `0` | 검색 N초 | `5` | 대기 시간 |
 | `OnInteract` | 인벤 삽입 후 파괴 | 내용물 UI 개방 | 돈 차감 + 배출 | 탈출 처리 |
@@ -182,10 +182,10 @@ Server_Interact(Target)
 
 ### 5·6단계 — 동시 획득 경쟁
 
-두 플레이어가 같은 픽업에 동시에 E를 누르는 상황은 **반드시 발생한다.** `bClaimed`를 인벤토리 삽입보다 **먼저** 세워야 두 요청이 같은 프레임에 들어와도 하나만 통과한다.
+두 플레이어가 같은 픽업에 동시에 F를 누르는 상황은 **반드시 발생한다.** `bClaimed`를 인벤토리 삽입보다 **먼저** 세워야 두 요청이 같은 프레임에 들어와도 하나만 통과한다.
 
-- `bClaimed`는 **복제하지 않는다.** 서버 내부 상태이고, 결과는 액터 파괴(또는 Step 03의 `Quantity` 갱신)로 클라에 전달된다
-- **Step 03에서 부분 획득이 생기면 `bClaimed`를 되돌려야 한다.** "성공→파괴 / 실패→해제" 두 갈래로만 두면 픽업이 살아남는 경로에서 `bClaimed`가 true로 굳어 **아무도 그 아이템을 다시 못 줍는다**
+- `bClaimed`는 **복제하지 않는다.** 서버 내부 상태이고, 결과는 액터 파괴로 클라에 전달된다
+- **Step 03에서 "가방에 자리가 없음" 실패가 생기면 `bClaimed`를 되돌려야 한다.** 안 되돌리면 픽업이 살아남은 채 `bClaimed`가 true로 굳어 **아무도 그 아이템을 다시 못 줍는다.** 스택이 없으므로 갈래는 "성공→파괴 / 실패→해제" 둘뿐이다
 
 ### 실패를 조용히 삼키지 않는다
 
@@ -221,8 +221,8 @@ void SetInteractPrompt(const FText& Text, bool bEnabled);   // bEnabled false면
 FText AEPPickup::GetInteractText() const
 {
     // DefinitionSubsystem->FindData(ItemId)->DisplayName 사용
-    return FText::Format(NSLOCTEXT("EP", "PickupFmt", "줍기 — {0} x{1}"),
-                         DisplayName, FText::AsNumber(Quantity));
+    // 스택이 없으므로 개수 표기가 없다 — 픽업 하나 = 아이템 하나
+    return FText::Format(NSLOCTEXT("EP", "PickupFmt", "줍기 — {0}"), DisplayName);
 }
 
 bool AEPPickup::CanInteract(AEPCharacter* Instigator, FText& OutReason) const
@@ -234,8 +234,7 @@ bool AEPPickup::CanInteract(AEPCharacter* Instigator, FText& OutReason) const
 void AEPPickup::OnInteract(AEPCharacter* Instigator)
 {
     // ★ Step 03에서 AddItem() 호출로 대체되는 유일한 지점
-    UE_LOG(LogTemp, Log, TEXT("[Pickup] %s x%d 획득 (인벤토리 미구현)"),
-           *ItemId.ToString(), Quantity);
+    UE_LOG(LogTemp, Log, TEXT("[Pickup] %s 획득 (인벤토리 미구현)"), *ItemId.ToString());
     Destroy();
 }
 ```
@@ -250,7 +249,7 @@ void AEPPickup::OnInteract(AEPCharacter* Instigator)
 
 기존 스킬 입력과 같은 패턴이다.
 
-- `IA_Interact` 생성 → `Content/Characters/InputActions/`
+- `IA_Interact` 생성 → `Content/Characters/InputActions/`. **IMC에 `F` 키로 바인딩** (E 아님)
 - `AEPPlayerController`에 `InteractAction` UPROPERTY + FORCEINLINE 게터 (Dash/Heal/Shield와 동일)
 - `AEPCharacter::SetupPlayerInputComponent`에서 null 가드 후 `Triggered` 바인딩 → `InteractionComponent->Input_Interact()`
 - `AEPCharacter` 생성자에 `InteractionComponent = CreateDefaultSubobject<UEPInteractionComponent>(...)` 추가 (`CombatComponent`/`RewindComponent` 옆)
