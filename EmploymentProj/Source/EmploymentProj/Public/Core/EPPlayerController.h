@@ -11,7 +11,6 @@ class UInputAction;
 class AEPCharacter;
 class UEPHUDWidget;
 class UAbilitySystemComponent;
-
 class UEPCrosshairWidget;
 
 UCLASS()

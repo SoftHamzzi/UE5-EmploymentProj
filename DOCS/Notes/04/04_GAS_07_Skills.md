@@ -628,6 +628,15 @@ UEPGA_Skill_Base::UEPGA_Skill_Base()
     NetExecutionPolicy = EGameplayAbilityNetExecutionPolicy::LocalPredicted;
     InstancingPolicy = EGameplayAbilityInstancingPolicy::InstancedPerActor;
 
+    // 클라의 EndAbility가 서버 인스턴스를 강제 종료하지 못하게 차단 (엔진 기본값 true).
+    // true면 클라 WaitDelay(3초)가 먼저 완료 → ServerEndAbility RPC → 서버의 WaitDelay 태스크가
+    // 발화 직전에 죽어서 서버 OnCastComplete()가 스킵됨 → 힐/쿨다운 GE가 권위에서 미적용.
+    // 클라 타이머 완료(t=3)와 서버 타이머 완료(t=L+3) 시점에 RPC 편도지연 L이 정확히 상쇄되어
+    // 서버 도착이 완전한 동시(t=3+L) — 프레임 내 처리 순서상 RPC(TickDispatch, 프레임 초반)가
+    // 타이머(월드 틱 중)를 대부분 이겨서 높은 확률로 힐이 무시되는 레이스였다.
+    // 서버→클라 종료 복제는 이 플래그와 무관하게 항상 동작하므로 피격 인터럽트 경로는 영향 없음.
+    bServerRespectsRemoteAbilityCancellation = false;
+
     // 모든 스킬 공용 — 새 스킬을 추가해도 이 두 줄은 베이스에서 자동 상속됨. 기존 스킬 파일은 손댈 필요 없음
     ActivationBlockedTags.AddTag(EmpGameplayTags::TAG_State_Casting);
     ActivationBlockedTags.AddTag(EmpGameplayTags::TAG_State_Dead);
@@ -974,6 +983,7 @@ void UEPGA_Skill_ShieldOn::OnCastComplete()
 | 지상 Dash가 거의 안 나감 | 수평 발사 → 즉시 착지 → GroundFriction/Braking이 감속 | Z 부스트(DashZBoost)로 잠깐 체공, bZOverride=true |
 | DefaultAbilities 중복 부여 | PossessedBy 재호출 | 현 프로젝트는 재빙의 없음 — 도입 시 가드 추가 |
 | `RemoveActiveGameplayEffect called without Authority` 경고 | `LocalPredicted` 어빌리티의 `EndAbility`가 클라 예측 인스턴스에서도 실행되는데, authority 체크 없이 GE를 지우려 함 | `ActorInfo->IsNetAuthority()`로 감싸 서버에서만 실행 — `UEPGA_Skill_Base::EndAbility`에 이미 반영 (Step 8-4) |
+| 시전 완료 시 힐이 높은 확률로 무시됨 (Casting/Healing 태그는 정상) | 클라 타이머가 먼저 완료 → `EndAbility`의 `ServerEndAbility` RPC가 서버 자신의 `WaitDelay` 발화보다 먼저 처리 → 서버 인스턴스가 강제 종료돼 서버 `OnCastComplete()` 스킵 (힐·쿨다운 GE 전부 미적용). RPC 도착(t=3+L)과 서버 타이머(t=L+3)가 정확히 동시라 프레임 내 처리 순서로 갈리는 레이스 | 베이스 생성자에 `bServerRespectsRemoteAbilityCancellation = false;` — 클라 종료가 서버 인스턴스를 못 죽이게 함 (Step 8-4에 반영). 힐이 무시될 땐 쿨다운도 같이 안 도는 것이 이 버그의 증거 |
 | 힐 중 스프린트해도 속도가 안 줄어듦 | `MoveSpeedMultiplier`를 Sprint/Aim 분기 **이전**에 곱하거나, 분기 자체를 건드림 | `GetMaxSpeed()`에서 Sprint/Aim으로 Base를 정한 **뒤에** 마지막으로 `* MoveSpeedMultiplier` |
 | 감속 GE가 겹칠 때 계산이 이상함 | Modifier Op을 Add로 설정 | Multiply로 설정 — 여러 감속 효과가 자동으로 곱연산 누적됨 (Step 8-5, `GE_Healing`) |
 | Heal 시전 중 Heal을 또 눌러도(자기 재시전) 안 막힘 | `GE_Healing`의 GrantedTags에 `State.Casting` 추가를 빠뜨림 | `State.Casting`이 베이스의 `ActivationBlockedTags`에 있으므로, 이 태그가 GE_Healing에서 실제로 부여돼야 자기 자신도 막힘 |

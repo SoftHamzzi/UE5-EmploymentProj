@@ -11,6 +11,7 @@ class UAbilitySystemComponent;
 class UProgressBar;
 class UTextBlock;
 class UEPSkillSlotWidget;
+class UEPCastGaugeWidget;
 class AEPGameState;
 struct FOnAttributeChangeData;
 
@@ -49,6 +50,12 @@ protected:
 	
 	UPROPERTY(meta = (BindWidget))
 	TObjectPtr<UEPSkillSlotWidget> ShieldSlot;
+	
+	UPROPERTY(meta = (BindWidget))
+	TObjectPtr<UEPCastGaugeWidget> CastGauge;
+	
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UEPCastGaugeWidget> ShieldGauge;
 	
 private:
 	void UnbindAll();

@@ -11,6 +11,7 @@ UEPGA_Skill_Base::UEPGA_Skill_Base()
 {
 	NetExecutionPolicy = EGameplayAbilityNetExecutionPolicy::LocalPredicted;
 	InstancingPolicy = EGameplayAbilityInstancingPolicy::InstancedPerActor;
+	bServerRespectsRemoteAbilityCancellation = false;
 	
 	ActivationBlockedTags.AddTag(EmpGameplayTags::TAG_State_Casting);
 	ActivationBlockedTags.AddTag(EmpGameplayTags::TAG_State_Dead);
@@ -81,5 +82,5 @@ void UEPGA_Skill_Base::OnCastTimerComplete()
 void UEPGA_Skill_Base::OnDamageDuringCast(FGameplayEventData Payload)
 {
 	OnCastInterrupted();
-	EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, false);
+	EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, true);
 }

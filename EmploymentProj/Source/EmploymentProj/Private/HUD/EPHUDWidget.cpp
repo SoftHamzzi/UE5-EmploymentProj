@@ -10,6 +10,7 @@
 #include "GAS/EPAttributeSet.h"
 #include "GAS/EPNativeGameplayTags.h"
 #include "HUD/EPSkillSlotWidget.h"
+#include "HUD/EPCastGaugeWidget.h"
 
 void UEPHUDWidget::InitWithASC(UAbilitySystemComponent* InASC)
 {
@@ -34,6 +35,8 @@ void UEPHUDWidget::InitWithASC(UAbilitySystemComponent* InASC)
 	if (DashSlot) DashSlot->InitWithASC(InASC);
 	if (HealSlot) HealSlot->InitWithASC(InASC);
 	if (ShieldSlot) ShieldSlot->InitWithASC(InASC);
+	if (CastGauge) CastGauge->InitWithASC(InASC);
+	if (ShieldGauge) ShieldGauge->InitWithASC(InASC);
 	
 	RefreshHealth();
 	RefreshAmmo();

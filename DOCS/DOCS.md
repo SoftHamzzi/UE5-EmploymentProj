@@ -204,7 +204,7 @@
 7. ⬜ 자판기 시스템 (서버 판정 + 상태 복제 + Multicast 사운드)
 8. ⬜ AI 적 (Behavior Tree + 서버 권한 로직)
 9. ✅ GAS 데미지 파이프라인 + PrimaryUse/Reload/HitZone/Decals
-10. ⬜ GAS 스킬 3종 (Dash, Heal, ShieldOn) + Overwatch형 HUD
+10. ✅ GAS 스킬 3종 (Dash, Heal, ShieldOn) + Overwatch형 HUD
 11. ⬜ 인벤토리 + 장비 + 판매
 12. ⬜ Extraction + 퀘스트 수집
 13. ⬜ 맵 제작 (레벨 디자인, 파밍 포인트, 자판기/탈출 지점 배치, 내비메시)
