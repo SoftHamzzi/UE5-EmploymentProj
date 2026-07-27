@@ -50,7 +50,7 @@ public:
 	
 	// 최대 탄약
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Combat")
-	uint8 MaxAmmo = 30;
+	int32 MaxAmmo = 30;
 	
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Combat")
 	TMap<FGameplayTag, float> TagDamageMultiplierMap;
@@ -103,6 +103,5 @@ public:
 	// --- 트레이스 ---
 	float TraceDistanceCm = 10000.f;
 	
-	// PrimaryDataAsset Id 오버라이드
-	virtual FPrimaryAssetId GetPrimaryAssetId() const override;
+	virtual void InitState(const FEPItemData& Data, FEPItemState& State) const override;
 };

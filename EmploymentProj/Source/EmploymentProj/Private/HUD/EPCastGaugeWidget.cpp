@@ -1,8 +1,8 @@
 // Fill out your copyright notice in the Description page of Project Settings.
 
+#include "HUD/EPCastGaugeWidget.h"
 #include "AbilitySystemComponent.h"
 #include "HUD/EPGaugeVisual.h"
-#include "HUD/EPCastGaugeWidget.h"
 
 void UEPCastGaugeWidget::InitWithASC(UAbilitySystemComponent* InASC)
 {

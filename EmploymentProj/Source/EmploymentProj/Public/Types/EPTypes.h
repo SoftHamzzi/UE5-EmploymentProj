@@ -72,6 +72,18 @@ struct FEPHitboxSnapshot
 	TArray<FEPBoneSnapshot> Bones;
 };
 
+USTRUCT(BlueprintType)
+struct FEPItemState
+{
+	GENERATED_BODY()
+	
+	UPROPERTY(BlueprintReadWrite, Category = "Item")
+	int32 Charges = 0;
+	
+	UPROPERTY(BlueprintReadWrite, Category = "Item")
+	float Durability = 100.0f;
+};
+
 UENUM(BlueprintType)
 enum class EEPBallisticType : uint8
 {

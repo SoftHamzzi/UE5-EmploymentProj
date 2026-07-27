@@ -8,12 +8,16 @@
 #include "Types/EPTypes.h"
 #include "EPItemDefinition.generated.h"
 
+class UGameplayAbility;
+struct FEPItemData;
+
 UCLASS()
 class EMPLOYMENTPROJ_API UEPItemDefinition : public UPrimaryDataAsset
 {
 	GENERATED_BODY()
 	
 public:
+	// === 변수 ===
 	// Row와 매칭되는 ID
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Item")
 	FName ItemId;
@@ -30,6 +34,16 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Item|Visual")
 	TSoftObjectPtr<UTexture2D> Icon;
 	
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Item|GAS")
+	TSubclassOf<UGameplayAbility> GrantedAbility;
+	
+	// === 함수 ===
+	virtual void InitState(const FEPItemData& Data, FEPItemState& State) const;
+	
 	// PrimaryDataAsset ID
 	virtual FPrimaryAssetId GetPrimaryAssetId() const override;
+	
+#if WITH_EDITOR
+	virtual EDataValidationResult IsDataValid(FDataValidationContext& Context) const override;
+#endif
 };

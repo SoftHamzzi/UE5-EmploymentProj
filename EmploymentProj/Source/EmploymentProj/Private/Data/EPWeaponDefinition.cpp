@@ -6,7 +6,7 @@
 #include "Curves/CurveFloat.h"
 #include "Abilities/GameplayAbility.h"
 
-FPrimaryAssetId UEPWeaponDefinition::GetPrimaryAssetId() const
+void UEPWeaponDefinition::InitState(const FEPItemData& Data, FEPItemState& State) const
 {
-	return FPrimaryAssetId(TEXT("WeaponDef"), GetFName());
+	State.Charges = MaxAmmo;
 }
