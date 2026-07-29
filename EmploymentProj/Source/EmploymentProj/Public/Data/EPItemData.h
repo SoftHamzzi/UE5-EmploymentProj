@@ -38,6 +38,12 @@ struct FEPItemData : public FTableRowBase
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Item")
 	int32 SlotSize = 1;
 	
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Item")
+	int32 ContainerCapacity = 0;
+	
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Item")
+	int32 InitialCharges = 0;
+	
 	// 경제
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Item")
 	int32 SellPrice = 100;
@@ -45,6 +51,9 @@ struct FEPItemData : public FTableRowBase
 	// 플래그
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Item")
 	bool bIsQuestItem = false;
+	
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Item")
+	bool bFungible = false;
 	
 	// 이 Row에 대응하는 Definition 에셋 참조
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Item")

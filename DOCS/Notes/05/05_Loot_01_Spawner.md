@@ -17,7 +17,7 @@
 - [ ] `EP.Loot.Respawn` → 기존 픽업이 정리되고 새로 굴려진다 (`ClearLoot`이 자기 것만 지우는지는 버리기가 생기는 **Step 03에서 재확인**)
 - [ ] `WorldMesh`가 없는 아이템(`AmmoBox_545` 등)도 플레이스홀더로 보인다
 - [ ] 멀리 있는 픽업이 컬링되고, 가까이 가면 나타난다
-- [ ] **클라이언트 패킷에 픽업의 `Charges`가 나가지 않는다** (`State`는 서버 전용 — 01-4)
+- [ ] **클라이언트 패킷에 픽업의 `Charges`가 나가지 않는다** (`State`는 서버 전용 — 01-4). 검증: 클라 창에서 `EP.Loot.List` → `Charges`가 전부 `0`
 
 ---
 
@@ -103,6 +103,12 @@ bool RollLootTable(const UEPLootTable* Table, FName& OutItemId, int32 Depth = 0)
 }
 ```
 
+**어디에 두는가:** `UEPLootTable`의 멤버로 두지 않는다 — `Depth`를 노출하는 공개 API가 되어 버린다. `EPLootTable.h`에 **정적 자유 함수**로 선언하고 스포너와 `EP.Loot.RollTable`이 함께 쓴다.
+
+**반환 규약이 두 겹이다.** `false` = 테이블이 잘못됐다(널·순환·가중치 0) → 호출부가 에러 로그. `true` + `OutItemId == NAME_None` = **정상적인 빈 결과** → 조용히 스폰 생략. 스포너가 이 둘을 구분하지 않으면 데이터 오류가 "그냥 안 나온 것"에 묻힌다.
+
+> `FMath::FRand()`는 **`[0, 1]` 닫힌 구간**이다(`GenericPlatformMath.h:635` — *"Returns a random float between 0 and 1, **inclusive**"*). `Pick == TotalWeight`가 나오면 루프가 끝까지 음수가 안 되어 마지막 `return false`에 도달한다. 확률은 2⁻²⁴ 수준이라 무시해도 되지만, **`false`가 "테이블이 잘못됐다"는 뜻이므로 그때 엉뚱한 에러 로그가 뜬다.** 마지막 줄을 `return false;` 대신 마지막 엔트리를 집어 주는 편이 안전하다.
+
 **★ 순환 참조 방어는 선택이 아니다.** 에디터에서 `LT_A → LT_B → LT_A`로 엮는 실수는 반드시 나오고, 방어가 없으면 스택 오버플로로 에디터가 통째로 죽는다.
 
 **★ `EmptyWeight`를 루트에서만 적용하는 이유:** 하위 등급 테이블에도 먹히면 "일반 등급 50%"를 뽑고 그 안에서 또 빈 결과가 나와 **실제 일반 확률이 50% 미만**이 된다. 기획표가 조용히 침식되고 원인을 찾기 어렵다. 등급별로 빈 확률을 다르게 주고 싶으면 하위 테이블에 "아무것도 아님" 엔트리를 명시적으로 넣는다 — 의도가 데이터에 드러난다.
@@ -138,7 +144,21 @@ LT_Rarity_Common         (등급 — 자판기·컨테이너가 공유, EmptyWei
 
 > **★ `Is Editor Only`를 반드시 끈다.** 기존 `DefaultGame.ini`의 `Map` / `PrimaryAssetLabel` 두 항목이 **둘 다 `bIsEditorOnly=True`** 라, 그 줄을 보고 따라 하면 **에디터에서는 되는데 패키지 빌드에서만** 루트 테이블 리스트가 빈다. Step 00의 `ItemDef` 등록도 같은 함정이다.
 
-> 실사용만 보면 스포너가 하드 포인터로 들고 있어 불필요해 보이지만, **`EP.Loot.RollTable <이름>`이 이름으로 찾는다.** 아직 어떤 스포너도 참조하지 않는 새 테이블 — 정확히 검증하고 싶은 그 테이블 — 이 메모리에 없어서 커맨드가 못 찾는다.
+> 실사용만 보면 스포너가 하드 포인터로 들고 있어 불필요해 보이지만, **`EP.Loot.RollTable <이름>`이 ID로 찾는다.** 등록이 없으면 그 `FPrimaryAssetId` 자체가 성립하지 않는다.
+>
+> 다만 **등록만으로는 부족하다.** 아직 어떤 스포너도 참조하지 않는 테이블은 메모리에 없고, `GetPrimaryAssetObject`는 그 경우 nullptr을 준다 — 커맨드가 직접 로드해야 한다. 01-5를 본다.
+
+### ★ 순서 — 코드를 먼저 컴파일하고 에셋을 나중에 만든다
+
+`GetPrimaryAssetId()`의 반환값은 **에셋을 저장하는 시점에 애셋 레지스트리 태그로 구워진다**(`AssetData.cpp:692`). `UEPLootTable`이 컴파일되기 전에 LT_ 에셋을 만들면 그때의 추론된 타입이 박히고, 나중에 코드를 고쳐도 **그 에셋들은 계속 `LootTable` 스캔에서 배제된다.**
+
+Step 00의 `WeaponDef` 사건이 정확히 이것이었다 — 상세와 진단법은 **`05_Loot_00_ItemCore.md` 함정 #1**에 있다. 이번 단계에서는 순서만 지키면 겪지 않는다.
+
+1. `UEPLootTable` 클래스 작성 → **컴파일**
+2. `DefaultGame.ini`에 `LootTable` 등록 → **에디터 재시작**
+3. 그 다음에 `LT_*` 에셋 생성
+
+
 
 ---
 
@@ -198,6 +218,8 @@ void AEPGameMode::HandleMatchHasStarted()
 여기에 **`Super::` 앞에서** 루트 스폰을 넣는다.
 
 ```cpp
+#include "EngineUtils.h"        // TActorIterator
+
 void AEPGameMode::HandleMatchHasStarted()
 {
     for (TActorIterator<AEPItemSpawner> It(GetWorld()); It; ++It)
@@ -311,17 +333,40 @@ AEPPickup::AEPPickup()
 
 ### 메시 적용 — 플레이스홀더가 필수다
 
+**★ `OnRep_ItemId()`에 메시 코드를 그냥 넣으면 완료 조건 1번이 실패한다.** `OnRep_`은 **복제를 받는 쪽에서만** 불린다 — 서버에서는 값을 직접 대입하므로 호출되지 않는다. PIE 기본 넷 모드가 *Play As Listen Server*이므로 **서버 창에서만 픽업이 안 보이고**, "클라에서는 보이는데 서버에서는 안 보인다"는 엉뚱한 방향으로 원인을 찾게 된다.
+
+적용 함수를 따로 빼고 **두 경로에서 부른다.**
+
 ```cpp
+// 헤더에 추가: void ApplyVisual();
+
+void AEPPickup::InitPickup(FName InItemId, const FEPItemState& InState)
+{
+    ItemId = InItemId;
+    State  = InState;
+
+    ApplyVisual();      // ★ 서버 경로 — 리슨서버/스탠드얼론의 로컬 화면
+}
+
 void AEPPickup::OnRep_ItemId()
 {
-    if (IsNetMode(NM_DedicatedServer)) return;      // 서버는 시각 에셋을 로드하지 않는다
+    ApplyVisual();      // 클라이언트 경로
+}
+
+void AEPPickup::ApplyVisual()
+{
+    if (IsNetMode(NM_DedicatedServer)) return;      // 데디서버는 시각 에셋을 로드하지 않는다
 
     // 플레이스홀더는 설정에서 온다. 이것도 TSoftObjectPtr이므로 최초 1회 동기 로드해 캐시한다
     const UEPLootDeveloperSettings* Settings = GetDefault<UEPLootDeveloperSettings>();
     if (UStaticMesh* Placeholder = Settings->PlaceholderPickupMesh.LoadSynchronous())
         Mesh->SetStaticMesh(Placeholder);           // 먼저 플레이스홀더
 
-    UEPItemDefinition* Def = /* DefinitionSubsystem->FindDefinition(ItemId) */;
+    UGameInstance* GI = GetGameInstance();
+    UEPItemDefinitionSubsystem* Defs =
+        GI ? GI->GetSubsystem<UEPItemDefinitionSubsystem>() : nullptr;
+    UEPItemDefinition* Def = Defs ? Defs->FindDefinition(ItemId) : nullptr;
+
     if (!Def || Def->WorldMesh.IsNull()) return;
 
     MeshHandle = UAssetManager::GetStreamableManager().RequestAsyncLoad(
@@ -334,9 +379,13 @@ void AEPPickup::OnRep_ItemId()
 }
 ```
 
+`IsNetMode(NM_DedicatedServer)` 가드는 그대로 필요하다 — 데디서버에서는 `InitPickup` 경로로 들어와도 시각 에셋을 로드하지 않아야 한다. **가드는 "서버냐"가 아니라 "화면이 있느냐"를 판정한다.**
+
 **현재 `WorldMesh`가 있는 아이템은 하나도 없다.** 무기조차 `WeaponMesh`(스켈레탈)만 있고 `WorldMesh`는 비어 있다. 플레이스홀더 박스는 선택이 아니라 **이번 단계의 유일한 표시 수단**이다.
 
 > `CreateWeakLambda`를 쓴다. 로드가 도착하기 전에 픽업이 파괴되면(다른 플레이어가 먼저 주움) 일반 람다는 죽은 객체를 건드린다.
+
+> `FindDefinition`은 **게임 인스턴스 서브시스템**에서 온다(Step 00). 클라이언트에도 같은 서브시스템이 있고 `Initialize()`에서 이미 전부 로드해 뒀으므로, 여기서 Definition을 못 찾으면 **네트워크 문제가 아니라 Step 00 등록 문제**다 — `EP.Item.Dump`로 먼저 확인한다.
 
 ### `EndPlay` 오버라이드가 필요 없다
 
@@ -359,28 +408,73 @@ class EMPLOYMENTPROJ_API UEPLootDeveloperSettings : public UDeveloperSettings   
     UPROPERTY(Config, EditAnywhere, Category = "Debug")
     bool bEnableSpawnerDebugDraw = false;
 
-    UPROPERTY(Config, EditAnywhere, Category = "Debug")
+    // ★ Debug가 아니다. WorldMesh가 하나도 없는 지금은 유일한 표시 수단이다 (01-4)
+    UPROPERTY(Config, EditAnywhere, Category = "Visual")
     TSoftObjectPtr<UStaticMesh> PlaceholderPickupMesh;
 };
 ```
 
+> 엔진 기본 에셋 `/Engine/BasicShapes/Cube.Cube`를 그대로 넣으면 된다. 별도로 만들 필요 없다.
+
 | 커맨드 | 용도 |
 |---|---|
-| `EP.Loot.RollTable <이름> <횟수>` | N회 굴려 아이템별·등급별 집계 출력. 이름 해석은 `UAssetManager::GetPrimaryAssetObject` |
+| `EP.Loot.RollTable <이름> <횟수>` | N회 굴려 아이템별·등급별 집계 출력 |
 | `EP.Loot.Respawn` | 모든 스포너 `ClearLoot()` 후 `SpawnLoot()` (서버 전용) |
-| `EP.Loot.List` | 월드의 모든 `AEPPickup` (서버 전용) |
+| `EP.Loot.List` | 월드의 모든 `AEPPickup` (서버·클라 양쪽) |
+
+### ★ 이름 해석 — `GetPrimaryAssetObject`만으로는 못 찾는다
+
+```cpp
+// AssetManager.h:218 — "returning nullptr if it's not in memory"
+// AssetManager.cpp:1910-1920 — NameData->GetAssetPtr().Get()
+```
+
+**메모리에 없으면 nullptr이다.** 그런데 이 커맨드로 검증하고 싶은 대상은 정확히 *아직 아무도 참조하지 않는 새 테이블*이다. **직접 로드해야 한다.**
+
+```cpp
+UAssetManager& Manager = UAssetManager::Get();
+const FPrimaryAssetId Id(TEXT("LootTable"), FName(*Args[0]));
+
+TSharedPtr<FStreamableHandle> Handle = Manager.LoadPrimaryAsset(Id);
+if (Handle.IsValid()) { Handle->WaitUntilComplete(); }
+
+// ★ 핸들이 아니라 결과로 판정한다 (Step 00 함정 — 핸들 null은 "이미 로드됨"일 수도 있다)
+const UEPLootTable* Table = Manager.GetPrimaryAssetObject<UEPLootTable>(Id);
+if (!Table)
+{
+    UE_LOG(LogTemp, Error,
+        TEXT("[Loot] LootTable '%s'를 찾을 수 없습니다. "
+             "에셋 이름 오타이거나 AssetManager에 등록되지 않았습니다 (01-1)."),
+        *Args[0]);
+    return;
+}
+```
+
+> **핸들이 null이어도 실패가 아니다.** null은 "새로 로드할 게 없다"(이미 상주) 와 "그런 ID가 없다" 를 **둘 다** 의미한다 — Step 00에서 `Definitions = 0`을 만들었던 바로 그 모호함이다. 그래서 `Table` 포인터로 판정한다.
+>
+> 로컬 핸들이 스코프를 벗어나면 참조가 풀리지만, 커맨드가 끝난 뒤라 상관없다. 커맨드 실행 중에는 살아 있다.
 
 ```
-> EP.Loot.List
-  Idx  ItemId          Location            Claimed  Cooldown  Payload
-  0    Bandage         (1200, 340, 92)     false    -         1
-  1    Backpack_Small  (880, -20, 90)      false    0.31      4      ← 방금 버린 것
+> EP.Loot.List                                    (서버 창)
+  Idx  ItemId          Location            Charges  Claimed  Cooldown  Payload
+  0    Bandage         (1200, 340, 92)     1        false    -         1
+  1    AK74_HitScan    (880, -20, 90)      12       false    0.31      1      ← 방금 버린 것
+
+> EP.Loot.List                                    (클라 창)
+  Idx  ItemId          Location            Charges  Claimed  Cooldown  Payload
+  0    Bandage         (1200, 340, 92)     0        false    -         0
+  1    AK74_HitScan    (880, -20, 90)      0        false    -         0     ← 전부 0이어야 한다
 ```
+
+**★ 클라에서도 돌게 만드는 것이 완료 조건 7번의 검증 수단이다.** "`Charges`가 안 나간다"는 눈으로 확인할 방법이 달리 없다. 클라 창에서 잔탄 12짜리 라이플이 `0`으로 찍히면 그게 증명이다 — **거꾸로 `12`가 찍히면 `DOREPLIFETIME`에 `State`를 넣은 것이다**(함정 #10).
+
+> `Claimed` / `Cooldown` / `Payload`도 서버 전용이라 클라에서는 같이 기본값으로 찍힌다. **이상한 게 아니라 같은 이유의 같은 결과다.** 클라 출력은 "복제되는 것은 `ItemId`와 위치뿐"임을 통째로 보여준다.
 
 **`EP.Loot.List`가 Step 03의 검증 수단이기도 하다.** 이 문서의 완료 조건 3번이 *"`ClearLoot`이 자기 것만 지우는지는 **Step 03에서 재확인**"* 이라고 적었는데, 확인할 수단이 없으면 그 줄이 공수표다.
 
 | 열 | 증명하는 것 |
 |---|---|
+| `Charges` (클라) | **잔탄이 복제되지 않는가** — 완료 조건 7 |
 | `Cooldown` | Step 03의 "버린 직후 0.5초 회색" |
 | `Payload` | **배낭 안의 것이 같이 나갔는가** (Step 03 서브트리) |
 | `Idx` 목록 | `ClearLoot`이 플레이어가 버린 것을 안 지웠는가 |
@@ -406,6 +500,9 @@ class EMPLOYMENTPROJ_API UEPLootDeveloperSettings : public UDeveloperSettings   
 | 9 | 서버에서 시각 에셋 로드 | 데디서버 메모리 낭비 | `IsNetMode(NM_DedicatedServer)` 가드 |
 | 10 | `State`를 `DOREPLIFETIME`에 등록 | 바닥 무기 잔탄이 전 클라에 노출 → 교전 흔적 추론 | 01-4. `UPROPERTY()`만, 복제 등록 없음 |
 | 11 | `MakeItemState` 실패를 무시하고 픽업 스폰 | Definition 없는 아이템이 기본값으로 깔림. Step 04에서 아이콘 없이 나타나 원인이 멀어짐 | 실패 시 스폰 생략 + 에러 로그 |
+| 12 | 메시 적용을 `OnRep_ItemId()`에만 둠 | **클라 창에는 보이는데 리슨서버 창에만 안 보인다.** 완료 조건 1 실패 | `ApplyVisual()`로 빼서 `InitPickup()`에서도 호출 (01-4) |
+| 13 | `GetPrimaryAssetObject`만으로 테이블 해석 | 등록은 했는데 `RollTable`이 새 테이블을 못 찾음 (메모리에 없으므로) | `LoadPrimaryAsset` 먼저, **결과 포인터로** 판정 (01-5) |
+| 14 | 클래스 컴파일 전에 `LT_*` 에셋 생성 | 옛 `PrimaryAssetType`이 `.uasset`에 구워져 영구 배제. 에디터에서만 되살아나 재현이 들쭉날쭉 | 컴파일 → 등록 → 재시작 → 에셋 생성 순서 (01-1, Step 00 함정 #1) |
 
 ---
 
