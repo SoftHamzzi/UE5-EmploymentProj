@@ -19,7 +19,13 @@
       "Bash(mv 04_GAS_Spread.md 04_GAS_05_Spread.md)",
       "PowerShell(git *)",
       "Bash(git tag *)",
-      "Bash(git ls-remote *)"
+      "Bash(git ls-remote *)",
+      "Read(//c/Program Files/Epic Games/**)",
+      "Read(//c/Program Files/Epic Games/UE_5.7/**)",
+      "Read(//c/Github/**)",
+      "Bash(grep -n 'UPROPERTY\\\\|TSoftClassPtr\\\\|TSoftObjectPtr\\\\|class ULyraGameData' __TRACKED_VAR__/Source/LyraGame/System/LyraGameData.h)",
+      "Bash(grep -n 'UPROPERTY\\(Config\\)' -A 2 __TRACKED_VAR__/Source/LyraGame/System/LyraAssetManager.h)",
+      "Bash(sed -n 144,190p __TRACKED_VAR__/Source/LyraGame/System/LyraAssetManager.cpp)"
     ]
   }
 }

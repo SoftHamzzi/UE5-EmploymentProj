@@ -3,6 +3,8 @@
 
 #include "Core/EPGameMode.h"
 
+#include "EngineUtils.h"
+#include "TimerManager.h"
 #include "Combat/EPCombatComponent.h"
 #include "Core/EPCharacter.h"
 #include "Core/EPPlayerController.h"
@@ -14,6 +16,7 @@
 #include "Kismet/GameplayStatics.h"
 
 #include "Combat/EPWeapon.h"
+#include "Loot/EPItemSpawner.h"
 
 // FTimerHandle MatchTimerHandle 변수 있음
 
@@ -136,6 +139,9 @@ void AEPGameMode::OnPlayerKilled(AController* Killer, AController* Victim)
 // MatchState 변경 시 호출
 void AEPGameMode::HandleMatchHasStarted()
 {
+	for (TActorIterator<AEPItemSpawner> It(GetWorld()); It; ++It)
+		It->SpawnLoot();
+	
 	Super::HandleMatchHasStarted();
 	
 	if (EPGameState == nullptr) return;

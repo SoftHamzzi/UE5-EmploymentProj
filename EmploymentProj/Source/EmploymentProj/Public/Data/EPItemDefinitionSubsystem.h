@@ -18,6 +18,7 @@ class EMPLOYMENTPROJ_API UEPItemDefinitionSubsystem : public UGameInstanceSubsys
 public:
 	virtual void Initialize(FSubsystemCollectionBase& Collection) override;
 	virtual void Deinitialize() override;
+	static UEPItemDefinitionSubsystem* Get(const UObject* WorldContextObject);
 	
 	const FEPItemData* FindData(FName ItemId) const;
 	UEPItemDefinition* FindDefinition(FName ItemId) const;

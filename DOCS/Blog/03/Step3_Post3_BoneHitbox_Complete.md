@@ -1,7 +1,7 @@
 # Post 3-3 작성 가이드 — 판정 연결 + 부위 데미지 + 클라 예측 이펙트
 
 > **예상 제목**: `[UE5] 추출 슈터 3-3. 히트스캔 완성: 부위 배율, 클라이언트 예측 이펙트, 래그돌 처리`
-> **참고 문서**: `DOCS/Notes/03_BoneHitbox_Implementation.md` Step 5~12, `DOCS/Notes/03_NetPrediction_Implementation.md` Step 6
+> **참고 문서**: `DOCS/Notes/03/03_BoneHitbox_Implementation.md` Step 5~12, `DOCS/Notes/03/03_NetPrediction_Implementation.md` Step 6
 
 ---
 
@@ -308,6 +308,6 @@ void AEPCharacter::Multicast_Die_Implementation()
 
 ## 참고
 
-- `DOCS/Notes/03_BoneHitbox_Implementation.md` Step 5~12
-- `DOCS/Notes/03_NetPrediction_Implementation.md` Step 6 (RequestFire 현재 구현)
-- `DOCS/Mine/Rewind.md` — HandleHitscanFire 위임 패턴 근거
+- `DOCS/Notes/03/03_BoneHitbox_Implementation.md` Step 5~12
+- `DOCS/Notes/03/03_NetPrediction_Implementation.md` Step 6 (RequestFire 현재 구현)
+- `DOCS/Notes/03/03_BoneHitbox_Implementation.md` Step 8 — HandleHitscanFire 위임 패턴 근거 (구 `Mine/Rewind.md`에서 흡수)

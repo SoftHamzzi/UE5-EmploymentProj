@@ -90,7 +90,17 @@ UpgradeLog.htm
 # ============================================================
 # External Assets (Large files)
 # ============================================================
+#
+# 원칙: **재임포트로 복구되는 것만 제외한다.**
+# 리타깃·머티리얼 인스턴스·BP 등 에디터에서 만든 것은 재임포트로 못 되살린다.
+#
+# ★ 클론 후에는 아래 폴더들을 다시 임포트해야 프로젝트가 정상 동작한다.
+#   경로가 정확히 같아야 참조가 살아난다 — DOCS/Mine/ContentStructure.md §6-3
 
+# 마켓플레이스/외주 팩 — 새 팩은 여기 넣으면 자동 제외된다 (약 1.6 GB)
+EmploymentProj/Content/_Import/
+
+# Quixel Bridge (경로 고정 — 옮기면 Bridge가 깨진다. ContentStructure.md §6)
 EmploymentProj/Content/Megascans/
 EmploymentProj/Content/MSPresets/
 
@@ -100,6 +110,10 @@ EmploymentProj/Content/Characters/MH_*.uasset
 
 # Mannequin 애니메이션 에셋 (Lyra/샘플에서 가져온 대용량)
 EmploymentProj/Content/Characters/Heroes/
+
+# DCC 소스 아트 잔재 (Maya 스와치 등 — UE 에셋이 아니다)
+.mayaSwatches/
+*.swatch
 
 # ============================================================
 # Misc

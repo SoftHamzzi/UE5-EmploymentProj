@@ -206,7 +206,7 @@ LT_VendingMachine
       └─ LT_Rarity_Common
            ├─ ItemId: AmmoBox_545  Weight 1
            ├─ ItemId: Bandage      Weight 1
-           └─ ItemId: Scrap_Paper  Weight 1   ← 여기에 추가해도 "일반 50%"는 그대로
+           └─ ItemId: Scrap        Weight 1   ← 여기에 추가해도 "일반 50%"는 그대로
 ```
 
 등급 테이블은 자판기·컨테이너·바닥 스포너가 **공유**한다. 오브젝트별로 다른 건 "어느 등급을 몇 %로 뽑느냐"이고, 등급 안의 아이템 풀은 대개 같기 때문이다. 구급상자면 `LT_Rarity_Medical_*`처럼 갈래를 나눈다.
@@ -300,23 +300,26 @@ AEPPickup : AActor
 두 플레이어가 같은 픽업에 동시에 상호작용하는 상황은 반드시 발생한다. 서버에서 다음 순서로 처리한다.
 
 ```
-Server_Interact(Target)
+UEPGA_Interact::ActivateAbility  [서버]        ← 호출자. 대상이 무엇인지 모른다
   1. Target이 유효한가 (IsValid && !IsActorBeingDestroyed)
   2. Target이 IEPInteractable을 구현하는가        ← 아무 액터나 보낼 수 있다
   3. ★ 거리 재검증: DistSq(Character, Target) <= (InteractRange + 여유)^2
        클라의 트레이스 결과를 신뢰하지 않는다 (§4-5)
-  4. ★ IEPInteractable::CanInteract(Instigator) == true 인가
-       DropCooldown, 컨테이너 "이미 검색됨", 자판기 돈 부족이 전부 여기서 걸린다
-  5. bClaimed == false 인가        ← 이 프레임에 이미 다른 요청이 선점했는지
-  6. bClaimed = true 로 즉시 마킹  ← 인벤토리 삽입보다 먼저
-  7. EntryId = AddItem(본체, ItemId, Pickup->State)   (§4-6)
-       실패하고 배낭을 매고 있으면 배낭에 재시도. 순서를 뒤집으면 본체가 늘 빈다
-  8. EntryId != INDEX_NONE → Destroy()                       (성공)
-     EntryId == INDEX_NONE → bClaimed = false
-                             Client_OnInteractFailed(사유)   (칸 부족 등)
+  4. ★ IEPInteractable::CanInteract(Interactor, OutReason) == true 인가
+       bClaimed, DropCooldown, 컨테이너 "이미 검색됨", 자판기 돈 부족이 전부 여기서
+  5. IEPInteractable::OnInteract(Interactor, OutReason) 이 true를 돌려줬는가
 
-  1~4 중 하나라도 실패 → Client_OnInteractFailed(사유). 조용히 return 하지 않는다
+  하나라도 실패 → Client_OnInteractFailed(OutReason). 조용히 return 하지 않는다
+
+AEPPickup::OnInteract  [대상]                   ← 선점과 트랜잭션은 여기 안에서만
+  a. bClaimed = true                            ← 첫 줄. 인벤토리 삽입보다 먼저
+  b. EntryId = AddItem(본체, ItemId, State)      (§4-6)
+       실패하고 배낭을 매고 있으면 배낭에 재시도. 순서를 뒤집으면 본체가 늘 빈다
+  c. EntryId != INDEX_NONE → Destroy(); return true
+     EntryId == INDEX_NONE → bClaimed = false; OutReason 채우고 return false
 ```
+
+> **`bClaimed`는 호출자의 절차에 없다.** `AEPPickup`의 `private`이고(`EPPickup.h:45`), `IEPInteractable`에는 그 개념이 아예 없다 — 자판기에는 `bClaimed`가 없다. **호출자가 알아야 하는 건 "선점됐는가"가 아니라 "된다/안 된다"뿐이다.** 확인은 `CanInteract`가, 마킹과 되돌리기는 `OnInteract`이 한다 — **되돌릴 값을 세운 함수가 되돌린다.**
 
 - **★ 3·4단계를 빠뜨리면 서버 검증이 사실상 없어진다.** §4-5가 "서버가 거리와 대상 유효성을 재검증한다", "`CanInteract()`는 서버가 다시 호출해 판정한다"고 선언해놓고 이 절차에 호출이 없으면, **클라이언트가 프롬프트를 안 그릴 뿐 RPC는 그대로 통과한다.** 특히 §4-7의 `DropCooldown`(버린 직후 0.5초 재획득 금지)이 `CanInteract()`로 구현되므로, 4단계가 없으면 쿨다운이 서버에서 강제되지 않는다. 이 절차는 구현 체크리스트로 읽히는 자리라 누락이 그대로 코드가 된다.
 - **획득은 전부 아니면 전무다.** 스택이 없으므로 픽업 하나 = 아이템 하나이고, 칸이 모자라면 아무것도 들어가지 않는다. 부분 획득 경로가 없어져 `bClaimed`를 되돌리는 갈래도 실패 하나뿐이다.
@@ -359,11 +362,12 @@ Server_Interact(Target)
 UEPInteractionComponent (Character에 부착)
 ├─ Tick: 로컬 컨트롤러만 카메라 전방 트레이스 → 대상 갱신 → HUD 프롬프트
 │         SetComponentTickInterval(0.1f)  ← 매 프레임 트레이스 금지
-└─ Input(F) → Server_Interact(AActor* Target)
+└─ Input(F) → ASC->HandleGameplayEvent(TAG_Ability_Interact, Payload{Target=FocusedActor})
+                 → UEPGA_Interact (서버에서 판정)
 ```
 
 - **트레이스 주기는 0.1초로 낮춘다.** 프롬프트 표시는 100ms 지연이 체감되지 않는데, 매 프레임 트레이스는 그대로 낭비다. 로컬 컨트롤러가 아니면 아예 틱을 끈다(`SetComponentTickEnabled(false)`).
-- **클라이언트의 트레이스 결과를 신뢰하지 않는다.** 서버는 `Server_Interact`에서 거리(`InteractRange` + 여유)와 대상 유효성을 재검증한다. 사격 경로에서 이미 확립한 원칙(클라는 "요청", 서버가 "결정")과 동일하다.
+- **클라이언트의 트레이스 결과를 신뢰하지 않는다.** 서버는 `UEPGA_Interact::ActivateAbility`에서 거리(`InteractRange` + 여유)와 대상 유효성을 재검증한다. 사격 경로에서 이미 확립한 원칙(클라는 "요청", 서버가 "결정")과 동일하다.
 - 대상 추상화는 **인터페이스**(`IEPInteractable`)로 둔다. 픽업·컨테이너·자판기·탈출지점이 전부 같은 진입점을 쓴다. 이 컴포넌트를 지금 제대로 만들어두면 로드맵 7·11·12가 전부 이걸 재사용한다.
 
 **인터페이스는 처음부터 4개를 갖춘다.** 나중에 인터페이스를 넓히면 이미 구현한 모든 클래스를 건드려야 하므로, 확장 지점을 지금 확보한다.
@@ -371,13 +375,20 @@ UEPInteractionComponent (Character에 부착)
 | 함수 | 이번 단계 픽업의 구현 | 나중에 쓰는 곳 |
 |---|---|---|
 | `GetInteractText()` | "줍기 — 붕대" | 컨테이너 "검색", 자판기 "1000원 투입" |
-| `CanInteract(Instigator)` | 인벤토리 여유 확인 | 자판기 돈 부족, 컨테이너 이미 검색됨, 탈출 조건 미달 |
+| `CanInteract(Interactor, OutReason)` → `bool` | 인벤토리 여유 확인 | 자판기 돈 부족, 컨테이너 이미 검색됨, 탈출 조건 미달 |
 | `GetInteractDuration()` | 0 | 컨테이너 검색 N초, 자판기 5초, 탈출 대기 |
-| `OnInteract(Instigator)` | 인벤토리 삽입 후 파괴 | 각 오브젝트의 실제 동작 |
+| `OnInteract(Interactor, OutReason)` → `bool` | 인벤토리 삽입 후 파괴 | 각 오브젝트의 실제 동작 |
+
+> **인자 이름은 `Instigator`가 아니라 `Interactor`다.** `AActor::Instigator`가 이미 있어서 구현체 멤버 함수 안에서 멤버를 가린다. 그리고 **두 함수 모두 `bool` + `FText& OutReason`을 돌려준다** — 구현체가 넷으로 예고돼 있어서 반환 규약은 지금 정해야 한다. 근거는 `05_Loot_02_Interaction.md` 02-1.
 
 - `CanInteract()`는 **HUD 프롬프트에도 쓴다.** false면 회색 + 사유 표시. 눌러보고 나서 실패하는 것보다 낫다.
 - 클라이언트에서도 `CanInteract()`를 호출해 프롬프트를 그리되, **서버가 다시 호출해 판정한다.** 클라 결과는 표시용일 뿐이다.
-- `GetInteractDuration() > 0`인 경우의 채널링은 **GAS 어빌리티로 구현**한다 (§7-1 참조). 상호작용 컴포넌트는 채널링을 직접 구현하지 않고 어빌리티를 활성화만 한다.
+- **상호작용은 전부 GAS 어빌리티 `UEPGA_Interact` 하나로 간다.** 즉시든 채널링(`GetInteractDuration() > 0`, §7-1)이든 같은 어빌리티다. 컴포넌트는 대상을 고르고 이벤트를 쏘는 데까지만 하고, 판정·채널링·쿨다운은 어빌리티가 한다.
+  - 이 프로젝트의 **모든 게임플레이 입력이 이미 어빌리티 태그로 간다**(`EPCharacter.cpp:388-435`). 상호작용만 직접 서버 RPC로 두면 죽음 확인·쿨다운(§4-7 `DropCooldown`)·채널링을 손으로 다시 만들게 되고, 채널링이 붙는 순간 같은 F키가 **대상의 duration 값에 따라 다른 네트워크 경로**를 탄다.
+  - 대상 전달에 `FGameplayAbilityTargetData`나 서버 재트레이스는 필요 없다. `FGameplayEventData::Target`이 서버 RPC 파라미터다 — 근거는 `05_Loot_02_Interaction.md` 02-2.
+- **상호작용 채널을 여는 곳은 두 번째 소비자부터 콜리전 프리셋이다.** Step 02 시점에는 소비자가 `AEPPickup` 하나라 `SetCollisionResponseToChannel(EP_TraceChannel_Interact, ECR_Block)` 한 줄이 더 싸다. **§7-1 컨테이너 / §7-2 자판기 / 로드맵 12 탈출 지점이 들어올 때** `.ini`에 `EP_Interactable` 프리셋을 만들고 셋이 그것을 쓴다.
+  - Lyra가 `Interactable_OverlapDynamic`(`LyraStarterGame/Config/DefaultEngine.ini:213`)으로 하는 것과 같다. **액터마다 한 줄씩 늘리지 않는다** — 네 번째 액터에서 반드시 하나 빠뜨린다. 공통 C++ 베이스도 만들지 않는다(계층이 늘어난다).
+  - 우리는 `LineTraceSingleByChannel`이므로 프리셋의 응답은 **`Block`**이다. Lyra는 `LineTraceMulti`라 `Overlap`을 쓴다 — 섞으면 아무것도 안 잡힌다.
 
 ### 4-6. 인벤토리 — 컨테이너별 칸 합산
 
@@ -640,6 +651,10 @@ GAME.md §자판기 기획 유지 (1000원 → 5초 진동 + 소리 전파 → �
 
 상자는 §7-1 컨테이너의 특수 케이스로 구현한다 — 검색 시간 0, 1회용, 파괴됨.
 
+> **★ 상자는 `PickupClass`로 스폰되지 않는다.** 상자는 컨테이너이므로 **자판기가 자기 필드**(등급 → 상자 클래스)로 들고 있다. `UEPLootDeveloperSettings::PickupClass`가 "프로젝트 전체 하나"인 것과 충돌하지 않는다 — **축이 다르다.** `PickupClass`는 **바닥에 떨어지는 아이템 픽업**의 클래스이고, 상자 클래스는 **스폰 지점(자판기)의 속성**이다.
+>
+> 안 적어두면 이 절을 구현할 때 *"픽업 클래스는 전역 하나로 정했잖아"* 와 충돌하고, 그 시점엔 왜 그렇게 정했는지 아무도 기억하지 못한다.
+
 > **상자를 안 열고 가방에 넣어 탈출하는 것도 가능하다.** 초안에서는 이걸 "값 타입 설계가 아픈 유일한 시나리오"로 보고 금지하려 했으나, **배낭(§4-6)이 들어오면서 중첩 컨테이너를 어차피 만들게 되어 제약이 소멸했다.** 상자는 자기 용량을 가진 컨테이너 아이템이고, 내용물은 `ParentEntryId`로 매달린 엔트리다 — 배낭과 완전히 같은 구조다. 다른 점은 "열기 전까지 내용물을 복제하지 않는다"뿐이다.
 
 ### 7-3. 무기 부착물 (배그식 — 깊이 1)
@@ -820,7 +835,28 @@ UEPLootDeveloperSettings : UDeveloperSettings
 └─ TSoftObjectPtr<UDataTable> ItemDataTable         DT_Items (하드코딩 금지)
 ```
 
-> **`FName` 경로가 아니라 `TSoftObjectPtr<UDataTable>`을 쓴다.** 문자열 경로는 에셋을 옮기거나 이름을 바꿔도 컴파일·저장이 통과하고, 런타임에 조용히 null이 된다. 소프트 포인터는 에디터가 참조를 추적해 리다이렉터를 따라간다. 기존 `UEPCombatDeveloperSettings` 관례와도 맞춘다.
+> **`FName` 경로가 아니라 `TSoftObjectPtr<UDataTable>`을 쓴다.** 다만 이유는 *"리다이렉터가 알아서 따라가서"* 가 **아니다** — `.ini`에 적힌 경로는 에셋 리네임 시 **자동으로 고쳐지지 않는다.** 엔진이 리네임 다이얼로그에 그렇게 적어 놓았다.
+>
+> ```
+> AssetRenameManager.cpp:463
+> "Source code, config INI, and text files may need Find/Replace for: {0}
+>  Otherwise assets can be missing from cooked builds. Continue with rename?"
+> ```
+>
+> `TSoftObjectPtr`의 진짜 이득은 **깨질 때 시끄럽다**는 것이다.
+>
+> | | `FName`/`FString` | `TSoftObjectPtr` |
+> |---|---|---|
+> | Project Settings UI | 텍스트 입력 (오타 가능) | 에셋 피커 + `AllowedClasses` |
+> | 리네임 탐지 | ❌ **침묵** | ✅ `FindCDOReferences`(`:708`)가 CDO를 통째로 직렬화해 잡는다 |
+> | 리다이렉터 강제 생성 | ❌ | ✅ (`:796` `bCreateRedirector \|= bSetRedirectorFlags`) |
+> | 경고 다이얼로그 | ❌ | ✅ (`:463`) |
+>
+> **그러므로 `.ini` 경로를 가진 에셋을 리네임할 때 뜨는 다이얼로그를 무시하지 않는다.** 무시하면 리다이렉터가 유일한 생명줄이 되고, `Fix Up Redirectors`가 그것마저 지운다.
+>
+> config 프로퍼티는 **애셋 레지스트리 의존 간선을 만들지 않는다.** 네이티브 CDO는 디스크 패키지가 아니라 인덱싱될 자리가 없다 — 쿠커가 맵·게임모드용 config 키 5개를 **이름으로 하드코딩**해 읽는 것이 그 증거다(`CookOnTheFlyServer.cpp:8840-8867`).
+>
+> 그래도 `DT_Items`는 쿡이 보장된다 — 각 `UEPItemDefinition`의 `ItemDataRow`(`FDataTableRowHandle::DataTable`은 **하드 참조**)가 끌고 간다. `.ini`가 깨지면 쿡 누락이 아니라 **런타임 null**이고, `BuildDataCache`의 Error 로그가 잡는다.
 
 콘솔 커맨드 2개면 충분하다.
 

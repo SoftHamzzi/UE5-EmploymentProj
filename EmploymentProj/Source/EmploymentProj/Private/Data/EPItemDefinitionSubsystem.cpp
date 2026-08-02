@@ -5,6 +5,7 @@
 #include "Data/EPLootDeveloperSettings.h"
 #include "Data/EPItemData.h"
 #include "Engine/AssetManager.h"
+#include "Engine/Engine.h"
 #include "Engine/StreamableManager.h"
 #include "Engine/World.h"
 #include "Engine/GameInstance.h"
@@ -24,6 +25,15 @@ void UEPItemDefinitionSubsystem::Deinitialize()
 	DataCache.Reset();
 	DefinitionHandle.Reset();
 	Super::Deinitialize();
+}
+
+UEPItemDefinitionSubsystem* UEPItemDefinitionSubsystem::Get(const UObject* WorldContextObject)
+{
+	const UWorld* World = GEngine
+		? GEngine->GetWorldFromContextObject(WorldContextObject, EGetWorldErrorMode::ReturnNull)
+		: nullptr;
+	UGameInstance* GI = World ? World->GetGameInstance() : nullptr;
+	return GI ? GI->GetSubsystem<UEPItemDefinitionSubsystem>() : nullptr;
 }
 
 const FEPItemData* UEPItemDefinitionSubsystem::FindData(FName ItemId) const

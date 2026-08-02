@@ -2,7 +2,7 @@
 
 Behavioral guidelines to reduce common LLM coding mistakes. Merge with project-specific instructions as needed.
 
-**Tradeoff:** These guidelines bias toward caution over speed. For trivial tasks, use judgment.
+**Tradeoff:** 속도보다 정확성에 무게를 둔다. 사소한 작업에는 판단력을 쓴다.
 
 ## 1. Think Before Coding
 
@@ -11,20 +11,25 @@ Behavioral guidelines to reduce common LLM coding mistakes. Merge with project-s
 Before implementing:
 - State your assumptions explicitly. If uncertain, ask.
 - If multiple interpretations exist, present them - don't pick silently.
-- If a simpler approach exists, say so. Push back when warranted.
+- 더 단순한 방법이나 더 확장 가능한 방법이 있으면 말한다. 근거가 있으면 반박한다.
 - If something is unclear, stop. Name what's confusing. Ask.
 
-## 2. Simplicity First
+## 2. Extensibility First — 단, 확장점은 문서에 이름이 있어야 한다
 
-**Minimum code that solves the problem. Nothing speculative.**
+**확장성과 구성가능성을 추구한다.** 이 프로젝트는 단계별로 계속 자라며(`DOCS/Notes/05/05_Loot_DOCS.md` §7 등), 나중에 붙일 것이 문서에 이미 적혀 있다.
 
-- No features beyond what was asked.
-- No abstractions for single-use code.
-- No "flexibility" or "configurability" that wasn't requested.
-- No error handling for impossible scenarios.
-- If you write 200 lines and it could be 50, rewrite it.
+**만든다 — 확장점이 계획서에 이름으로 있을 때**
+- 스폰할 액터 클래스, 데이터 테이블, 에셋 참조는 **설정·DataAsset·`TSubclassOf`로 뺀다.** 하드코딩하지 않는다
+- 한 값을 두 경로가 봐야 하면 **둘 다 볼 수 있는 곳**에 둔다 (호출자 단위 필드로 두면 갈린다)
+- 지금 소비자가 하나여도, 문서에 두 번째 소비자가 예고돼 있으면 그 자리를 만든다
+- 나중에 넣기 **비싼 것**은 지금 넣는다 — 식별자 안정성, 복제 조건, 계약(반환 규약·순서)
 
-Ask yourself: "Would a senior engineer say this is overcomplicated?" If yes, simplify.
+**만들지 않는다 — 상상한 확장점**
+- 문서에도 기획에도 없는 "혹시 나중에"
+- 두 번째 구현자가 없는 인터페이스·베이스 클래스
+- 도달 불가한 분기의 에러 처리
+
+**판단 기준:** *"이 확장점이 `DOCS/` 어딘가에 이름으로 적혀 있는가?"* 적혀 있으면 만든다. 없으면 그 문서를 먼저 고친다.
 
 ## 3. Surgical Changes
 
@@ -32,7 +37,7 @@ Ask yourself: "Would a senior engineer say this is overcomplicated?" If yes, sim
 
 When editing existing code:
 - Don't "improve" adjacent code, comments, or formatting.
-- Don't refactor things that aren't broken.
+- **요청과 무관한** 코드는 리팩터링하지 않는다. 요청이 구조 변경을 필요로 하면 그건 리팩터링이 아니라 **작업 범위다**
 - Match existing style, even if you'd do it differently.
 - If you notice unrelated dead code, mention it - don't delete it.
 
@@ -40,7 +45,7 @@ When your changes create orphans:
 - Remove imports/variables/functions that YOUR changes made unused.
 - Don't remove pre-existing dead code unless asked.
 
-The test: Every changed line should trace directly to the user's request.
+The test: 바뀐 줄은 **요청** 또는 **§2가 승인한 확장점**으로 추적된다.
 
 ## 4. Goal-Driven Execution
 
@@ -62,7 +67,7 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 
 ---
 
-**These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
+**이 지침이 작동하고 있다면:** 하드코딩한 값을 나중에 빼내는 재작업이 줄고, 계획에 없는 계층이 늘지 않고, 확인 질문이 실수 뒤가 아니라 구현 전에 나온다.
 
 ---
 

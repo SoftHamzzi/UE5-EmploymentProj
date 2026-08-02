@@ -3,3 +3,5 @@
 
 #include "Data/EPLootDeveloperSettings.h"
 #include "Engine/DataTable.h"
+#include "Engine/StaticMesh.h"
+#include "Loot/EPPickup.h"

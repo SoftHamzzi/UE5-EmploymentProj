@@ -1,7 +1,7 @@
 # Post 3-1 작성 가이드 — 본 단위 히트박스: 개념과 기반 설계
 
 > **예상 제목**: `[UE5] 추출 슈터 3-1. 본 단위 히트박스: 캡슐 판정의 한계와 Physics Asset 설계`
-> **참고 문서**: `DOCS/Notes/03_BoneHitbox.md`, `DOCS/Notes/03_BoneHitbox_Implementation.md` Step 0~1
+> **참고 문서**: `DOCS/Notes/03/03_BoneHitbox.md`, `DOCS/Notes/03/03_BoneHitbox_Implementation.md` Step 0~1
 
 ---
 
@@ -180,6 +180,6 @@ GetMesh()->VisibilityBasedAnimTickOption =
 
 ## 참고
 
-- `DOCS/Notes/03_BoneHitbox.md` — 개념 전체
-- `DOCS/Notes/03_BoneHitbox_Implementation.md` Step 0~1
+- `DOCS/Notes/03/03_BoneHitbox.md` — 개념 전체
+- `DOCS/Notes/03/03_BoneHitbox_Implementation.md` Step 0~1
 - UE5 공식: Physics Asset Editor 문서

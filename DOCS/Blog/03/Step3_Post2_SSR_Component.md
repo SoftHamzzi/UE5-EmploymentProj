@@ -1,7 +1,7 @@
 # Post 3-2 작성 가이드 — 서버 사이드 리와인드 컴포넌트 구현
 
 > **예상 제목**: `[UE5] 추출 슈터 3-2. 서버 사이드 리와인드: 히스토리 기록과 본 단위 보간`
-> **참고 문서**: `DOCS/Notes/03_BoneHitbox_Implementation.md` Step 2~4, `DOCS/Mine/Rewind.md`
+> **참고 문서**: `DOCS/Notes/03/03_BoneHitbox_Implementation.md` Step 2~4, `DOCS/Mine/TickGroup.md`
 
 ---
 
@@ -308,6 +308,5 @@ if (Settings->bEnableSSRDebugDraw)
 
 ## 참고
 
-- `DOCS/Notes/03_BoneHitbox_Implementation.md` Step 2~4
-- `DOCS/Mine/Rewind.md` — SSR 분리 설계 근거
-- `DOCS/Mine/Debug.md` — 디버그 시각화 가이드
+- `DOCS/Notes/03/03_BoneHitbox_Implementation.md` Step 2~4 — SSR 분리 설계 근거와 디버그 시각화가 모두 여기 흡수됐다 (구 `Mine/Rewind.md`, `Mine/Debug.md`는 `02fa5a5`에서 삭제)
+- `DOCS/Mine/TickGroup.md` — **스냅샷을 왜 `TG_PostPhysics`에 저장하는가.** 이 포스팅의 핵심 근거인데 그동안 안 걸려 있었다

@@ -607,7 +607,11 @@ public:
 };
 ```
 
-> **`FName` 경로가 아니라 `TSoftObjectPtr<UDataTable>`을 쓴다.** 문자열 경로는 에셋을 옮기거나 이름을 바꿔도 컴파일·저장이 통과하고 런타임에 조용히 null이 된다. 소프트 포인터는 에디터가 참조를 추적해 리다이렉터를 따라간다.
+> **`FName` 경로가 아니라 `TSoftObjectPtr<UDataTable>`을 쓴다.** 이유는 *"리다이렉터가 알아서 따라가서"* 가 아니다 — **`.ini` 경로는 리네임 시 자동으로 고쳐지지 않는다**(`AssetRenameManager.cpp:463`이 *"config INI … may need Find/Replace … assets can be missing from cooked builds"* 라고 직접 말한다).
+>
+> 진짜 이득은 **깨질 때 시끄럽다**는 것이다 — 리네임 탐지(`FindCDOReferences`, `:708`) + 리다이렉터 강제 생성(`:796`) + 경고 다이얼로그(`:463`) + 에디터 에셋 피커. `FName` 경로는 이 넷 전부가 없어 **진짜로 조용히 깨진다.**
+>
+> 상세와 표는 `05_Loot_DOCS.md` §9에 있다. 검증 근거: `Review/05_Loot_REVIEW6_Answer.md` §1.
 
 **AssetManager 등록** — Project Settings → Asset Manager → Primary Asset Types to Scan에 추가:
 
@@ -634,7 +638,7 @@ public:
 |---|---|---|---|---|---|---|---|---|
 | `AmmoBox_545` | Ammo | Common | 1 | **100** | **✅** | 0 | 500 | `DA_AmmoBox_545` |
 | `Bandage` | Consumable | Common | 1 | 1 | ❌ | 0 | 200 | `DA_Bandage` |
-| `Scrap_Paper` | Misc | Common | 1 | 0 | ❌ | 0 | 50 | `DA_Scrap_Paper` |
+| `Scrap` | Misc | Common | 1 | 0 | ❌ | 0 | 50 | `DA_Scrap` |
 | `Resume` | QuestItem | Rare | 1 | 0 | ❌ | 0 | 0 | `DA_Resume` |
 | `Cash_10000` | Misc | Common | 1 | **10000** | **✅** | 0 | **0** ★ | `DA_Cash_10000` |
 | `Backpack_Small` | Misc | Uncommon | **2** | 0 | ❌ | **12** | 1500 | `DA_Backpack_Small` |
