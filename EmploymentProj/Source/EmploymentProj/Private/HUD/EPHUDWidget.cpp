@@ -64,6 +64,23 @@ void UEPHUDWidget::NativeDestruct()
 	Super::NativeDestruct();
 }
 
+void UEPHUDWidget::SetInteractPrompt(const FText& Text, bool bEnabled)
+{
+	if (!InteractPrompt) return;
+	
+	if (Text.IsEmpty())
+	{
+		InteractPrompt->SetVisibility(ESlateVisibility::Collapsed);
+		return;
+	}
+	
+	InteractPrompt->SetText(Text);
+	InteractPrompt->SetColorAndOpacity(bEnabled
+		? FSlateColor(FLinearColor::White)
+		: FSlateColor(FLinearColor(0.5f, 0.5f, 0.5f, 1.f)));
+	InteractPrompt->SetVisibility(ESlateVisibility::HitTestInvisible);
+}
+
 void UEPHUDWidget::UnbindAll()
 {
 	if (!ASC.IsValid()) return;

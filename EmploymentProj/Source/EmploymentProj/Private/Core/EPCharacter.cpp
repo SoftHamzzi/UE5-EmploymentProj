@@ -32,6 +32,7 @@
 #include "GAS/EPAttributeSet.h"
 #include "Abilities/GameplayAbility.h"
 #include "GAS/EPNativeGameplayTags.h"
+#include "Interaction/EPInteractionComponent.h"
 
 AEPCharacter::AEPCharacter(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer.SetDefaultSubobjectClass<UEPCharacterMovement>(
@@ -74,6 +75,8 @@ AEPCharacter::AEPCharacter(const FObjectInitializer& ObjectInitializer)
 	Movement->BrakingDecelerationFalling = 700.f;
 	Movement->NavAgentProps.bCanCrouch = true;
 	Movement->GetNavAgentPropertiesRef().bCanCrouch = true;
+	
+	InteractionComponent = CreateDefaultSubobject<UEPInteractionComponent>(TEXT("InteractionComponent"));
 	
 }
 
@@ -136,6 +139,12 @@ void AEPCharacter::PossessedBy(AController* NewController)
 			if (AbilityClass)
 				ASC->GiveAbility(FGameplayAbilitySpec(AbilityClass, 1));
 	}
+}
+
+void AEPCharacter::NotifyControllerChanged()
+{
+	Super::NotifyControllerChanged();
+	if (InteractionComponent) InteractionComponent->RefreshTickEnabled();
 }
 
 void AEPCharacter::OnRep_PlayerState()
@@ -256,6 +265,16 @@ void AEPCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCompone
 			&AEPCharacter::Input_Shield
 		);
 	}
+	
+	if (PC->GetInteractAction())
+	{
+		EnhancedInput->BindAction(
+			PC->GetInteractAction(),
+			ETriggerEvent::Triggered,
+			InteractionComponent,
+			&UEPInteractionComponent::Input_Interact
+		);
+	}
 
 	PlayerInputComponent->BindKey(EKeys::T, IE_Pressed, this, &AEPCharacter::Input_ToggleAutoStrafeTest);
 }
@@ -265,6 +284,11 @@ UCameraComponent* AEPCharacter::GetCameraComponent() const { return FirstPersonC
 UEPCombatComponent* AEPCharacter::GetCombatComponent() const
 {
 	return CombatComponent;
+}
+
+UEPInteractionComponent* AEPCharacter::GetInteractionComponent() const
+{
+	return InteractionComponent;
 }
 
 bool AEPCharacter::IsDead() const

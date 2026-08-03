@@ -5,6 +5,7 @@
 #include "EnhancedInputSubsystems.h"
 #include "Core/EPPlayerState.h"
 #include "Core/EPCharacter.h"
+#include "Engine/Engine.h"
 #include "HUD/EPCrosshairWidget.h"
 #include "HUD/EPHUDWidget.h"
 #include "Kismet/GameplayStatics.h"
@@ -27,6 +28,25 @@ void AEPPlayerController::InitHUD(UAbilitySystemComponent* InASC)
 	
 	if (HUDWidget)
 		HUDWidget->InitWithASC(InASC);
+}
+
+void AEPPlayerController::SetInteractPrompt(const FText& Text, bool bEnabled)
+{
+	if (HUDWidget) HUDWidget->SetInteractPrompt(Text, bEnabled);
+}
+
+void AEPPlayerController::Client_OnInteractFailed_Implementation(const FText& Reason)
+{
+	if (Reason.IsEmpty()) return;
+	
+	UE_LOG(LogTemp, Log, TEXT("[Interact] 실패: %s"), *Reason.ToString());
+	
+#if !(UE_BUILD_SHIPPING || UE_BUILD_TEST)
+	if (GEngine)
+	{
+		GEngine->AddOnScreenDebugMessage(-1, 2.f, FColor::Yellow, Reason.ToString());
+	}
+#endif
 }
 
 void AEPPlayerController::BeginPlay()

@@ -94,3 +94,4 @@ enum class EEPBallisticType : uint8
 };
 
 static constexpr ECollisionChannel EP_TraceChannel_Weapon = ECC_GameTraceChannel1;
+static constexpr ECollisionChannel EP_TraceChannel_Interact = ECC_GameTraceChannel3;

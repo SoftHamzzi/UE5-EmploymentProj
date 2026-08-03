@@ -22,6 +22,7 @@ class EMPLOYMENTPROJ_API UEPHUDWidget : public UUserWidget
 	
 public:
 	void InitWithASC(UAbilitySystemComponent* InASC);
+	void SetInteractPrompt(const FText& Text, bool bEnabled);
 	
 protected:
 	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
@@ -56,6 +57,9 @@ protected:
 	
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UEPCastGaugeWidget> ShieldGauge;
+	
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> InteractPrompt;
 	
 private:
 	void UnbindAll();

@@ -32,13 +32,19 @@ public:
 	FORCEINLINE UInputAction* GetDashAction() const { return DashAction; }
 	FORCEINLINE UInputAction* GetHealAction() const { return HealAction; }
 	FORCEINLINE UInputAction* GetShieldAction() const { return ShieldAction; }
+	FORCEINLINE UInputAction* GetInteractAction() const { return InteractAction; }
 	
 	void InitHUD(UAbilitySystemComponent* InASC);
+	
+	void SetInteractPrompt(const FText& Text, bool bEnabled);
 	
 	// --- Client RPC ---
 	// 킬 피드백 (서버 -> 킬러 클라)
 	UFUNCTION(Client, Reliable)
 	void Client_OnKill(const FString& VictimName);
+	
+	UFUNCTION(Client, Reliable)
+	void Client_OnInteractFailed(const FText& Reason);
 	
 	UFUNCTION(Client, Unreliable)
 	void Client_PlayHitConfirmSound();
@@ -82,6 +88,9 @@ protected:
 	
 	UPROPERTY(EditDefaultsOnly, Category = "Input")
 	TObjectPtr<UInputAction> ShieldAction;
+	
+	UPROPERTY(EditDefaultsOnly, Category = "Input")
+	TObjectPtr<UInputAction> InteractAction;
 	
 	// --- 오버라이드 ---
 	virtual void BeginPlay() override;

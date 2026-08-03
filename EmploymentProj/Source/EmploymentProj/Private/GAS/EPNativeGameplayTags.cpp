@@ -26,6 +26,8 @@ namespace EmpGameplayTags
 	UE_DEFINE_GAMEPLAY_TAG(TAG_Ability_Skill_Dash,    "Ability.Skill.Dash")
 	UE_DEFINE_GAMEPLAY_TAG(TAG_Ability_Skill_Heal,    "Ability.Skill.Heal")
 	UE_DEFINE_GAMEPLAY_TAG(TAG_Ability_Skill_Shield,  "Ability.Skill.Shield")
+	
+	UE_DEFINE_GAMEPLAY_TAG(TAG_Ability_Interact, "Ability.Interact")
 
 	// Cooldown
 	UE_DEFINE_GAMEPLAY_TAG(TAG_Cooldown_Weapon_PrimaryUse, "Cooldown.Weapon.PrimaryUse")

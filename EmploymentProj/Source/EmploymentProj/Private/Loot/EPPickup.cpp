@@ -33,6 +33,7 @@ AEPPickup::AEPPickup()
 	Mesh->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
 	Mesh->SetCollisionObjectType(ECC_WorldDynamic);
 	Mesh->SetCollisionResponseToAllChannels(ECR_Ignore);
+	Mesh->SetCollisionResponseToChannel(EP_TraceChannel_Interact, ECR_Block);
 }
 
 void AEPPickup::InitPickup(FName InItemId, const FEPItemState& InState)
@@ -41,6 +42,34 @@ void AEPPickup::InitPickup(FName InItemId, const FEPItemState& InState)
 	State = InState;
 	
 	ApplyVisual();
+}
+
+FText AEPPickup::GetInteractText() const
+{
+	const UEPItemDefinitionSubsystem* Defs = UEPItemDefinitionSubsystem::Get(this);
+	const FEPItemData* Row = Defs ? Defs->FindData(ItemId) : nullptr;
+	
+	return FText::Format(NSLOCTEXT("EP", "PickupFmt", "줍기 - {0}"),
+		Row ? Row->DisplayName : FText::FromName(ItemId));
+}
+
+bool AEPPickup::CanInteract(AEPCharacter* Interactor, FText& OutReason) const
+{
+	if (bClaimed)
+	{
+		OutReason = NSLOCTEXT("EP", "PickupClaimed", "이미 획득됨");
+		return false;
+	}
+	return true;
+}
+
+bool AEPPickup::OnInteract(AEPCharacter* Interactor, FText& OutReason)
+{
+	bClaimed = true;
+	
+	UE_LOG(LogTemp, Log, TEXT("[Pickup] %s 획득"), *ItemId.ToString());
+	Destroy();
+	return true;
 }
 
 void AEPPickup::GetLifetimeReplicatedProps(TArray<class FLifetimeProperty>& OutLifetimeProps) const

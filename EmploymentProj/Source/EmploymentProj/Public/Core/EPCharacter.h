@@ -24,6 +24,8 @@ class UAbilitySystemComponent;
 class UGameplayAbility;
 struct FOnAttributeChangeData;
 
+class UEPInteractionComponent;
+
 UCLASS()
 class EMPLOYMENTPROJ_API AEPCharacter : public ACharacter, public IAbilitySystemInterface
 {
@@ -40,6 +42,7 @@ public:
 	bool GetIsAiming() const;
 	UCameraComponent* GetCameraComponent() const;
 	UEPCombatComponent* GetCombatComponent() const;
+	UEPInteractionComponent* GetInteractionComponent() const;
 	FORCEINLINE USkeletalMeshComponent* GetFaceMesh() const { return FaceMesh; }
 	FORCEINLINE USkeletalMeshComponent* GetOutfitMesh() const { return OutfitMesh; }
 	bool IsDead() const;
@@ -56,6 +59,8 @@ protected:
 	UEPCombatComponent* CombatComponent;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Rewind")
 	UEPServerSideRewindComponent* RewindComponent;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Interaction")
+	UEPInteractionComponent* InteractionComponent;
 	
 	UPROPERTY(EditDefaultsOnly, Category = "GAS")
 	TArray<TSubclassOf<UGameplayAbility>> DefaultAbilities;
@@ -79,6 +84,7 @@ protected:
 	
 	virtual void OnRep_Controller() override;
 	virtual void PossessedBy(AController* NewController) override;
+	virtual void NotifyControllerChanged() override;
 	virtual void OnRep_PlayerState() override;
 	
 	// Enhanced Input 바인딩

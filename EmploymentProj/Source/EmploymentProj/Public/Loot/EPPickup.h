@@ -4,13 +4,14 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
+#include "Interaction/EPInteractable.h"
 #include "Types/EPTypes.h"
 #include "EPPickup.generated.h"
 
 struct FStreamableHandle;
 
 UCLASS()
-class EMPLOYMENTPROJ_API AEPPickup : public AActor
+class EMPLOYMENTPROJ_API AEPPickup : public AActor, public IEPInteractable
 {
 	GENERATED_BODY()
 	
@@ -21,6 +22,10 @@ public:
 	void InitPickup(FName InItemId, const FEPItemState& InState);
 	FName GetItemId() const { return ItemId; }
 	bool IsClaimed() const { return bClaimed; }
+	
+	FText GetInteractText() const override;
+	bool CanInteract(AEPCharacter* Interactor, FText& OutReason) const override;
+	bool OnInteract(AEPCharacter* Interactor, FText& OutReason) override;
 	
 	const FEPItemState& GetState() const { return State; }
 	
