@@ -9,8 +9,10 @@
 ## 진행 상황
 
 - [x] 05_Loot_00 ItemCore (아이템 계층 정비 + `FEPItemState` + Definition 서브시스템) — **`EP.Item.Dump` → `9, 9`.** 상세: `05_Loot_00_ItemCore_STATUS.md`
-- [ ] 05_Loot_01 Spawner (루트테이블 + 스포너 + 픽업) ← **현재.** 5차 검수 반영 완료 (`Review/05_Loot_REVIEW5_*`)
-- [ ] 05_Loot_02 Interaction (IEPInteractable + 상호작용 컴포넌트 + 서버 검증)
+- [~] 05_Loot_01 Spawner (루트테이블 + 스포너 + 픽업) ← **현재. 구현 완료 / 검증 1건 미완.** 상세: `05_Loot_01_Spawner_STATUS.md`
+  - PIE 확인됨: 서버·클라 픽업 일치, `Respawn`, 플레이스홀더, 콜리전 무시
+  - ❌ **`EP.Loot.RollTable`에 출력 블록이 없어**(`EPLootDebugCommands.cpp:69`) 등급 비율 50/30/15/5를 아직 검증하지 못했다
+- [ ] 05_Loot_02 Interaction (IEPInteractable + **`UEPGA_Interact`** + 서버 검증) — 7차 검수로 **GAS 확정**. 문서 반영 완료, 코드 0줄
 - [ ] 05_Loot_03 Inventory ← **가장 큰 단계.** 완료 조건 13개로 다른 단계 두 개 분량이라 셋으로 나눠 진행한다
   - [ ] **03-A 코어** (03-1·2·3·9) — 칸 합산 / `bFungible` / `COND_OwnerOnly`. `RemoveEntry` 없이 단독 실행됨
   - [ ] **03-B 배낭** (03-6 + `GetCapacity`) — 자동 착용 + 독립 풀
@@ -149,7 +151,8 @@ Lyra의 문제는 *"Definition 하나가 모든 아이템 종류의 필드를 �
 | `UEPItemInstance::CreateInstance()` | 호출처 0 |
 | `UEPWeaponInstance::CreateWeaponInstance()` | 호출처 0 |
 | `UEPGameInstance` | 빈 껍데기 |
-| 상호작용 / 픽업 / 인벤토리 | 클래스 자체가 없음 |
+| ~~픽업~~ | **Step 01에서 생김** — `AEPPickup` / `AEPItemSpawner` / `UEPLootTable` (`Public/Loot/`, `Private/Loot/`) |
+| 상호작용 / 인벤토리 | 클래스 자체가 없음 |
 
 > **설계 변경 이력 (2026-07-26).** 검증 기록은 전부 `Review/` 아래에 있다.
 >
