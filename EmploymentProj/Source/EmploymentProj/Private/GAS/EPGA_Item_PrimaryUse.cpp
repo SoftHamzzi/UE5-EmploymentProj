@@ -7,6 +7,7 @@
 #include "Combat/EPCombatComponent.h"
 #include "Combat/EPWeapon.h"
 #include "Core/EPCharacter.h"
+#include "Engine/World.h"
 #include "GameFramework/GameStateBase.h"
 #include "GAS/EPNativeGameplayTags.h"
 

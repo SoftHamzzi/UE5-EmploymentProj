@@ -26,6 +26,8 @@
 #include "GAS/EPAttributeSet.h"
 #include "GAS/EPGA_Item_PrimaryUse.h"
 #include "GameplayTagContainer.h"
+#include "Components/SkeletalMeshComponent.h"
+#include "Engine/World.h"
 #include "GAS/EPNativeGameplayTags.h"
 
 UEPCombatComponent::UEPCombatComponent()

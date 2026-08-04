@@ -44,6 +44,9 @@
 
 ## 남은 이슈 (GAS 내부 — 전부 경미)
 
+> 아래는 **버그**다. *"나중에 이렇게 바꾸려 한다"*는 설계 이월은 여기가 아니라 **`DOCS/BACKLOG.md`**에 있다
+> (전투 연출 관련: B-1 FX 위치 / B-2 GameplayCue 전환 / B-3 `BallisticType`의 `default:`).
+
 | 위치 | 내용 | 상세 |
 |---|---|---|
 | `EPGA_Skill_Base.cpp:85` | 피격 중단인데 `bWasCancelled = false` | `04_GAS_07_Skills_STATUS.md` |

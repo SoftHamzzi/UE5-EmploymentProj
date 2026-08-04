@@ -37,7 +37,7 @@ void UEPGA_Interact::ActivateAbility(const FGameplayAbilitySpecHandle Handle,
 	AEPPlayerController* PC = Char ? Cast<AEPPlayerController>(Char->GetController()) : nullptr;
 	
 	FText Reason;
-	if (TryInteract(Char, TriggerEventData, Reason) && PC)
+	if (!TryInteract(Char, TriggerEventData, Reason) && PC)
 	{
 		PC->Client_OnInteractFailed(Reason);
 	}

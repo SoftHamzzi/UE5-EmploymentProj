@@ -222,7 +222,15 @@ void AEPCharacter::NotifyControllerChanged()
 
 이 프로젝트에서 **모든 게임플레이 입력은 어빌리티 태그로 간다**(`EPCharacter.cpp:388-435`). 사격·재장전·대시·힐·실드 전부, 예외가 없다.
 
-**그건 "서버 RPC를 안 쓴다"는 뜻이 아니다.** `TryActivateAbilitiesByTag` 한 줄이 `ServerTryActivateAbility`(`AbilitySystemComponent.h:1723`, `..._Abilities.cpp:1899-1928`)를 부른다. 서버 RPC는 이미 쓰고 있다. **깨지는 규칙은 *"서버 RPC를 안 쓴다"*가 아니라 *"게임플레이 입력의 진입점은 어빌리티 하나다"*이다.**
+**그건 "서버 RPC를 안 쓴다"는 뜻이 아니다.** `TryActivateAbilitiesByTag` 한 줄이 `ServerTryActivateAbility`(`AbilitySystemComponent.h:1723`, `..._Abilities.cpp:1899-1928`)를 부른다. 서버 RPC는 이미 쓰고 있다.
+
+> **★ 규칙 문장이 8차에서 정정됐다 (2026-08-04).** 7차는 여기에 *"게임플레이 입력의 진입점은 어빌리티 하나다"* 라고 적었는데, **그 일반화가 너무 넓었다.** Step 03의 드랍(`int32 EntryId`)에 적용하면 `FGameplayEventData`에 정수 자리가 없어 인코딩 규약을 사게 된다.
+>
+> **정정된 문장:**
+> ① **월드 상호작용**, 그리고 **시간·비용·애님이 붙는 행동** → **어빌리티**
+> ② **서버가 이미 소유한 상태에 대한 변경 요청** → **소유 컴포넌트의 서버 RPC**
+>
+> **상호작용은 ①이다** — 클라가 월드를 조회해 대상을 고르고, 서버가 거리·유효성을 세계 상태로 재검증해야 하며, 대상이 **액터**라 `FGameplayEventData::Target`이 공짜다. 이 절의 판정은 그대로 유효하다. 근거와 반대편 사례는 `05_Loot_03_Inventory.md` 03-5.
 
 `Server_Interact`를 직접 만들면 아래를 손으로 다시 만든다.
 
@@ -590,7 +598,7 @@ bool AEPPickup::OnInteract(AEPCharacter* Interactor, FText& OutReason)
 | 9 | 임시 획득 처리를 여러 곳에 분산 | Step 03에서 지울 곳을 놓침 | `OnInteract()` 한 곳에만 |
 | **10** | **`OnInteract()`을 `void`로 선언** | Step 03에서 실패 회신 경로가 없어 인터페이스를 다시 뜯는다. 그때는 구현체가 넷 | 처음부터 `bool` + `OutReason` (02-1) |
 | 11 | 포커스 해제 시 프롬프트를 안 지움 | 다른 곳을 봐도 "줍기 — 붕대"가 남는다 | `NewFocus == nullptr`에도 갱신 (02-4) |
-| **12** | **`Server_Interact` 직접 RPC로 감** | 이 프로젝트 유일의 손수 만든 서버 RPC가 된다. 죽음 확인·쿨다운·채널링을 손으로 다시 만들고, 채널링이 붙는 순간 F키가 두 배관을 탄다 | `UEPGA_Interact` + `FGameplayEventData::Target` (02-2) |
+| **12** | **`Server_Interact` 직접 RPC로 감** | 대상이 **액터**라 `FGameplayEventData::Target`이 공짜인데 그걸 버린다. 죽음 확인·쿨다운·채널링을 손으로 다시 만들고, 채널링이 붙는 순간 F키가 두 배관을 탄다 | `UEPGA_Interact` + `FGameplayEventData::Target` (02-2) |
 | 13 | `OnInteract` 안에 `HasAuthority()` 가드를 또 넣음 | 방어가 흩어져 구현체 넷에 전부 넣어야 한다 | `ActivateAbility` 첫 줄 하나 (02-2) |
 
 ---

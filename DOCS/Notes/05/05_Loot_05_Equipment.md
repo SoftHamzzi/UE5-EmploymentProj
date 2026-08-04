@@ -16,6 +16,10 @@
 - [ ] 다른 클라이언트에서도 장착 무기가 보인다 (`AEPWeapon` 액터 복제)
 - [ ] 매치 시작 시 `DefaultLoadout`대로 인벤토리가 채워지고 무기가 자동 장착된다
 - [ ] 장착 중인 무기를 버리면 자동 해제되고 잔탄이 엔트리에 기록된다
+- [ ] **배낭 속 무기를 장착한 채 배낭을 버린다** → 잔탄 보존 + `EquippedEntryId == INDEX_NONE` + 손에 든 `AEPWeapon` 액터가 사라진다
+  > **★ 이 경로는 Step 03에서 작성됐지만 여기서 처음 실행된다.** `RemoveEntry`의 `EquippedEntryId` 분기는 세팅 경로가 Step 05에 있어 **Step 03 내내 항상 거짓**이다. 컴파일도 되고 Step 03 완료 조건도 전부 통과하지만 장착 관련 불변식은 한 번도 안 돈다. 여기서 버그가 나면 **원인은 두 단계 전 코드에 있다** (`05_Loot_03_Inventory.md` 03-2)
+  >
+  > 본체 10칸 / 무기 5칸이라 **무기가 배낭에 들어가는 것이 흔한 경로다.** 이론적 케이스가 아니다
 - [ ] 사망 시에도 잔탄이 write-back된다
 - [ ] **가방 속(장착 안 한) 무기의 잔탄이 인벤토리 UI에 보인다** — Step 04의 `ChargesText`
 - [ ] `GA_Item_PrimaryUse` / `GA_Item_Reload`는 **한 줄도 수정하지 않았다**
@@ -124,6 +128,19 @@ void UEPCombatComponent::UnequipWeapon()
 ```
 
 > **`AddEntryCharges`가 아니라 `SetEntryCharges`다.** write-back은 본질적으로 **대입**이라 델타 API에 넘기려면 현재값을 먼저 읽어야 하고, 그러면 읽고·빼고·넘기는 것이 **다른 컴포넌트에서** 벌어진다 — 원시 엔트리를 감춘 의미가 사라진다. 클램프와 `MarkItemDirty`는 여전히 `SetEntryCharges` 한 곳에만 있다 (Step 03 03-3).
+
+### ★ `:124`의 번호 비우기는 남기되, `RemoveEntry`가 그것에 **의존하지 않는다**
+
+Step 03의 `RemoveEntry`도 `UnequipWeapon()` 호출 **직후** `EquippedEntryId = INDEX_NONE`을 한다(03-2). 겹치지만 **둘 다 필요하다.**
+
+| 경로 | 누가 비우나 |
+|---|---|
+| 버리기 · 배낭 캐스케이드 | **`RemoveEntry`** — `UnequipWeapon`이 다른 컴포넌트 함수라 인벤토리 필드를 비우는 책임을 거기 두면 03-2가 헤더 순환을 피하려고 만든 구조가 의미 결합으로 되살아난다 |
+| 홀스터 · 교체 · 사망 (제거 없음) | **`UnequipWeapon`(`:124`)** — 여기서 안 비우면 무기 액터는 없는데 번호는 살아 있는 상태가 된다 |
+
+**대입이라 idempotent이고 순서만 지키면 된다** — `UnequipWeapon`이 `GetEquippedEntryId()`로 write-back 대상을 찾으므로 **비우는 것은 반드시 write-back 뒤다.** `RemoveEntry`가 먼저 비우면 write-back이 `INDEX_NONE`을 향한다.
+
+> 8차 답변은 `:124`를 걷어내라고 했으나 **홀스터/사망 경로가 남는다.** 겹치는 대입 한 줄보다 그쪽 구멍이 비싸다.
 
 > **05-2의 코드는 기존 함수 발췌**라 `AS`가 이미 스코프에 있다. 위는 **완결된 함수 본문**이므로 직접 얻어야 한다.
 

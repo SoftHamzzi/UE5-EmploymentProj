@@ -27,7 +27,8 @@
       "Bash(grep -n 'UPROPERTY\\(Config\\)' -A 2 __TRACKED_VAR__/Source/LyraGame/System/LyraAssetManager.h)",
       "Bash(sed -n 144,190p __TRACKED_VAR__/Source/LyraGame/System/LyraAssetManager.cpp)",
       "PowerShell(Get-ChildItem -Recurse -File C:\\\\Github\\\\UE5-EmploymentProj\\\\EmploymentProj\\\\Source\\\\EmploymentProj\\\\Public | Select-Object -ExpandProperty FullName | ForEach-Object { $_.Replace\\('C:\\\\Github\\\\UE5-EmploymentProj\\\\EmploymentProj\\\\Source\\\\EmploymentProj\\\\Public\\\\',''\\) })",
-      "PowerShell(Select-String *)"
+      "PowerShell(Select-String *)",
+      "Bash(awk '/^## *5|^# *5|^§5/{f=1} f' DOCS/DOCS.md)"
     ]
   }
 }

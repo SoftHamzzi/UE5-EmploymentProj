@@ -9,16 +9,21 @@
 ## 진행 상황
 
 - [x] 05_Loot_00 ItemCore (아이템 계층 정비 + `FEPItemState` + Definition 서브시스템) — **`EP.Item.Dump` → `9, 9`.** 상세: `05_Loot_00_ItemCore_STATUS.md`
-- [~] 05_Loot_01 Spawner (루트테이블 + 스포너 + 픽업) ← **현재. 구현 완료 / 검증 1건 미완.** 상세: `05_Loot_01_Spawner_STATUS.md`
+- [~] 05_Loot_01 Spawner (루트테이블 + 스포너 + 픽업) — **구현 완료 / 검증 1건 미완.** 상세: `05_Loot_01_Spawner_STATUS.md`
   - PIE 확인됨: 서버·클라 픽업 일치, `Respawn`, 플레이스홀더, 콜리전 무시
   - ❌ **`EP.Loot.RollTable`에 출력 블록이 없어**(`EPLootDebugCommands.cpp:69`) 등급 비율 50/30/15/5를 아직 검증하지 못했다
-- [ ] 05_Loot_02 Interaction (IEPInteractable + **`UEPGA_Interact`** + 서버 검증) — 7차 검수로 **GAS 확정**. 문서 반영 완료, 코드 0줄
-- [ ] 05_Loot_03 Inventory ← **가장 큰 단계.** 완료 조건 13개로 다른 단계 두 개 분량이라 셋으로 나눠 진행한다
+- [x] 05_Loot_02 Interaction (`IEPInteractable` + **`UEPGA_Interact`** + 서버 검증 + HUD 프롬프트) — **구현 완료, PIE 동작 확인. 태그 `step5-2`.** 상세: `05_Loot_02_Interaction_STATUS.md`
+  - F로 획득·프롬프트·리슨서버 호스트 전부 정상. 7차 검수대로 **직접 서버 RPC 0개** 유지
+  - ⚠️ 완료 조건 3(사거리 밖 거부)·4(동시 F 경쟁)는 **코드에만 있고 실행된 적이 없다** — 정상 플레이로 재현할 수단이 없다. Step 03의 `DropCooldown`이 같은 경로를 쓰므로 그때 함께 검증
+  - ⚠️ 완료 조건 7(`UnPossessed` 후 틱 종료)은 **리스폰 경로가 없어 검증 불가.** 문서가 이미 예고한 것(`05_Loot_02_Interaction.md:24`) — "테스트가 통과했으니 `NotifyControllerChanged` 훅이 불필요하다"로 읽지 말 것
+- [ ] 05_Loot_03 Inventory ← **현재. 가장 큰 단계.** 완료 조건 13개로 다른 단계 두 개 분량이라 셋으로 나눠 진행한다
+  - **8차 검수 요청 작성됨** (`Review/05_Loot_REVIEW8_Request.md`) — 최대 주제는 **`Server_DropItem` 직접 RPC 대 `UEPGA_DropItem`**. 7차가 세운 "게임플레이 입력의 진입점은 어빌리티 하나다"를 Step 03 문서가 한 단계 만에 깬다
   - [ ] **03-A 코어** (03-1·2·3·9) — 칸 합산 / `bFungible` / `COND_OwnerOnly`. `RemoveEntry` 없이 단독 실행됨
   - [ ] **03-B 배낭** (03-6 + `GetCapacity`) — 자동 착용 + 독립 풀
   - [ ] **03-C 버리기** (03-4·5·7) — `RemoveEntry` / `AddSubtree` / 캐스케이드. **함정표 ★★ 4건 중 3건이 여기**
 - [ ] 05_Loot_04 InventoryUI (아이템 목록 + 칸 수 게이지)
 - [ ] 05_Loot_05 Equipment (무기 장착 흐름 이관 + 탄약 소유권 정리)
+  > **★ 이 단계에 얹을 이월 항목 3건** — `DOCS/BACKLOG.md` **B-1**(무기 FX를 `WeaponDefinition`으로) / **B-3**(`case Hitscan: default:`) / **B-5**(`GetEquippedWeapon()` 대신 `GetEquippedEntryId()`를 새 코드의 진입점으로). 셋 다 여기서 하면 거의 공짜고, **B-5를 안 지키면 나중이 비싸진다**
 
 추후 (기획 확정, 구현 미정) — `05_Loot_DOCS.md` §7
 - [ ] 컨테이너 + 검색 시간 (GAS `CastTime` 구조 재사용)
@@ -46,8 +51,16 @@
 | **`RemoveEntry` ↔ `AddSubtree` 계약** | 반환 배열은 **전위 순회, `In[0]`이 루트, 루트의 `Parent`는 `INDEX_NONE`.** 자식은 원본 `Parent` 보존. **양쪽이 다 컴파일되므로 이 계약을 안 적으면 아무도 안 걸린다** |
 | **`Charges` 쓰기** | **`SetEntryCharges`가 유일한 쓰기 지점**(클램프·`MarkItemDirty`·알림). `AddEntryCharges`는 위임. write-back은 대입이라 `Set`, 합치기·소비는 `Add` |
 | **배낭** | 줍고 **빈 슬롯이면 자동 착용.** `EquippedBackpackEntryId` 별도 필드(TMap 아님). 교체는 벗고 다시 줍기 |
-| **서브트리 삽입** | `AddSubtree()` + **`EntryId` 재매핑.** 없으면 배낭을 버렸다 주울 때 내용물이 증발한다 |
-| **갱신 알림** | `FEPInventoryList::PostReplicatedReceive` **하나** (수신 1회당 1회). 항목별 콜백 3종을 쓰지 않는다 + 서버는 스코프 가드 |
+| **서브트리 삽입** | `AddSubtree()` + **`EntryId` 재매핑.** 없으면 배낭을 버렸다 주울 때 내용물이 증발한다. **칸 검사는 루트만** — 자식은 서브트리 내부로 들어가므로 늘리면 되줍기가 깨진다 |
+| **갱신 알림** | `FEPInventoryList::PostReplicatedReceive` **하나** (수신 1회당 1회). 항목별 콜백 3종은 **선언조차 하지 않는다** — 이름 가림으로 링크 에러가 난다(`FastArraySerializer.h:341,349,356` 기반 no-op + `:1139,1163,1174` 무조건 호출). 서버는 스코프 가드 |
+| **★ 클라 → 서버 요청 경로 (8차)** | **둘뿐이다.** ① **월드 상호작용 / 시간·비용·애님이 붙는 행동 → 어빌리티** ② **서버가 이미 소유한 상태의 변경 요청 → `UEPInventoryComponent`의 서버 RPC.** 7차의 *"입력 진입점은 어빌리티 하나다"* 를 이 문장이 대체한다 |
+| **드랍·장착 RPC** | **`Server_DropItem` / `Server_Equip` / `Server_EquipBackpack` 직접 RPC 유지.** `FGameplayEventData`에 `int32`가 없고(`GameplayAbilityTypes.h:246-284`) `EventMagnitude`를 식별자로 쓴 선례가 엔진·Lyra 통틀어 0건. **Lyra의 유일한 손수 만든 서버 RPC가 정확히 이것이다**(`LyraQuickBarComponent.h:30`, `SetActiveSlotIndex(int32)`). 죽음·시전 게이트는 `CanMutateInventory()` 한 곳 |
+| **드랍 순서** | **스폰 → `RemoveEntry` → `InitPickup`.** 제거를 먼저 하면 스폰 실패 시 서브트리가 증발한다 |
+| **`FindFungibleEntryId`** | **`(int32 Container, FName ItemId)`** — 컨테이너 인자를 빼면 배낭 속 현금이 본체 현금과 합쳐지고, 무증상이다가 배낭을 벗을 때 딸려 나간다 |
+| **삽입 지점** | private **`InsertEntry(Parent, ItemId, State, SlotId)` 하나.** `AddItem`·`AddSubtree`가 공유한다. `AddSubtree`가 자식에 `AddItem`을 부르면 `bFungible` 합치기와 `CanFit`이 동시에 깨진다 |
+| **`bIsRoot`** | **private `RemoveEntryInternal`에만.** public에 두면 루트 정규화를 건너뛸 문법이 생겨 계약이 깨진다 |
+| **`FEPInventoryEntry` 위치** | **`Public/Inventory/EPInventoryTypes.h` (신규).** `EPTypes.h`는 거의 모든 파일이 include하고, 컴포넌트 헤더에 두면 `Loot/`가 컴포넌트 전체에 의존한다. `Build.cs` 수정 불필요(`NetCore`가 `Engine`의 Public 의존) |
+| **`DropCooldown`** | **`AEPPickup`의 복제되는 `float DropCooldownEndTime`** + `GetServerWorldTimeSeconds()`. 타이머 핸들이면 서버 전용 상태라 클라 프롬프트가 회색이 안 된다. GE 쿨다운도 아니다 — **주체가 픽업이지 플레이어가 아니다** |
 | `FEPItemData::MaxStack` | **읽지 않는다.** 스택 부활용 예약 필드로 남김 (사용자 지시) |
 | `FEPItemState::Durability` | **유지.** 무기가 사용한다. GAME.md에 내구도를 정식 편입했다. 열쇠·붕대의 "사용 횟수"는 `Durability`가 아니라 `Charges`다 |
 | 인벤토리 부착 | **Character** — 사망 시 소실이 규칙과 일치 |
@@ -166,6 +179,15 @@ Lyra의 문제는 *"Definition 하나가 모든 아이템 종류의 필드를 �
 > | 5차 | **Step 01 단독 검수 (Step 00 구현 후 첫 검수).** 콜리전 기본값 `BlockAll`, 완료 조건 6 오류, `SpawnLoot()` 본문 부재, 롤 반환 규약 구멍 | `Review/05_Loot_REVIEW5_*.md` |
 > | 6차 | **전역 데이터 참조 위치 (Lyra 소스 직독).** `UDeveloperSettings` 유지 확정, config `TSubclassOf` → `TSoftClassPtr`, `.ini` 리네임 근거 정정 | `Review/05_Loot_REVIEW6_*.md` |
 > | 7차 | **Step 02를 GAS로 확정 (2026-08-02).** `Server_Interact` 직접 RPC 폐기 → `UEPGA_Interact` + `FGameplayEventData::Target`. 틱 훅을 `NotifyControllerChanged()` 하나로. 상호작용 채널 `GameTraceChannel2`→`3`(`Projectile` 충돌). Lyra `Interaction/` 모듈은 **가져오지 않는다** | `Review/05_Loot_REVIEW7_*.md` |
+> | 8차 | **Step 03 검수 (2026-08-04) — 드랍은 RPC로 확정.** 7차의 *"입력 진입점은 어빌리티 하나다"* 를 **"월드 상호작용은 어빌리티 / 서버가 소유한 상태 변경은 RPC"** 로 대체. 항목 콜백 3종은 **링크 에러**라 선언 금지. `bIsRoot` private 분리, `EquippedEntryId` 대칭, `FindFungibleEntryId`에 컨테이너 인자, `DropCooldownEndTime` 복제. **문서 반영 완료** | `Review/05_Loot_REVIEW8_*.md` |
+>
+> **8차에서 7차 판정이 뒤집히지 않았다 — 뒤집힌 것은 거기 붙인 일반화 문장이다.** 7차가 Step 02를 GAS로 고른 근거 셋(대상이 **액터**라 `FGameplayEventData::Target`이 공짜 / 채널링이 02-1에 이름으로 예고 / 여러 기능이 걸림)은 전부 유효하고, **셋 다 드랍에는 성립하지 않는다.** 결정 증거는 `grep -rn "UFUNCTION(Server" LyraGame/` = **1건**이고 그 하나가 인벤토리 슬롯 변경(`int32`)이라는 것 — 직독 확인함.
+>
+> **8차가 잡아낸 것 중 요청서에 없던 것 둘:** ① `FindFungibleEntryId`에 컨테이너 인자가 없어 **배낭 속 현금이 본체로 탈출**한다(무증상). ② 항목 콜백을 선언만 하면 이름 가림으로 **링크 에러**다 — "무의미한 선언"이 아니었다.
+>
+> **반영 중 Claude가 추가로 찾은 것 둘 (답변에도 없음):** ③ 03-5가 `RemoveEntry`를 스폰보다 먼저 해서 **스폰 실패 시 서브트리가 증발**한다. ④ `Server_DropItem`의 실패가 전부 조용한 `return`이라 Step 02가 세운 *"실패를 삼키지 않는다"* 가 깨진다 → `Client_OnInteractFailed`를 `Client_OnInventoryActionFailed`로 일반화.
+>
+> **답변과 한 곳 다르게 반영했다.** 8차는 `UnequipWeapon`의 `SetEquippedEntryId(INDEX_NONE)`(`05_Loot_05_Equipment.md:124`)을 걷어내라고 했으나 **홀스터·사망 경로가 남는다.** `RemoveEntry`가 비우게 하되 `:124`도 유지하고, **`RemoveEntry`가 그것에 의존하지 않는다**로 적었다 — 겹치는 대입 한 줄보다 그쪽 구멍이 비싸다.
 >
 > **7차에서 이전 판단 두 개가 뒤집혔다.** ① *"이 프로젝트에 서버 RPC가 없다"* → 틀렸다. `TryActivateAbilitiesByTag`가 `ServerTryActivateAbility`(`AbilitySystemComponent.h:1723`)를 부른다. 깨지는 규칙은 *"서버 RPC를 안 쓴다"*가 아니라 *"입력 진입점은 어빌리티 하나다"*였다. ② *"틱 판정을 `BeginPlay`에 두면 리슨서버 호스트가 첫 테스트에서 걸린다"* → **첫 스폰은 통과한다.** `AGameMode`가 `RestartPlayer` 뒤에 `NotifyBeginPlay`를 부른다(`GameMode.cpp:208-221`). 깨지는 것은 리스폰이고, **이 프로젝트엔 아직 리스폰 경로가 없다.**
 >
