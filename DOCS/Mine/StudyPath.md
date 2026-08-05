@@ -265,8 +265,10 @@ Private/Combat/EPServerSideRewindComponent.cpp   (454줄, 통째로 읽어라)
 ## ★ 질문
 
 1. `GetCompressedFlags`는 **몇 비트**를 쓸 수 있나? 스킬이 늘어서 커스텀 플래그가 5개 필요해지면 어떻게 하나?
+답변: 기본 플래그 4비트 + 커스텀 플래그 4비트 = 총 8비트. FCharacterNetworkMoveData를 상속하여 Serialize() 필드에 싣는다.
 2. **`bWantsToSprint`는 복제되나?** 그러면 옆 사람 캐릭터의 질주 애니메이션은 어떻게 되나?
    *(이건 실제로 문제다 — `revise/posts/2026-03-01-EP_Replication-6.md`)*
+답변: 복제되지 않는다. 
 3. `CanCombineWith`가 하는 일은? **부모 구현이 이미 `MaxSpeed`를 비교하는데** 왜 우리 것이 따로 필요한가?
 4. `PrepMoveFor`는 언제 불리나? `SetMoveFor`와 짝인 이유는?
 5. **스냅샷을 왜 `TG_PostPhysics`에서 찍나?** 시각(`Time`)은 왜 거기서 안 찍고 `OnMovementUpdated`에서 넘겨받나?

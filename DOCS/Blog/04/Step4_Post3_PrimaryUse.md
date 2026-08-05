@@ -75,13 +75,29 @@ UEPGA_Item_PrimaryUse::UEPGA_Item_PrimaryUse()
     bServerRespectsRemoteAbilityCancellation = false;
 
     // TryActivateAbilitiesByTag가 이 태그로 GA를 찾는다
-    AbilityTags.AddTag(EmpGameplayTags::TAG_Ability_Item_PrimaryUse);
+    FGameplayTagContainer Tags = GetAssetTags();
+    Tags.AddTag(EmpGameplayTags::TAG_Ability_Item_PrimaryUse);
+    SetAssetTags(Tags);
 
     // 이 태그가 있으면 활성화 자체가 막힌다 — GAS가 자동 검사
     ActivationBlockedTags.AddTag(EmpGameplayTags::TAG_State_Dead);
     ActivationBlockedTags.AddTag(EmpGameplayTags::TAG_State_Reloading);
 }
 ```
+
+> **★ `AbilityTags`는 UE 5.5에서 막혔다 — 튜토리얼 코드가 그대로는 안 붙는다**
+>
+> GAS 자료 대부분이 `AbilityTags.AddTag(...)`로 되어 있는데, 5.5부터 이 필드는 직접 접근이 막혔다.
+> ```cpp
+> // GameplayAbility.h:497-499
+> UE_DEPRECATED_FORGAME(5.5, "Use GetAssetTags(). This is being made non-mutable,
+>                             private and renamed to AssetTags in the future.
+>                             Use SetAssetTags to set defaults (in constructor only).")
+> FGameplayTagContainer AbilityTags;
+> ```
+> 읽기는 `GetAssetTags()`(`:192`), 쓰기는 `SetAssetTags()`(`:546`)다. 그리고 **쓰기는 생성자에서만** 하라고 못 박혀 있다 — 런타임에 바꾸면 같은 Spec에서 나온 인스턴스들이 서로 다른 태그를 갖게 된다.
+>
+> 이 프로젝트의 GA 5종(`PrimaryUse`/`Reload`/`Dash`/`Heal`/`ShieldOn`)이 전부 이 형태다. **이름이 `Ability`에서 `Asset`으로 바뀐 이유**도 한 줄 짚고 갈 만하다 — 이 태그는 "이 어빌리티가 활성화되면 붙는 태그"가 아니라 **"이 어빌리티 에셋을 식별하는 태그"**다. `ActivationOwnedTags`와 헷갈리기 쉬운 자리다.
 
 **NetExecutionPolicy 4종** (포스팅에서 표로):
 
@@ -100,7 +116,7 @@ UEPGA_Item_PrimaryUse::UEPGA_Item_PrimaryUse()
 [타 클라]    GA 실행 X  → Multicast RPC로 따로 전달해야 한다
 ```
 
-### 3. ★ `CanActivateAbility` — 롤백을 막는 자리
+### 3. ★ `CanActivateAbility` — 되돌릴 수 없는 것을 막는 자리
 
 ```cpp
 bool UEPGA_Item_PrimaryUse::CanActivateAbility(...) const
@@ -122,11 +138,30 @@ bool UEPGA_Item_PrimaryUse::CanActivateAbility(...) const
 [CanActivateAbility에서 차단]        [ActivateAbility에서 차단]
 클라: 활성화 시도 → 거부              클라: 활성화 → 총구 화염 재생 → 탄약 감소
      아무 일도 안 일어남                    ↓ 서버가 거부
-                                     클라: 롤백 → 이펙트가 났다가 사라짐, 탄약 복구
-                                           → 플레이어 눈에 보인다
+                                     클라: 탄약은 되돌아옴
+                                           총구 화염은 그대로 남는다  ← 되돌릴 수단이 없다
 ```
 
+> **★ 여기서 "롤백"이라는 말을 조심해서 써야 한다 — GAS에는 범용 롤백이 없다**
+>
+> 서버가 거부하면 `ClientActivateAbilityFailed`가 온다. 이 함수가 실제로 하는 일은 셋뿐이다.
+> ```cpp
+> // AbilitySystemComponent_Abilities.cpp:2245-2298
+> FPredictionKeyDelegates::BroadcastRejectedDelegate(PredictionKey);  // ① 예측 GE 제거
+> Ability->CurrentActivationInfo.SetActivationRejected();             // ② 상태 표시
+> Ability->K2_EndAbility();                                           // ③ 어빌리티 종료
+> ```
+> **①이 되돌리는 건 예측으로 적용한 GameplayEffect뿐이다.** 탄약 Cost GE가 여기 해당한다.
+> `PlayLocalMuzzleEffect`가 스폰한 Niagara와 Sound는 **GAS가 알지도 못하고, 되돌리는 코드도 없다.**
+> 몽타주는 예외적으로 되감기는데(`CurrentMontageStop`), 그건 AbilityTask가 따로 챙겨주기 때문이다.
+>
+> 즉 정확한 서술은 *"롤백돼서 이펙트가 났다 사라진다"*가 아니라
+> **"수치는 되돌아오고 화면에 뿌린 것은 남는다"**다.
+> **그리고 이게 `CanActivateAbility`로 옮겨야 하는 이유를 더 강하게 만든다** —
+> 되돌릴 수 있는 것(탄약)이 아니라 **되돌릴 수 없는 것(연출)** 때문에 앞에서 막는 것이다.
+
 예측을 쓰는 시스템에서는 **"막을 거면 예측 전에 막는다"**가 원칙이다.
+GAS의 예측은 *"틀리면 되돌린다"*가 아니라 ***"되돌릴 수 있는 것만 예측한다"***에 가깝다.
 
 ### 4. ★ FireRate를 Duration GE로
 
@@ -236,7 +271,7 @@ void UEPGA_Item_PrimaryUse::ActivateAbility(...)
 
 **`ClientTime`이 3단계 SSR과 연결되는 지점**이다. `GS->GetServerWorldTimeSeconds()`를 양쪽이 쓴다는 규칙이 GAS로 옮긴 뒤에도 그대로다.
 
-**`CommitAbility` 위치가 중요하다** — `CanActivateAbility`(예측 차단) → `CommitAbility`(비용·쿨타임 확정) → 실제 로직 순서. `CommitAbility`가 실패하면 `bWasCancelled = true`로 종료해 예측을 롤백시킨다.
+**`CommitAbility` 위치가 중요하다** — `CanActivateAbility`(예측 차단) → `CommitAbility`(비용·쿨타임 확정) → 실제 로직 순서. `CommitAbility`가 실패하면 `bWasCancelled = true`로 종료한다. 그래서 **코스메틱을 `CommitAbility` 뒤에 두는 것**이 위 §3과 짝을 이룬다 — 커밋 전에 뿌리면 되돌릴 수 없는 것이 먼저 나간다.
 
 ### 6. ★ SSR 재사용 — 3단계 자산은 하나도 안 버렸다
 
@@ -283,13 +318,25 @@ void UEPCombatComponent::HandleServerFire(
 | `UEPServerSideRewindComponent` 전체 | **무변경** |
 | `ConfirmHitscan` / 리와인드 / 보간 | **무변경** |
 | `HandleHitscanFire` / `HandleProjectileFire` | 무변경, private 유지 |
-| `EEPBallisticType` switch | 무변경, 호출자만 GA로 |
+| `EEPBallisticType` switch | 무변경, 호출자만 GA로 (단, ★ 아래) |
 | Origin drift 200cm 검증 | 무변경 |
 | `LastServerFireTime` FireRate 검증 | **제거** → `GE_FireCooldown` |
 | `Server_Fire` RPC | **제거** → GA |
 | `RequestFire` | **제거** → `TryActivateAbilitiesByTag` |
 
 > **이 표가 "GAS 이관은 전면 재작성이 아니다"라는 이 시리즈의 메시지다.** 랙 보상 같은 어려운 부분은 그대로 두고, 호출자만 교체했다.
+
+> **★ 그런데 이 switch에는 옮기면서 같이 딸려온 문제가 하나 있다 — 솔직하게 적는다**
+>
+> ```cpp
+> case EEPBallisticType::Hitscan:
+> default:                          // ← 히트스캔과 default가 붙어 있다
+> ```
+> `EEPBallisticType`에 값을 하나 추가하면 — 예를 들어 근접무기나 수류탄 — **그게 조용히 히트스캔으로 발사된다.** `default:`가 있어서 `-Wswitch` 경고도 뜨지 않는다. 컴파일러가 아무 말도 안 한다.
+>
+> "무변경"이라고 적어놨지만, 정확히는 **문제가 있는 채로 무변경**이다. 3단계에서는 탄도 종류가 실제로 히트스캔뿐이라 드러나지 않았고, GAS 이관은 호출자만 바꿨으니 그대로 넘어왔다.
+>
+> 이건 3단계 시리즈에서 반복해 나온 *"선언은 했는데 아무 일도 일어나지 않는 코드"*의 사촌이다 — **"새 값을 추가했는데 아무도 알려주지 않는 코드"**. 조치는 `DOCS/BACKLOG.md` **B-3**에 이월했고, 근접·투척 무기를 넣기 전에 처리한다.
 
 ### 7. 탄약 소모 — Cost GE
 
@@ -373,10 +420,11 @@ void UEPCombatComponent::UnequipWeapon()
 
 | 상황 | 원인 | 해결 |
 |------|------|------|
-| `TryActivateAbilitiesByTag`가 GA를 못 찾음 | 생성자에 `AbilityTags` 누락 | `AbilityTags.AddTag(...)` 확인 |
+| `TryActivateAbilitiesByTag`가 GA를 못 찾음 | 생성자에 Asset 태그 누락 | `GetAssetTags()` → `AddTag` → `SetAssetTags()` 확인 |
+| 튜토리얼의 `AbilityTags.AddTag(...)`가 컴파일 안 됨 | UE 5.5에서 deprecated (`GameplayAbility.h:497`) | `SetAssetTags()`로 교체. **생성자에서만** |
 | 쿨타임이 무시됨 | `GetCooldownTags()` 미오버라이드 | CooldownTags와 GE GrantedTags 일치 확인 |
 | GA 이관 후에도 FireRate가 이상함 | `CanFire()`의 `LastFireTime` 체크가 GAS와 이중 | `CanFire()`에서 시간 체크 제거 |
-| 발사 후 이펙트가 났다 사라짐 | 차단 조건을 `ActivateAbility`에 둠 | `CanActivateAbility`로 이전 |
+| 서버가 거부해도 총구 화염이 남음 | 차단 조건을 `ActivateAbility`에 둠. **연출은 롤백되지 않는다** | `CanActivateAbility`로 이전 |
 | 탄약 0인데 계속 발사됨 | `CheckCost`는 차단하지 않음 | `CanFire()`에 `Ammo <= 0` 명시 |
 | 무기 교체 후에도 발사됨 | `ClearAbility` 누락 | `UnequipWeapon`에서 핸들 제거 |
 | 한 발에 두 번 판정 | 재장착 시 중복 Grant | Grant 전 기존 핸들 확인 |
@@ -397,7 +445,7 @@ void UEPCombatComponent::UnequipWeapon()
 **한계 및 향후 개선:**
 - **Ability Batching 미적용.** 히트스캔 GA는 활성화→판정→종료가 한 프레임인데, 현재는 활성화·타겟데이터·종료가 각각 RPC로 나간다. GASDocumentation은 배칭으로 이를 1회로 합치길 권장한다. 발사 빈도가 높은 게임이라 **적용 가치가 있으나 이번 단계에서는 보류**했다
 - 스프레드가 아직 균등 난수다 → **4-5에서 CDF 방식으로 교체**
-- 부위 배율이 아직 본 이름 기반이다 → **4-6에서 태그 기반으로 교체**
+- 부위 배율이 아직 본 이름 기반이다 → **4-6에서 태그 기반으로 교체** (그리고 4-6에서 밝히지만, 이 시점의 본 이름 배율은 **실제로는 한 번도 작동하지 않고 있었다**)
 
 ---
 

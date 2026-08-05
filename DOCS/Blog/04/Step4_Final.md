@@ -20,7 +20,7 @@ Step 4는 **기존 자체 구현 전투 시스템을 GAS(Gameplay Ability System
 | 축 | 내용 |
 |---|---|
 | **복제되는 상태 vs 안 되는 상태** | `ActivationOwnedTags`는 복제 안 됨 → 다른 클라가 쿼리할 상태는 반드시 GE `GrantedTags` |
-| **예측(Prediction)과 권한(Authority)** | `LocalPredicted` GA에서 클라/서버 인스턴스가 각자 돈다 — 롤백, 레이스, authority 가드 |
+| **예측(Prediction)과 권한(Authority)** | `LocalPredicted` GA에서 클라/서버 인스턴스가 각자 돈다 — **되돌릴 수 있는 것(GE)과 없는 것(연출)의 구분**, 레이스, authority 가드 |
 | **데이터를 코드에서 에셋으로** | 하드코딩 배율 → `TagDamageMultiplierMap`, 타이머 → Duration GE |
 | **기존 자산 재사용** | SSR(3단계), CombatComponent 코스메틱 헬퍼는 버리지 않고 GA가 호출하는 형태로 유지 |
 
@@ -82,10 +82,10 @@ Step 4는 **기존 자체 구현 전투 시스템을 GAS(Gameplay Ability System
 
 **다룰 내용:**
 - **입력 추상화** — `CombatComponent->RequestFire()` 직접 호출 → `ASC->TryActivateAbilitiesByTag()` 단일 경로. 키/무기가 바뀌어도 Character 코드 무변경
-- `LocalPredicted` 실행 흐름 (클라 즉시 실행 → 서버 검증 → 불일치 시 롤백)
+- `LocalPredicted` 실행 흐름 (클라 즉시 실행 → 서버 검증 → 거부 시 **예측 GE만** 되돌아옴)
 - **`LastServerFireTime` 수동 검증을 `GE_FireCooldown`(HasDuration + `SetByCaller(Data.Cooldown)`)으로 교체** — FireRate를 데이터로
 - `CommitAbility` / `GetCooldownTags()` 오버라이드 — CooldownTags와 GE GrantedTags가 같은 태그여야 함
-- **차단 조건은 `ActivateAbility`가 아니라 `CanActivateAbility`에서** — 아니면 예측 실행 후 롤백이 눈에 보임
+- **차단 조건은 `ActivateAbility`가 아니라 `CanActivateAbility`에서** — 서버가 거부해도 이미 뿌린 총구 화염은 **되돌릴 수단이 없다** (탄약만 복구된다)
 - 무기 장착 = GA Grant, 해제 = `ClearAbility` — 핸들 관리 누락 시 GA 중복/잔류
 - **3단계 SSR 재사용** — `ConfirmHitscan` 호출 위치만 CombatComponent → GA로 이동, 구조 변경 없음
 - 코스메틱은 GA로 못 감 — SimProxy에서 GA가 안 돌기 때문에 Multicast RPC 유지
@@ -149,6 +149,7 @@ Step 4는 **기존 자체 구현 전투 시스템을 GAS(Gameplay Ability System
 
 **다룰 내용:**
 - 기존 구조의 한계 — bool은 "약점이냐 아니냐" 2단계뿐, 본 이름 매칭은 스켈레톤에 종속
+- **★ 이 편의 진짜 소재** — `BoneDamageMultiplierMap`은 `UPROPERTY`가 없어 **한 번도 채워진 적이 없었다.** `GetBoneMultiplier`는 늘 1.0을 반환했고, 헤드샷이 아팠던 건 PhysicalMaterial 쪽 덕이었다. **3단계 포스팅 수정본과 서술을 반드시 맞출 것**
 - **`UEPPhysicalMaterial::MaterialTags`(FGameplayTagContainer)** — 부위 정의를 PhysicalMaterial 에셋에 위임
 - **`UEPWeaponDefinition::TagDamageMultiplierMap`(TMap\<FGameplayTag, float\>)** — 배율은 무기가 소유. 같은 헤드샷도 무기마다 배율이 다를 수 있음
 - `GetBoneMultiplier` + `GetMaterialMultiplier` 두 함수 → `GetTagDamageMultiplier` 하나로

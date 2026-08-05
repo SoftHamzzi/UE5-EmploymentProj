@@ -171,6 +171,66 @@ GrantedAbility로 아이템이 자기 어빌리티를 들고 온다
 
 ---
 
+## B-8. 의도 플래그만 있고 복제되는 결과 상태가 없다 ★
+
+**현재** — `EPAnimInstance.cpp:31-34`가 성격이 다른 셋을 나란히 읽는다.
+
+```cpp
+bIsSprinting = Character->GetIsSprinting();   // → CMC::bWantsToSprint
+bIsAiming    = Character->GetIsAiming();      // → CMC::bWantsToAim
+bIsFalling   = ...IsFalling();
+bIsCrouching = Character->bIsCrouched;        // ← 이것만 ACharacter의 복제 프로퍼티
+```
+
+앞의 둘은 `EPCharacter.cpp:360-376`을 거쳐 **CMC 플래그**를 읽는다. 그 플래그가 세팅되는 경로는 둘뿐이다 — 내 입력(`EPCharacter.cpp:347, 382`)과 서버의 `UpdateFromCompressedFlags`(`EPCharacterMovement.cpp:45-46`). **시뮬레이티드 프록시에는 세 번째 경로가 없다.**
+
+> **결과: 다른 사람 화면에서 내 `bIsSprinting` / `bIsAiming`은 영원히 `false`다.**
+
+**지금까지 안 보였던 이유** — `Speed`는 정직하게 온다. `FRepMovement`가 `Location`뿐 아니라 `LinearVelocity`를 같이 싣고(`ReplicatedState.h:117-124`), 스프린트 시 속도가 650이 되므로(`EPCharacterMovement.cpp:37`) 블렌드스페이스가 속도만 보면 달리는 애니는 정상으로 나온다. 겉보기엔 멀쩡하다.
+
+### 크라우치는 왜 되는가 — 엔진이 절반을 더 갖고 있다
+
+`bWantsToCrouch`도 똑같은 CMC 플래그다. 차이는 **결과 상태가 따로 있다**는 것:
+
+```
+CMC::Crouch()  →  CharacterOwner->SetIsCrouched(true)     CharacterMovementComponent.cpp:3202, 3251
+                  (해제는 :3292, 3397)
+ACharacter::bIsCrouched                                   Character.h:544-545
+  UPROPERTY(replicatedUsing=OnRep_IsCrouched)
+  DOREPLIFETIME_CONDITION(..., COND_SimulatedOnly)        Character.cpp:1727
+OnRep_IsCrouched()  →  프록시의 CMC 플래그를 역으로 복원   Character.cpp:400-416
+```
+
+| | 의도 플래그 (클라→서버) | 복제되는 결과 상태 | 애님이 읽는 것 |
+|---|---|---|---|
+| 웅크리기 | `CMC::bWantsToCrouch` | **`ACharacter::bIsCrouched`** | `bIsCrouched` ✅ |
+| 스프린트 | `CMC::bWantsToSprint` | **없음** | `bWantsToSprint` ❌ |
+| 조준 | `CMC::bWantsToAim` | **없음** | `bWantsToAim` ❌ |
+
+**즉 "복제를 까먹었다"가 아니다.** `FSavedMove` / `GetCompressedFlags` / `UpdateFromCompressedFlags`는 크라우치를 정확히 베꼈고, 크라우치가 가진 나머지 절반이 없는 것이다. `bWantsToCrouch`는 CMC에, `bIsCrouched`는 `ACharacter`에 있어 파일을 따로 보면 한 쌍이라는 게 안 보인다.
+
+> **덤 — `COND_SimulatedOnly`인 이유:** 본인은 로컬에서 `Crouch()`를 직접 불러 이미 안다(예측). 소유 클라에 되돌려 보내면 대역폭 낭비이자 예측을 덮어쓴다.
+
+**바꿀 것** — 두 선택지. **(b)를 고른다.**
+
+- **(a) 엔진 패턴 그대로** — `AEPCharacter`에 `ReplicatedUsing=OnRep_IsAiming`, 서버가 `OnMovementUpdated`에서 변화를 감지해 세팅. 크라우치와 완전 대칭
+- **(b) GAS 태그** (`State.Aiming` / `State.Sprinting`) — ASC가 태그를 복제한다. 코드가 적고 `ActivationBlockedTags` 등에 재사용된다. **인프라가 이미 있다**
+
+**지금 안 하는 이유** — **조건부다.** `bIsCrouching`이 멀쩡해서 로코모션은 정상으로 보이고, `bIsSprinting`은 속도 기반 블렌드가 덮어준다. 실제 피해는 `bIsAiming`이 상체 포즈·무기 자세를 분기할 때만 발생한다.
+
+**★ 먼저 확인할 것 (에디터)** — 애님 BP에서 `bIsAiming`을 상체 포즈 분기에 실제로 쓰는가?
+
+| | 판정 | 조치 |
+|---|---|---|
+| 쓴다 | **버그** — 남들 눈에 조준 중인 적이 그냥 서 있다 | 이 항목을 `STATUS`로 올리고 즉시 처리 |
+| 안 쓴다 | 지금은 무증상 | 여기 남겨두고, ADS 포즈를 붙일 때 함께 |
+
+**트리거** — ADS 상체 포즈 / 스프린트 시 총 내리기를 붙일 때. 또는 위 확인이 "쓴다"로 나올 때.
+
+**근거** — CLAUDE.md §2: *"나중에 넣기 비싼 것은 지금 넣는다 — 식별자 안정성, **복제 조건**, 계약"*. 복제 경로는 나중에 뚫는 게 비싸다.
+
+---
+
 ## 우선순위
 
 | | 항목 | 언제 |
@@ -178,8 +238,11 @@ GrantedAbility로 아이템이 자기 어빌리티를 들고 온다
 | 1 | **B-3** `default:` 두 줄 | **지금이 제일 싸다.** 근접·투척 추가 전 필수 |
 | 2 | **B-1** FX → `WeaponDefinition` | Step 05에 얹으면 거의 공짜 |
 | 3 | **B-5** `EquippedEntryId` 우선 | Step 05. 안 지키면 B-7이 비싸진다 |
-| 4 | B-6 `GA_Consume` | 붕대 구현 시 |
-| 5 | B-2 Cue 전환 | B-1 뒤, 여유 있으면 |
-| 6 | B-4 / B-7 | 트리거가 오면 |
+| 4 | **B-8** 조준·스프린트 상태 복제 | **먼저 에디터 확인.** 애님 BP가 `bIsAiming`을 쓰면 1순위로 올라온다 |
+| 5 | B-6 `GA_Consume` | 붕대 구현 시 |
+| 6 | B-2 Cue 전환 | B-1 뒤, 여유 있으면 |
+| 7 | B-4 / B-7 | 트리거가 오면 |
 
 **B-1·B-3·B-5는 Step 05 안에서 대부분 흡수된다.** 별도 일정이 필요한 건 사실상 B-2뿐이다.
+
+**B-8만 순위가 미정이다** — 확인 한 번으로 4순위와 1순위가 갈린다. 확인 자체는 몇 분이다.
