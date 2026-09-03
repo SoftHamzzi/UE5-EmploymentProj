@@ -8,7 +8,7 @@ public class EmploymentProj : ModuleRules
 	{
 		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 	
-		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput", "Niagara", "AnimGraphRuntime", "AIModule", "GameplayAbilities", "GameplayTags", "GameplayTasks", "UMG" });
+		PublicDependencyModuleNames.AddRange(new string[] { "GameplayMessageRuntime", "NetCore", "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput", "Niagara", "AnimGraphRuntime", "AIModule", "GameplayAbilities", "GameplayTags", "GameplayTasks", "UMG" });
 
 		PrivateDependencyModuleNames.AddRange(new string[] { });
 

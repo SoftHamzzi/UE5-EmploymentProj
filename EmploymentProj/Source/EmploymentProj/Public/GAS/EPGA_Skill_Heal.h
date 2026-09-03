@@ -17,25 +17,19 @@ class EMPLOYMENTPROJ_API UEPGA_Skill_Heal : public UEPGA_Skill_Base
 	
 public:
 	UEPGA_Skill_Heal();
-	
-	virtual void OnCastComplete() override;
-	virtual void ConfigureCastingSpec(FGameplayEffectSpecHandle& SpecHandle) override;
-	
+
 protected:
+	// === 변수 ===
 	UPROPERTY(EditDefaultsOnly, Category = "GAS")
 	TSubclassOf<UGameplayEffect> GE_HealClass;
 
-	UPROPERTY(EditDefaultsOnly, Category = "GAS")
-	TSubclassOf<UGameplayEffect> GE_HealCooldownClass;
-	
 	UPROPERTY(EditDefaultsOnly, Category = "Heal")
 	float HealAmount = 30.f;
-	
-	UPROPERTY(EditDefaultsOnly, Category = "Heal")
-	float HealCooldown = 20.f;
-	
+
 	UPROPERTY(EditDefaultsOnly, Category = "Heal")
 	float HealMoveSpeedMultiplier = 0.2f;
-	
-private:
+
+	// === 함수 ===
+	virtual void OnCastComplete() override;
+	virtual void ConfigureCastingSpec(FGameplayEffectSpecHandle& SpecHandle) override;
 };

@@ -121,16 +121,19 @@ default:                          // ★
 
 **현재** — `UEPCombatComponent::EquippedWeapon`(`AEPWeapon*`)이 유일한 소스라 진실처럼 보인다. **붕대는 `AEPWeapon`이 아니라 여기 못 들어온다.**
 
-**바꿀 것** — 진실은 `EquippedEntryId`(int32). 무기 액터는 **파생값**.
+**바꿀 것** — 진실은 **인벤토리 엔트리**다. 무기 액터는 **파생값**.
+
+> **★ 9차 확정으로 형태가 바뀌었다(2026-08-22).** *"진실 = `EquippedEntryId`(int32) 필드"* 가 아니라 **`FEPInventoryEntry::SlotId`** 다. 필드는 사라지고 `GetEquippedEntryId()`가 **파생 게터**가 된다 — `ActiveHotbarIndex` → 슬롯 이름 → `GetEntryInSlot(INDEX_NONE, S)`. 근거: `DOCS/Mine/EquipmentSlots.md` §3.
 
 **지금 안 하는 이유** — 아직 장착 가능한 게 무기뿐이다.
 
 **트리거** — **Step 05.** 이미 그 방향으로 설계돼 있다:
-- `LOOT_STATUS.md` 장비 슬롯 결정 — *"`EquippedEntryId` / `EquippedBackpackEntryId` 필드 둘"*
+- `LOOT_STATUS.md` 장비 슬롯 결정 — *"`SlotId`가 유일한 진실. 남는 상태는 `ActiveHotbarIndex` 하나"*
 - `05_Loot_05_Equipment.md:119` — `Inv->GetEquippedEntryId()`
 
 > **★ Step 05에서 지킬 것:** 새 코드의 진입점으로 `GetEquippedWeapon()`을 쓰지 않는다.
 > `GetEquippedEntryId()`를 먼저 만들고 무기 쪽이 그걸 통해 액터를 찾게 하면 B-7이 거의 공짜가 된다.
+> **이 항목은 9차 이후 더 싸졌다** — `GetEquippedEntryId()`가 Step 03에서 이미 파생 게터로 선언되므로 Step 05는 `ActiveHotbarIndex` 세팅 경로만 만들면 된다.
 
 ---
 
@@ -237,7 +240,7 @@ OnRep_IsCrouched()  →  프록시의 CMC 플래그를 역으로 복원   Charac
 |---|---|---|
 | 1 | **B-3** `default:` 두 줄 | **지금이 제일 싸다.** 근접·투척 추가 전 필수 |
 | 2 | **B-1** FX → `WeaponDefinition` | Step 05에 얹으면 거의 공짜 |
-| 3 | **B-5** `EquippedEntryId` 우선 | Step 05. 안 지키면 B-7이 비싸진다 |
+| 3 | **B-5** `GetEquippedEntryId()` 우선 | Step 05. 안 지키면 B-7이 비싸진다. **9차 이후 더 싸다** (파생 게터가 Step 03에 이미 있다) |
 | 4 | **B-8** 조준·스프린트 상태 복제 | **먼저 에디터 확인.** 애님 BP가 `bIsAiming`을 쓰면 1순위로 올라온다 |
 | 5 | B-6 `GA_Consume` | 붕대 구현 시 |
 | 6 | B-2 Cue 전환 | B-1 뒤, 여유 있으면 |

@@ -34,7 +34,10 @@ public:
 	AEPCharacter* GetOwnerCharacter() const;
 	AEPWeapon* GetEquippedWeapon() const;
 	
-	void HandleServerFire(const FVector& Origin, const FVector& Direction, float ClientFireTime);
+	void HandleServerFire(const FVector& Origin, const FVector& Direction);
+	
+	UFUNCTION(Server, Unreliable)
+	void Server_ConfirmFire(FVector_NetQuantize Origin, FVector_NetQuantizeNormal Direction, FGameplayAbilitySpecHandle AbilityHandle);
 	
 	static void ApplyGEDamage(
 		AActor* Target,
@@ -84,7 +87,6 @@ protected:
 	void OnRep_EquippedWeapon();
 	
 	// --- RPC ---
-	
 	UFUNCTION(NetMulticast, Unreliable)
 	void Multicast_PlayMuzzleEffect(const FVector_NetQuantize& MuzzleLocation);
 	UFUNCTION(NetMulticast, Unreliable)
@@ -93,7 +95,7 @@ protected:
 	void Multicast_SpawnCosmeticProjectile(
 		const FVector_NetQuantize& MuzzleLocation,
 		const FVector_NetQuantizeNormal& Direction);
-
+	
 private:
 	// === 변수 ===
 	TArray<FGameplayAbilitySpecHandle> GrantedWeaponAbilityHandles;
@@ -102,8 +104,7 @@ private:
 	void HandleHitscanFire(
 		AEPCharacter*	Owner,
 		const FVector&	Origin,
-		const TArray<FVector>&	Directions,
-		float	ClientFireTime
+		const TArray<FVector>&	Directions
 	);
 	
 	void HandleProjectileFire(

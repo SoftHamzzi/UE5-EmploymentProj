@@ -14,19 +14,15 @@ class EMPLOYMENTPROJ_API UEPGA_Skill_ShieldOn : public UEPGA_Skill_Base
 	
 public:
 	UEPGA_Skill_ShieldOn();
-	
+
 protected:
-	virtual void OnCastComplete();
-	
+	// === 변수 ===
 	UPROPERTY(EditDefaultsOnly, Category = "GAS")
 	TSubclassOf<UGameplayEffect> GE_ShieldOnClass;
-	
-	UPROPERTY(EditDefaultsOnly, Category = "GAS")
-	TSubclassOf<UGameplayEffect> GE_ShieldCooldownClass;
-	
+
 	UPROPERTY(EditDefaultsOnly, Category = "Shield")
 	float ShieldDuration = 5.f;
-	
-	UPROPERTY(EditDefaultsOnly, Category = "Shield")
-	float ShieldCooldown = 50.f;
+
+	// === 함수 ===
+	virtual void OnCastComplete() override;
 };

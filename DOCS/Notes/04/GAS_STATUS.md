@@ -51,8 +51,14 @@
 |---|---|---|
 | `EPGA_Skill_Base.cpp:85` | 피격 중단인데 `bWasCancelled = false` | `04_GAS_07_Skills_STATUS.md` |
 | `EPGA_Skill_ShieldOn.h:31` | `ShieldCooldown = 50.f` vs GAME.md 스펙 30초 | `04_GAS_07_Skills_STATUS.md` |
-| `EPSkillSlotWidget.cpp:143-149` | 상태 변화 없이도 `ApplyState` 호출 → 불필요한 캐시 리셋 | `04_GAS_08_HUD_STATUS.md` |
 | 명명 | `UEPCastGaugeWidget`이 방벽 지속시간에도 쓰여 이름이 부정확 (개명은 CoreRedirects 필요) | `04_GAS_08_HUD_STATUS.md` |
+
+---
+
+## Polish (GAS 밖 버그 모음)
+
+GAS 마이그레이션 이후 발견된, 특정 Step에 안 묶이는 잡버그들은 `DOCS/Notes/Polish/04/`
+아래 별도로 쌓는다 — 진행 상황은 `Polish/04/04_Polish_STATUS.md` 참고.
 
 ---
 

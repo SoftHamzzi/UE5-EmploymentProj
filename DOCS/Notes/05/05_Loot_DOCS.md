@@ -27,7 +27,7 @@
 
 > **인벤토리 용량은 아이템별 칸 수의 합산**이다(§4-6) — 무게 시스템과 동형이고 2D 배치 문제가 아니다.
 >
-> **배낭은 이번 범위에 포함된다.** 본체 10칸과 배낭의 칸 수는 **통합되지 않고 각자 독립**이며, 배낭을 버리면 안의 아이템이 같이 나간다(GAME.md). 이 때문에 엔트리가 `ParentEntryId`를 갖고, 그 구조가 §7-3 부착물과 동일하다.
+> **배낭은 이번 범위에 포함된다.** 착용 컨테이너마다 칸 수가 **통합되지 않고 각자 독립**이며(**본체 자체는 0칸이다** — 13차), 배낭을 버리면 안의 아이템이 같이 나간다(GAME.md). 이 때문에 엔트리가 `ParentEntryId`를 갖고, 그 구조가 §7-3 부착물과 동일하다.
 
 ---
 
@@ -166,8 +166,8 @@ UEPInventoryComponent
 | 쓰이는 곳 | |
 |---|---|
 | 드랍 RPC | `Server_DropItem(int32 EntryId)` |
-| 장착 RPC / `EquippedEntryId` | §4-8 |
-| UI 정렬 키 | 오름차순 고정 → 줍고 버려도 목록이 튀지 않는다 (§4-6) |
+| 장착 RPC / 슬롯 표현(`SlotId`) | §4-8 |
+| UI 정렬 키 | **`SortKey`(엔트리 필드, 서버 발급)** — 11차. `InsertEntry`가 "형제 맨 뒤"로 발급하므로 **`EntryId` 오름차순이 기본값으로 남는다.** 정렬은 `GetSortedContents`가 하고 **클라·서버가 같은 함수를 쓴다.** `EntryId`는 식별자이지 순서가 아니다 (§4-6 · `05_Loot_03_Inventory.md` 03-1) |
 
 > **`FGuid InstanceId`와 `SchemaVersion`은 제거한다** (`EPItemInstance.h`). 전자는 읽는 코드가 없고, 후자는 **아이템의 속성이 아니라 세이브 포맷의 속성**이다 — 한 세이브 안의 모든 아이템을 같은 빌드가 쓰므로 `USaveGame`/DB 행 봉투에 하나만 둔다. DB 스태시의 영구 식별자는 **저장 시점에 발급**하고, 복사 탐지 안티치트가 실제로 필요해지면 그때 POD에 필드를 추가한다 — 세이브 포맷 범프이지 아키텍처 변경이 아니다.
 
@@ -313,10 +313,17 @@ UEPGA_Interact::ActivateAbility  [서버]        ← 호출자. 대상이 무엇
 
 AEPPickup::OnInteract  [대상]                   ← 선점과 트랜잭션은 여기 안에서만
   a. bClaimed = true                            ← 첫 줄. 인벤토리 삽입보다 먼저
-  b. EntryId = AddItem(본체, ItemId, State)      (§4-6)
-       실패하고 배낭을 매고 있으면 배낭에 재시도. 순서를 뒤집으면 본체가 늘 빈다
+  b. ① EntryId = TryAutoEquip(Payload)          ← 슬롯이 비어 있으면 거기로 (§4-6)
+        아이템의 SlotPriority를 훑어 첫 빈 슬롯. AddSubtree(INDEX_NONE, S, In) 한 번으로 들어간다
+        ★ 칸 검사를 지나지 않는다 — 착용은 칸을 안 먹는다
+     ② 실패했으면 컨테이너                       ← GetInsertionOrder()대로
+        for (C : GetInsertionOrder()) if ((EntryId = AddSubtree(C, NAME_None, Payload)) != NONE) break;
+        본체(0칸) → 외투 → 상의 → 하의 → 배낭 → 팔목.  ★ 본체가 먼저다 — 뒤집으면 배낭부터 찬다
   c. EntryId != INDEX_NONE → Destroy(); return true
      EntryId == INDEX_NONE → bClaimed = false; OutReason 채우고 return false
+
+  ★★ AddItem이 아니라 AddSubtree다. 픽업은 서브트리를 들고 있고(배낭+내용물),
+     AddItem으로 받으면 안의 아이템이 전부 증발한다 (함정 3c)
 ```
 
 > **`bClaimed`는 호출자의 절차에 없다.** `AEPPickup`의 `private`이고(`EPPickup.h:45`), `IEPInteractable`에는 그 개념이 아예 없다 — 자판기에는 `bClaimed`가 없다. **호출자가 알아야 하는 건 "선점됐는가"가 아니라 "된다/안 된다"뿐이다.** 확인은 `CanInteract`가, 마킹과 되돌리기는 `OnInteract`이 한다 — **되돌릴 값을 세운 함수가 되돌린다.**
@@ -396,26 +403,141 @@ UEPInteractionComponent (Character에 부착)
 
 **칸은 합산이고 격자 위치가 아니다.** 아이템마다 `FEPItemData::SlotSize`가 있고, UI에서는 전부 한 줄로 보이되 소비하는 칸 수가 다르다 — 붕대 1칸, 구급상자 3칸, 소총 5칸. 무게 시스템과 동형이라 **단편화 처리가 필요 없다**("3칸이 연속으로 비었는가"가 아니라 "총 3칸이 남았는가").
 
-**용량은 스칼라 하나가 아니라 컨테이너마다 독립된 풀이다.** GAME.md의 인벤토리는 본체 10칸 + 배낭의 칸 수이고 **둘이 통합되지 않는다.** 배낭을 버리면 안의 아이템이 같이 나간다.
+**용량은 스칼라 하나가 아니라 컨테이너마다 독립된 풀이다.** 착용한 컨테이너마다 자기 칸 수가 있고 **서로 통합되지 않는다.** 배낭을 버리면 안의 아이템이 같이 나간다.
 
 ```
-EntryId=1  Parent=NONE  Bandage         1칸    ← 본체 (10칸)
-EntryId=2  Parent=NONE  Backpack_Small         ← 매고 있는 배낭
-EntryId=3  Parent=2     MedKit          3칸    ← 배낭 내부 (배낭 용량)
-EntryId=4  Parent=2     Weapon_AK74     5칸
-EntryId=5  Parent=4     Scope_4x               ← 배낭 속 총의 부착물 (§7-3)
+EntryId=1  Parent=NONE  Shirt_Basic  SlotId=Torso   ← 입고 있는 상의 (10칸 제공)
+EntryId=2  Parent=NONE  Backpack_B   SlotId=Back    ← 매고 있는 배낭  (8칸 제공)
+EntryId=3  Parent=1     Bandage        1칸           ← 상의 내부
+EntryId=4  Parent=2     Weapon_AK74    5칸           ← 배낭 내부
+EntryId=5  Parent=4     Scope_4x                     ← 배낭 속 총의 부착물 (§7-3)
 ```
+
+> ### ★★ 본체 인벤토리는 **0칸**이다 (2026-08-25 확정)
+>
+> **수납 용량이 전부 착용 컨테이너에서 나온다.** 아무것도 안 입으면 들 수 있는 것이 없고, 그래서 **스폰 시 기본 상의·하의를 입고 시작한다**(`UEPLootDeveloperSettings::StartingEquipment`, 03-6). 로비가 생기면 *"로비에서 고른 옷을 입고 나온다"* 로 대체된다 — 바뀌는 것은 **그 배열을 채우는 쪽**이다.
+>
+> | 아이템 | `SlotSize` (차지) | `ContainerCapacity` (제공) |
+> |---|---|---|
+> | **본체** (`INDEX_NONE`) | — | **0** ｜ `MaxSlots`. **테스트 중에만 10**이고 곧 0으로 내린다 |
+> | 기본 상의 | 11 | 10 |
+> | 기본 하의 | 6 | 5 |
+> | 배낭 A | 15 | 12 ｜ 어디에도 안 들어간다(15 > 12, 15 > 10) — **의도** |
+> | 배낭 B | 10 | 8 ｜ 상의(10)·배낭A(12)에 들어간다 |
+>
+> **`MaxSlots` 필드는 남긴다.** 0을 넣으면 `CanFit`이 항상 거짓이라 나머지 코드가 그대로 돌고, 없애면 `GetInsertionOrder`의 맨 앞 `INDEX_NONE`까지 같이 빼야 한다. **밸런싱 값으로만 다룬다.**
+>
+> **★ 상의·하의는 컨테이너를 잃을 수 있다 — 가방과 외투만 남는 안** (§8 미정). 그 이행은 **데이터 둘**이다: `DT_Items`의 `ContainerCapacity`를 0으로 내리고(위 정의: 컨테이너 = `Capacity > 0`), `ContainerOrder`에서 뺀다. **코드 변경 0** — `GetCapacity`가 0을 돌려주고 `CanFit`이 항상 거짓이 되며, `BodySlots`·정합 검사는 무관하다(슬롯은 남고 착용 효과만 남는다). **§4-9의 *"컨테이너 여부를 타입 계층이 아니라 값으로"* 가 값을 하는 자리다** — `UEPClothingDefinition : UEPContainerDefinition` 같은 계층이었으면 클래스를 갈아엎어야 했다.
 
 | 결정 | 근거 |
 |---|---|
 | **`ParentEntryId`로 컨테이너를 표현한다** | 자기 타입 재귀는 `Class.cpp:974`에서 **Fatal**이라 무제한 깊이를 중첩으로 못 만든다. 무엇보다 **배낭·부착물·상자가 같은 표현**을 쓰게 되어 위 `EntryId=5`가 특수 케이스 없이 성립한다 |
-| **`SlotId`를 지금 넣는다** | 용량 합산이 "수납된 자식"과 "부착된 자식"을 구분해야 한다(부착물은 칸을 안 먹는다). `ParentEntryId`가 어차피 들어오므로 함께 넣는 편이 싸다. Step 03에서는 항상 `NAME_None` |
+| **`SlotId`가 장착의 유일한 진실이다** (9차) | 용량 합산이 "수납된 자식"과 "슬롯에 든 자식"을 구분해야 한다(슬롯에 든 것은 칸을 안 먹는다). **별도 장비 슬롯 배열을 만들지 않는다** — `USceneComponent`가 `AttachSocketName`을 자식에 두고 `AttachChildren`은 `Transient` 파생 색인인 것과 같다(`SceneComponent.h:108-119`). Step 03에서 실제로 쓰는 값은 `"Back"`·`"Torso"`·`"Legs"` (`DOCS/Mine/EquipmentSlots.md` §1·§3) |
 | **`UsedSlots`를 캐시하지 않는다** | 추가·제거·복제 수신 세 경로를 전부 갱신해야 하고 하나만 빠지면 "안 찼는데 가득 찼다"가 된다. 엔트리 30개 × `TMap` 룩업은 수백 나노초다 |
 | **`UsedSlots`를 복제하지 않는다** | 클라는 `COND_OwnerOnly`로 엔트리 전부를 갖고 `SlotSize`는 Definition 조회로 나온다. 복제하면 진실이 두 곳이 된다 |
-| **`EntryId`로 정렬한다** | FastArray는 클라 배열 순서를 보장하지 않는다(`FastArraySerializer.h:54`). 삭제가 `RemoveAtSwap`이라(`:1191`) 실제로 뒤섞인다 |
+| **~~`EntryId`로 정렬한다~~ → `SortKey`(서버 발급 희소 키)** (11차) | FastArray는 클라 배열 순서를 보장하지 않는다(`FastArraySerializer.h:54`). 삭제가 `RemoveAtSwap`이라(`:1191`) 실제로 뒤섞인다. **`EntryId`는 식별자이지 순서가 아니다** — 재배치를 넣는 순간 식별자를 바꿔야 한다 (§4-8 · `05_Loot_03_Inventory.md` 03-1) |
 | **복제 조건은 `COND_OwnerOnly`** | 조건 없이 복제하면 패킷만 봐도 상대 소지품을 아는 치트가 되고 8인 매치면 대역폭도 8배다. `PlayerState::Kills`/`Extracted`가 이미 같은 조건이다 |
 
 > **시체 루팅이 생겨도 조건을 풀지 않는다.** 시체 액터가 자기 인벤토리를 별도로 노출하는 방식으로 간다. 살아있는 플레이어의 가방은 끝까지 소유자 전용이다.
+
+#### ★★ 컨테이너의 정의 — 그리고 중첩 깊이는 데이터가 막는다
+
+**컨테이너 = `FEPItemData::ContainerCapacity > 0`.** 별도 플래그도 타입 계층도 없다. 배낭·상자·파우치가 전부 같다.
+
+그런데 이 정의만으로는 **컨테이너를 컨테이너에 넣는 것**에 아무 제약이 없다. `MoveEntry` 검사 6은 **사이클(자기 자손)만** 막고 `CanFit`은 종류를 안 본다. 즉 초안대로면 **배낭 안 배낭 안 배낭**이 무한히 된다 — 가방 7겹으로 수백 칸을 드는 익스플로잇이다.
+
+**결정: 모든 컨테이너가 `ContainerCapacity < SlotSize`를 지킨다.** (2026-08-24)
+
+```
+A를 B에 넣으려면   SlotSize(A) ≤ Capacity(B) < SlotSize(B)
+                   ⇒ SlotSize(A) < SlotSize(B)
+```
+
+**깊어질수록 `SlotSize`가 반드시 작아진다.** 양의 정수라 유한하고, 깊이 상한은 **서로 다른 컨테이너 크기의 개수**다.
+
+```
+배낭 A   SlotSize 15, Cap 12     A 안에 B  → 10 ≤ 12   ✅ 된다
+배낭 B   SlotSize 10, Cap  8     B 안에 들어갈 컨테이너 없음 → 깊이 2에서 끝
+                                 A 안에 A  → 15 ≤ 12   ❌ 당연히 안 된다
+```
+
+##### ★★ 부등호가 둘이고 서로 다른 식이다 (2026-08-25)
+
+**헷갈리면 방금 "당연히 안 된다"고 한 것이 가능해진다.**
+
+```
+넣기 판정   :  SlotSize(넣을 것)  ≤  Capacity(담을 것)     ← ≤ 다. B(10)를 상의(10)에 넣는다
+데이터 규칙 :  Capacity(X)        <  SlotSize(X)           ← < 다. 등호를 허용하면 안 된다
+```
+
+```
+SlotSize(A) ≤ Capacity(B) < SlotSize(B)   ⇒  SlotSize(A) <  SlotSize(B)   깊이 유한 ✅
+SlotSize(A) ≤ Capacity(B) ≤ SlotSize(B)   ⇒  SlotSize(A) ≤  SlotSize(B)   깊이 무한 ❌
+```
+
+`SlotSize 10 / Cap 10`짜리 행 하나면 **그 가방이 자기 안에 들어간다**(10 ≤ 10).
+
+**★ 근거는 익스플로잇이 아니다 (13차 답변).** N겹으로 쌓아도 **총 용량이 그대로**다 — 바깥 10칸 중 10칸을 안쪽이 먹으므로 순증 0이고, 가방 N개를 소모해서 얻는 것이 없다. 진짜 근거 셋은 전부 **비용** 쪽이다.
+
+| | |
+|---|---|
+| ① **비용이 0이다** | `IsDataValid()`가 이미 `<`로 짜여 있고 확정 수치가 전부 만족한다. **쓸 코드도 고칠 값도 없다** |
+| ② **깊이 상한이 이 규칙 하나에만 걸려 있다** | `RemoveEntry` 재귀 · UI 중첩 · 세이브가 전부 *"깊이는 유한하다"* 를 전제하는데 증명이 위 부등식 **하나**다. 되돌리면 **세 곳이 동시에 근거를 잃는다** |
+| ③ **되돌릴 손잡이가 이미 이름으로 있다** | 아래 *"`MaxContainerDepth`는 만들지 않는다 … 그때 연다"*. **`=`를 원하는 날의 답은 `=`를 여는 게 아니라 깊이 상한을 여는 것이다** |
+
+**즉 질문이 *"막을 가치가 있나"* 가 아니라 *"이미 공짜로 막혀 있는 것을 굳이 풀 이유가 있나"* 다.**
+
+##### ★★ 그리고 증명이 쓰는 `SlotSize ≥ 1`을 검증하는 곳이 없었다 (13차 답변)
+
+`FEPItemData::SlotSize = 1`은 **기본값일 뿐 하한이 아니다**(`EPItemData.h:39`, `ClampMin` 없음). **본체가 0칸이 되면 구멍이 된다.**
+
+```cpp
+CanFit(본체, X) = GetUsedSlots(-1) + SlotSize <= GetCapacity(-1)
+                =        0        +    0      <=        0          →  참
+```
+
+**`SlotSize = 0`인 아이템은 0칸 본체에 무한히 들어가고 영원히 안 찬다.** `GetInsertionOrder`의 맨 앞이 본체라 **그 아이템만 컨테이너에 절대 안 들어간다.** `IsDataValid()`에 `SlotSize >= 1` 한 검사를 더한다(`05_Loot_00_ItemCore.md`).
+
+> **"자리를 안 먹는 아이템"이 기획으로 오면 답은 `SlotSize`가 아니라 슬롯이다** — 몸 슬롯(`SlotId != None`)이 이미 그 표현이고, **두 번째 표현을 만들지 않는다.**
+
+**런타임 코드가 0줄이다.** `MoveEntry`에 검사 8번을 붙이지 않는다 — 데이터가 이미 답한다.
+
+##### ★ 규칙이 아니라 형태로 — `IsDataValid()`
+
+`ContainerCapacity`는 **DT 컬럼**이다. 규칙을 문서에만 적으면 반년 뒤 새 배낭 행에 `Cap 20 / SlotSize 8`을 넣는 순간 **아무 에러 없이 무한 중첩이 열린다.** 증상은 크래시가 아니라 *"어떤 유저가 배낭 7겹으로 500칸을 들고 다닌다"* 라 발견이 늦다.
+
+```cpp
+// Step 00의 IsDataValid()에 한 줄 — 에디터에서 DT 저장 시 걸린다
+if (Row.ContainerCapacity > 0 && Row.ContainerCapacity >= Row.SlotSize)
+    → Error: "컨테이너 용량이 자기 크기 이상이면 중첩 깊이가 무한해진다"
+```
+
+`IsDataValid()`가 이미 DT↔Definition 정합을 검사하는 자리다(§4-9). **새 패턴이 아니다.**
+
+##### ★★ 그래서 배낭 벗기는 바닥 드랍이다
+
+이 규칙의 실제 비용이 여기 있고, 미리 못 박지 않으면 밸런싱이 조용히 막힌다.
+
+**착용 중인 배낭은 칸을 안 먹는다** — `SlotId != None`이면 `GetUsedSlots`가 건너뛴다(`05_Loot_03_Inventory.md` 03-3). 즉 `SlotSize`는 **벗었을 때만** 의미가 있다. 그런데 벗기를 `MoveEntry(배낭, INDEX_NONE, NAME_None)`으로 하면 검사 5를 지난다.
+
+```
+GetUsedSlots(본체) + SlotSize(배낭) ≤ MaxSlots
+```
+
+| `MaxSlots` = 10(테스트값)일 때 `SlotSize` | 결과 |
+|---|---|
+| 8 | 본체가 **2칸 이하**로 차 있을 때만 벗어진다 |
+| 11 | **영원히 못 벗는다** |
+
+**그리고 위 규칙상 용량을 키우려면 `SlotSize`를 키워야 하므로, 키울수록 못 벗게 된다.** 증상도 나쁘다 — `MoveEntry`가 조용히 `false`라 **"벗기가 가끔 안 먹는다"** 로 나타난다.
+
+> **★★ 본체 0칸 확정(2026-08-25)으로 "가끔"이 "항상"이 됐다.** `GetUsedSlots + SlotSize ≤ 0`은 **어떤 배낭에도 거짓**이고, 확정한 A(15)·B(10)는 **테스트값 10에서도 이미 못 벗는다.** 아래 결정이 없으면 벗기 경로가 **아예 존재하지 않는다.**
+
+**결정: 벗기는 `Server_DropItem`이다.** 발밑에 픽업으로 나가므로 칸 검사가 없고, `RemoveEntry` → 스폰 경로라 **내용물도 그대로 따라간다**(03-5). 코드가 이미 있다. 타르코프도 넣을 자리가 없으면 바닥이다. **배낭 `SlotSize`를 15까지 잡을 수 있는 근거가 이것이다.**
+
+> **★ 착용도 같은 이유로 칸 검사를 안 지난다 (2026-08-25).** `AddSubtree(Parent, **SlotId**, In)`이 `SlotId`가 있으면 `CanFit`을 건너뛴다 — 본체를 경유해 넣고 옮기면 *"등이 비었는데 배낭을 못 맨다"* 가 되고, **본체 0칸에서는 영구히 아무것도 자동 착용되지 않는다** (`05_Loot_03_Inventory.md` 함정 4y).
+
+> **명시적 깊이 상한(`MaxContainerDepth` + `MoveEntry` 검사 7)은 만들지 않는다.** 검사 6이 이미 부모 사슬을 도니 3줄이면 되지만, 위 둘로 목적이 달성되고 **확장점이 문서에 이름으로 있지도 않다**(CLAUDE.md §2). 밸런싱이 `SlotSize`/`Capacity` 커플링을 못 견디게 되면 그때 연다 — 그 신호는 *"용량은 키우고 싶은데 `SlotSize`를 못 키운다"* 이다.
 
 #### 삽입 — 전부 아니면 전무
 
@@ -518,12 +640,17 @@ Unequip : GetAmmo()            →  Entry.State.Charges
 
 #### 장착 슬롯 표현
 
-별도 장비 슬롯 배열을 만들지 않고 인벤토리 엔트리를 가리킨다 — `EquippedEntryId`(무기) / `EquippedBackpackEntryId`(배낭), 둘 다 `COND_OwnerOnly`.
+별도 장비 슬롯 배열도 별도 필드도 만들지 않는다 — **`FEPInventoryEntry::SlotId`가 장착의 유일한 진실이다**(9차 확정, 2026-08-22). `SlotId == "Hotbar1"`이 곧 *"이 총은 1번 칸에 있다"* 이고, `SlotId == "Back"`이 곧 *"이 배낭은 등에 있다"* 다.
+
+**`SlotId`로 표현되지 않는 상태가 하나 남는다** — *"1번과 2번 중 지금 어느 쪽을 손에 들었나."* 그것만 `ActiveHotbarIndex`(int32, `COND_OwnerOnly`)로 둔다.
+
+> **엔진 자신이 같은 형태다.** `USceneComponent`는 `AttachParent` ＋ `AttachSocketName`(`FName`)을 **자식**에 두고, 자식 목록(`AttachChildren`)은 `Transient` **파생 색인**이다(`SceneComponent.h:108-119`). 진실은 자식에, 색인은 파생으로. 슬롯 12개(핫바 4 + 착용 8) + 부착 4를 별도 배열로 표현하면 *"슬롯 이름 ↔ 배열 인덱스"* 표가 어딘가에 필요해지고, 그 표가 `SlotPriority`가 없애려는 하드코딩이다. 상세: `DOCS/Mine/EquipmentSlots.md`
 
 **`COND_OwnerOnly`로 충분하다.** 다른 클라이언트는 `AEPWeapon` 액터가 복제되고(`EPWeapon.cpp:19`) 소켓에 부착되므로 이미 보인다. 이 값은 순전히 소유자 UI를 위한 것이다.
 
 - **핸들이 두 개가 아니다.** 이전 설계는 인벤토리의 복제 핸들과 CombatComponent의 서버 전용 핸들을 별개로 뒀는데, 그건 "인벤토리가 먼저 비워져도 write-back 대상을 잃지 않게" 하려는 자료구조적 방어였다. `RemoveEntry()`의 반환값이 그 자리를 대신한다
-- **슬롯이 셋(주무기/보조/배낭)이 되면 `TMap<EEPEquipSlot, int32>`로 간다** — §8 미정 #5. 지금 넣으면 원소가 둘인 맵이다
+- **슬롯이 12개가 돼도 `TMap<EEPEquipSlot, int32>`로 가지 않는다** (9차 확정). 맵으로 가면 복제 대상이 하나 늘고 엔트리와의 정합을 지키는 코드가 생긴다. `SlotId`는 **이미 엔트리 안에 있고 이미 복제된다** — 추가 대역폭이 0이다
+- **`SlotId`로 표현되지 않는 것은 하나뿐이다** — *"1번과 2번 중 지금 어느 쪽을 들었나."* 그것만 `ActiveHotbarIndex`로 둔다. **가리키는 것이 엔트리가 아니라 슬롯이라 죽은 번호가 생길 문법이 없다**
 
 ### 4-9. 확장 지점 — 아이템 종류를 늘려도 인벤토리를 안 고치게
 
@@ -586,8 +713,8 @@ UEPItemDefinition::InitState(const FEPItemData& Data, FEPItemState& State) const
 | 01 | `05_Loot_01_Spawner.md` | `UEPLootTable`(중첩), `AEPItemSpawner`, `AEPPickup`(`ItemId` 복제 + `State` 서버 전용, Dormancy), `EP.Loot.RollTable` | 맵에 스포너를 놓고 PIE 2인 → 서버·클라 양쪽에서 같은 아이템이 같은 위치에 보인다. `RollTable` 1000회로 등급 비율이 기획표와 일치 |
 | 02 | `05_Loot_02_Interaction.md` | `IEPInteractable`(4함수), `UEPInteractionComponent`(틱 0.1s), **서버 거리 재검증 + `CanInteract()` 재호출**, `bClaimed` 경쟁 처리, HUD 프롬프트 | F키를 누르면 서버가 거리·`CanInteract()`를 재검증하고 픽업이 파괴된다. 사거리 밖 요청 거부. 2인이 동시에 눌러도 한 명만 성공 |
 | 03 | `05_Loot_03_Inventory.md` | `UEPInventoryComponent`(Character 부착), `FEPInventoryList`(FastArray + `EntryId`/`ParentEntryId` + 내장 `State`), **컨테이너별 칸 합산 + 배낭**, `bFungible` 합치기, `RemoveEntry()` 불변식(write-back + 자식 캐스케이드), **버리기(G) + `DropCooldown`** | 주운 아이템이 인벤토리에 쌓이고 델타 복제된다. 칸이 모자라면 **아무것도 안 들어가고 픽업이 그대로 남는다.** **배낭을 매면 별도 칸이 열리고, 배낭을 버리면 안의 아이템이 같이 나간다.** 현금뭉치 둘을 주우면 **금액이 합쳐진다.** 무기를 버렸다 다시 주우면 **잔탄이 그대로**다 |
-| 04 | `05_Loot_04_InventoryUI.md` | 아이템 목록 위젯(`EntryId` 오름차순), **본체/배낭 두 구획 + 각각의 칸 게이지**, FastArray 콜백 기반 갱신, 목록에서 버리기 | 인벤토리 화면(Tab)에 아이콘·이름·칸 수가 표시되고, 획득 즉시 갱신된다 (폴링 없음). **아이템을 줍고 버려도 기존 항목의 순서가 바뀌지 않는다** |
-| 05 | `05_Loot_05_Equipment.md` | `EquippedEntryId` 복제, `CombatComponent::EquipFromInventory(EntryId)`, 탄약 주입/write-back + `MarkItemDirty`, `EquipWeapon` 만탄 리셋 제거, `DefaultLoadout` 이관 | 무기를 12/30까지 쏘고 버렸다 다시 주워 장착하면 **12/30 그대로**. 다른 클라에서도 장착 무기가 보인다 |
+| 04 | `05_Loot_04_InventoryUI.md` | **04-A 표시** — 정사각형 격자 + 분절 게이지 + `＋ 남은 용량` 블록, 착용 12슬롯, FastArray 콜백 기반 갱신 / **04-B 드래그** — 이동·교환·착용, `Server_MoveEntry`/`Server_SwapEntries`, 로컬 순서(`ULocalPlayerSaveGame`에 지속) | 상의를 입으면 그 구획이 뜬다. **칸 3개인데 게이지는 `7/20`**(AK4+권총2+붕대1). **A의 아이템과 B의 아이템을 교환할 수 있고, 실패하면 아무 일도 일어나지 않는다** |
+| 05 | `05_Loot_05_Equipment.md` | `ActiveHotbarIndex` 세팅 경로, `CombatComponent::EquipFromInventory(EntryId)`, 탄약 주입/write-back + `MarkItemDirty`, `EquipWeapon` 만탄 리셋 제거, `DefaultLoadout` 이관 | 무기를 12/30까지 쏘고 버렸다 다시 주워 장착하면 **12/30 그대로**. 다른 클라에서도 장착 무기가 보인다 |
 
 각 Step 완료 시 `LOOT_STATUS.md`와 해당 `05_Loot_0X_XXX_STATUS.md`를 코드 기준으로 갱신한다.
 
@@ -596,7 +723,13 @@ UEPItemDefinition::InitState(const FEPItemData& Data, FEPItemState& State) const
 > - Step 02의 `OnInteract()`는 `Destroy()`만 하고 로그를 남긴다. §3이 내세운 "임시 코드가 안 생긴다"를 지키려면, 이 한 줄이 **Step 03에서 `AddItem()` 호출로 대체되는 유일한 지점**이어야 한다
 > - 칸 여유 확인 없이 파괴하므로 Step 02 단독으로는 "가방이 가득 찼을 때 픽업이 남는가"를 검증할 수 없다. 그건 Step 03 완료 조건이다
 
-> **UI 범위 통제:** Step 04는 표시 전용이다. 드래그앤드롭·정렬·아이템 이동은 넣지 않는다. 조작이 필요하면 숫자키/컨텍스트 메뉴로 처리한다.
+> **UI 범위 통제 (2026-08-23 갱신):** ~~Step 04는 표시 전용이다~~ — **9차 기획 확대로 뒤집혔다.** 착용·해제·핫바 배정이 전부 드래그이므로 **드래그가 Step 04의 본체**다. 대신 **자동 정렬·툴팁·핫바 5~0 UI·부착물 UI를 뺀다.**
+>
+> **레이아웃은 정사각형 격자다.** 칸 하나 = 아이템 하나이고, 부피(`SlotSize`)는 **배지 + 분절 게이지**로 보인다. **2D 배치(타르코프식)로 가지 않는다** — `FEPItemData`에 2D 크기가 없고, 넣으면 `FEPInventoryEntry`·`CanFit`·`MoveEntry`·UI가 전부 바뀌는 **Step 03 재작성**이다.
+>
+> **아이템 순서는 서버에 두지 않는다.** 서버 로직 중 순서를 보는 곳이 0곳이고 `COND_OwnerOnly`라 남이 볼 수도 없다. **지속은 `ULocalPlayerSaveGame`이 맡는다**(10차) — Lyra가 플레이어별 UI 상태를 두는 자리와 같다. 상세: `05_Loot_04_InventoryUI.md` 04-0 · 04-7 · 04-8.
+>
+> **★ Step 04를 04-A(표시) / 04-B(드래그)로 나눈다 (10차).** 완료 조건이 **14개**로 8차가 Step 03을 셋으로 쪼갠 숫자(13개)보다도 많고, **의존성이 실제로 다르다** — 04-A는 Step 03만 있으면 검증되지만 04-B는 `Server_MoveEntry`·`SwapEntries`가 있어야 한다. 분할선은 **RPC 표면이 처음 열리기 직전**이다.
 
 ---
 
@@ -637,6 +770,7 @@ UEPItemDefinition::InitState(const FEPItemData& Data, FEPItemState& State) const
 **지금 설계에서 미리 확보해 두는 것:**
 - `UEPLootTable`을 그대로 재사용한다 → 코드 추가 없이 에셋만 늘리면 된다
 - `IEPInteractable::GetInteractDuration()`을 처음부터 넣어둔다 → 검색 시간이 인터페이스 확장 없이 들어온다
+- **★ 이 절이 §7-6(컴포넌트 3분할)의 트리거다** (2026-08-26). 상자는 *"가진 것"* 만 있고 *"입은 것"* 이 없는 **첫 소유자**다 — 지금 구조로는 상자가 `UEPInventoryComponent`를 통째로 달아 **몸 슬롯과 핫바를 갖는다.** §8 미정 #10이 같은 지점을 데이터 쪽에서 짚었다
 - 검색 채널링은 **GAS 어빌리티로 구현**한다. `UEPGA_Skill_Base`의 `CastTime` + `State.Casting` 구조가 이미 있으므로, 검색 중 스킬 잠금·피격 중단·진행도 게이지(`WBP_CastGauge`)가 **전부 공짜로 재사용된다.** 이게 GAS를 먼저 한 배당금이다
 
 ### 7-2. 자판기
@@ -656,6 +790,8 @@ GAME.md §자판기 기획 유지 (1000원 → 5초 진동 + 소리 전파 → �
 > 안 적어두면 이 절을 구현할 때 *"픽업 클래스는 전역 하나로 정했잖아"* 와 충돌하고, 그 시점엔 왜 그렇게 정했는지 아무도 기억하지 못한다.
 
 > **상자를 안 열고 가방에 넣어 탈출하는 것도 가능하다.** 초안에서는 이걸 "값 타입 설계가 아픈 유일한 시나리오"로 보고 금지하려 했으나, **배낭(§4-6)이 들어오면서 중첩 컨테이너를 어차피 만들게 되어 제약이 소멸했다.** 상자는 자기 용량을 가진 컨테이너 아이템이고, 내용물은 `ParentEntryId`로 매달린 엔트리다 — 배낭과 완전히 같은 구조다. 다른 점은 "열기 전까지 내용물을 복제하지 않는다"뿐이다.
+
+> **★ 단 무조건 가능한 것은 아니다 (2026-08-24).** §4-6의 `Capacity < SlotSize` 규칙을 **상자도 컨테이너이므로 함께 지킨다.** 즉 *"상자를 가방에 넣어 탈출"* 은 **`SlotSize(상자) ≤ Capacity(가방)`일 때만** 성립한다 — 큰 상자는 못 넣고, 그건 버그가 아니라 **의도**다(그렇지 않으면 상자로 용량을 무한 증식할 수 있다). 위 문장의 *"제약이 소멸했다"* 는 **표현의 제약**이 사라졌다는 뜻이지 게임 규칙이 없다는 뜻이 아니다. 상자 크기를 정할 때 이 판정이 밸런싱 손잡이가 된다.
 
 ### 7-3. 무기 부착물 (배그식 — 깊이 1)
 
@@ -780,6 +916,254 @@ UObject의 약점은 애초에 "숫자 둘을 담는 게 무겁다"가 아니라
 
 ---
 
+### 7-4. 탄창 아이템화 (미정 #1의 ⓐ) — 구현 기획
+
+**Step 05 직후에 한다.** 기술적으로는 싸지만(자료구조 변경 0) **검증 순서 때문에 비싸다** — ⓐ 작업의 대부분이 *"이미 도는 코드를 한 칸 옮기는 것"* 이라, `Entry.State.Charges ↔ Ammo` 왕복이 ⓑ로 한 번 검증된 뒤에 해야 한다. 순서를 바꾸면 무기 장착이 한 번도 안 돌아본 상태에서 *"탄창 자식 엔트리의 잔탄이 이상하다"* 를 디버깅하게 되고, **주입이 틀린 건지 탄창 참조가 틀린 건지 가를 방법이 없다.**
+
+#### 결론 — 새 API가 거의 필요 없다
+
+재장전이 **`SwapEntries` 하나**로 떨어지고 나머지는 기존 함수의 **인자만 바뀐다.** 신규는 `FindReloadMag` 하나다.
+
+#### 데이터 — `Caliber`는 Definition, 탄종은 아직 아니다
+
+미정 #1은 *"`FEPItemState`에 `FName AmmoType`이 필요할 수 있다"* 고만 적었는데 **둘로 갈라야 한다.**
+
+| | 어디 | 왜 |
+|---|---|---|
+| **`Caliber`** (규격) | `UEPMagazineDefinition` / `UEPWeaponDefinition` | `Mag_STD_545`는 **언제나** 5.45다. 개체마다 다를 수 없다 |
+| **`LoadedAmmoId`** (안에 든 탄종) | `FEPItemState` | 같은 5.45라도 BT/PS가 다르다. **개체 상태가 맞다** |
+
+```cpp
+UEPMagazineDefinition : UEPItemDefinition
+{
+    FName Caliber;      // "545x39"
+    int32 Capacity;     // 30 — MaxAmmo가 여기로 이사한다
+};
+```
+
+호환 판정은 **`Mag->Caliber == Weapon->Caliber` 한 줄**이다. 매트릭스도 태그도 만들지 않는다.
+
+> **`LoadedAmmoId`는 ⓐ와 같이 오지 않는다.** 소비자가 없다 — 관통력 시스템이 없으니 탄종을 구분해도 아무것도 안 달라진다. **미정 #6(탄약상자로 탄창 채우기)이 열릴 때 처음 의미를 갖고, 그때가 넣을 때다.** §2의 *"상상한 확장점을 만들지 않는다"* 에 해당한다.
+
+#### ★★ 재장전 = `SwapEntries` — 여기가 핵심
+
+빈 탄창을 **"어디로 보낼까"** 가 이 기능의 유일한 난제다. 가방이 꽉 찼으면? 바닥에 버리나? **교환이면 그 질문 자체가 없어진다.**
+
+```
+전:  [Mag]#14(15발)         가방·3번칸 #22(30발)
+후:  [Mag]#22(30발)         가방·3번칸 #14(15발)
+```
+
+새 탄창이 **방금 비운 자리**에 빈 탄창이 들어가므로 **칸 검사가 필요 없다.** 총량이 안 변한다.
+
+그리고 `SwapEntries`는 이미 계약이 있다 — 부모·`SlotId`·**`SortKey`까지 교환**(`05_Loot_03_Inventory.md` 03-2 단일 쓰기 지점 표). 빈 탄창이 **새 탄창이 있던 화면 자리를 그대로 물려받는다.** 눈으로는 "탄창이 제자리에서 바뀐" 것이고, 타르코프의 동작과 같다.
+
+```cpp
+void UEPCombatComponent::PerformReload()
+{
+    const int32 WeaponId = Inv->GetEquippedEntryId();
+    const int32 OldMag   = Inv->GetEntryInSlot(WeaponId, "Mag");   // 없을 수 있다
+    const int32 NewMag   = FindReloadMag(WeaponId);
+    if (NewMag == INDEX_NONE) return;
+
+    WriteBackAmmo();                                     // ★ 4번째 write-back 경로 (아래)
+
+    if (OldMag != INDEX_NONE) Inv->SwapEntries(OldMag, NewMag);
+    else                      Inv->MoveEntry(NewMag, WeaponId, "Mag");
+
+    InjectAmmoFromMag(NewMag);                           // MaxAmmo 먼저 (05-5 함정 5)
+}
+```
+
+#### 어느 탄창을 고르나 — `SortKey`가 답이다
+
+```cpp
+int32 UEPCombatComponent::FindReloadMag(int32 WeaponId) const
+{
+    for (int32 C : Inv->GetInsertionOrder())              // 본체 → 배낭 → 파우치
+        for (int32 Id : Inv->GetSortedContents(C))        // ★ 화면에 보이는 순서
+            if (IsCompatible(Id, WeaponId)) return Id;
+    return INDEX_NONE;
+}
+```
+
+**사용자가 드래그로 정렬한 순서가 곧 재장전 우선순위다.** 새 정책 필드가 0개고 설명이 필요 없다 — *"위에 둔 게 먼저 들어간다."*
+
+**`SortKey`가 서버로 온 것의 두 번째 소비자**이기도 하다(첫째는 Step 04 UI). 11차 검수가 지적한 *"지금 소비자가 하나뿐"* 이 여기서 닫힌다.
+
+> 정책은 바뀔 수 있다(*"탄 많은 것 먼저"*). 그래서 **함수 하나에 가둔다** — 바꿀 곳이 한 곳이다.
+
+#### 경계 — 어빌리티는 인벤토리를 모른다
+
+```
+GA_Item_Reload          "재장전해" 만 말한다
+   ├─ CanActivate  →  Combat->HasCompatibleMag()      (클라도 계산 — COND_OwnerOnly로 복제돼 있다)
+   ├─ 예측: 애님 · ReloadTime
+   └─ 서버      →  Combat->PerformReload()            ★ 한 줄
+                      └─ Inv->SwapEntries / MoveEntry
+```
+
+`RemoveEntry` → `UnequipWeapon()`이 한 줄인 것과 **정확히 같은 모양**이고, **어빌리티 예측 경로에 서버 권위 자료구조가 들어오지 않는다.**
+
+Step 05의 완료 조건(*"`GA_Item_PrimaryUse` / `GA_Item_Reload`는 한 줄도 수정하지 않았다"*)은 이때 깨지지만, **깨지는 폭이 `PerformReload()` 호출 한 줄**이다.
+
+#### ★ `MaxAmmo`의 출처 — 05-5의 준비는 ⓑ의 답이다
+
+`05_Loot_05_Equipment.md:73`이 `AEPWeapon::GetMaxAmmo()`를 *"부착물 준비의 전부"* 라고 적었다. **그것은 ⓑ 세계(확장탄창 = `MaxAmmo`를 올리는 스탯 부착물)의 답이고, ⓐ에서는 다른 답이 된다.**
+
+ⓐ에서 `MaxAmmo`는 **꽂힌 탄창의 `Capacity`** 이고, 그건 무기 스탯이 아니라 **인벤토리 엔트리**다. 무기 액터가 그걸 읽게 하려면 액터에 `EntryId`를 심고 인벤토리를 뒤지게 해야 한다 — **§4-8이 여태 피해온 방향**이다.
+
+**읽는 주체는 `UEPCombatComponent`다.** `SetMaxAmmo`가 불리는 곳은 장착·재장전 둘뿐이고 **둘 다 이미 `EntryId`를 손에 쥐고 있다.** `GetMaxAmmo()`는 Spread/Recoil 계열 합산용으로 남고 **탄약에서는 손을 뗀다.**
+
+#### UI — 파라미터 하나가 갈린다
+
+Step 04는 장비 슬롯을 이렇게 그린다.
+
+```cpp
+const int32 Id = Inventory->GetEntryInSlot(INDEX_NONE, SlotId);   // 04-4 :331 — 본체 고정
+```
+
+무기 부착물 슬롯(`Optic`/`Muzzle`/`Grip`/`Mag`)은 **부모가 `INDEX_NONE` 대신 무기 `EntryId`일 뿐 같은 위젯**이다. → **`UEPEquipSlotWidget`이 `(ParentEntryId, SlotId)` 쌍을 받게 해 두면 무기 검사창이 사실상 공짜다.** 위젯 하나, 드래그 경로 하나를 그대로 쓴다.
+
+#### ★★ Step 05에서 미리 해두면 공짜인 것 — 셋
+
+셋 다 **§7-3·미정 #1이 이름으로 예고한 확장점**이고(§2 판단 기준 통과), 합쳐서 20줄 안쪽이다.
+
+| | 지금 비용 | 안 하면 나중에 |
+|---|---|---|
+| **`WriteBackAmmo()`로 함수 추출** | `UnequipWeapon` 안 두 줄을 빼는 것 | 재장전이 **4번째 write-back 경로**가 되는데 *"전부 `UnequipWeapon()`을 거친다"* 계약(05-5 함정 6)이 깨진 채 발견된다 |
+| **`UEPEquipSlotWidget`에 `ParentEntryId`** | 필드 하나 + `INDEX_NONE` 기본값 | 위젯을 복제하거나 Step 04를 다시 연다 |
+| **`MaxAmmo` 주입을 `InjectAmmoFromMag(int32)`로** | 이름만 미리 | 장착과 재장전이 **같은 순서 규칙**(`MaxAmmo` 먼저 — 05-5 함정 5)을 각자 구현한다 |
+
+#### 하지 않는 것
+
+- **`LoadedAmmoId`** — 소비자 없음. 미정 #6과 함께 온다
+- **탄약상자로 탄창 채우기** — **다른 상호작용**이다(전투 중이 아니고, 시간이 걸리고, 인벤토리 화면 안이다). `AddEntryCharges` 두 번이면 되지만 재장전과 섞지 않는다
+- **탄종 호환 매트릭스·태그** — `Caliber` 비교 한 줄로 충분하다
+- **무기 액터가 인벤토리를 아는 경로**
+
+#### 안 바뀌는 것
+
+`FEPInventoryEntry` 구조 · `RemoveEntry` 캐스케이드(탄창은 무기 자식이라 **자동으로 딸려 나가고 딸려 들어온다**) · `SortKey` · `MoveEntry` · `AddSubtree` · 복제 · 칸 계산. **자료구조 작업은 0이다** — §7-3이 그렇게 설계해 뒀다.
+
+---
+
+### 7-5. 장비 효과 — 장착이 **어빌리티를 준다** (2026-08-26 신설)
+
+**방어구·헬멧·특수 장비가 능력치나 어빌리티를 주는 자리다.** 지금은 아이템이 **인벤토리 안에서만** 의미를 갖고, 몸에 걸쳤을 때 캐릭터가 달라지는 경로가 **하나도 없다** — 무기의 잔탄이 유일한 예외다(§4-8).
+
+**실무 표준은 "저장은 FastArray, 효과만 GAS"다.** Lyra가 그 형태이고 두 시스템이 정확히 한 지점에서 만난다.
+
+```cpp
+// LyraEquipmentDefinition.h:49-51
+// Gameplay ability sets to grant when this is equipped
+UPROPERTY(EditDefaultsOnly, Category=Equipment)
+TArray<TObjectPtr<const ULyraAbilitySet>> AbilitySetsToGrant;
+
+// LyraEquipmentManagerComponent.cpp:91-93   장착
+for (const TObjectPtr<const ULyraAbilitySet>& AbilitySet : EquipmentCDO->AbilitySetsToGrant)
+    AbilitySet->GiveToAbilitySystem(ASC, /*inout*/ &NewEntry.GrantedHandles, Result);
+
+// LyraEquipmentManagerComponent.cpp:118     해제
+Entry.GrantedHandles.TakeFromAbilitySystem(ASC);
+```
+
+**인벤토리 자체는 ASC가 아니다** — `ULyraInventoryManagerComponent : UActorComponent`다. **어트리뷰트로는 아이템을 표현할 수 없기 때문이다**: 스칼라가 `float` 하나뿐이라 `ItemId(FName)`·`ParentEntryId`·`SlotId(FName)`·트리 구조가 들어갈 자리가 없고, 어트리뷰트 개수는 `UPROPERTY`로 **컴파일 타임에 고정**인데 인벤토리는 가변 배열이다. 태그도 답이 아니다 — **태그는 상태이고, *"3번 가방 안 두 번째 칸"* 을 말하지 못한다.**
+
+#### 우리 구조에 붙는 모양
+
+```cpp
+// UEPItemDefinition — 착용형 아이템만 채운다
+UPROPERTY(EditDefaultsOnly, Category = "Equipment")
+TArray<TObjectPtr<const UEPAbilitySet>> AbilitySetsToGrant;
+```
+
+| 시점 | 무엇 |
+|---|---|
+| **몸 슬롯에 들어갔다** | `GiveToAbilitySystem` — 핸들을 보관 |
+| **몸 슬롯에서 나갔다** | `TakeFromAbilitySystem` |
+| **엔트리가 사라졌다** | 같은 회수. `RemoveEntry`가 자동으로 |
+
+#### ★ 지금 확보돼 있는 것 — 훅이 **한 곳**이다
+
+- **`MoveEntry`가 `SlotId`를 고치는 유일한 지점이다**(9차 확정, `05_Loot_03_Inventory.md` 03-2). 부여/회수가 **그 함수 끝의 분기 하나**로 끝난다. `SlotId`가 여러 곳에서 바뀌는 설계였다면 훅이 그 수만큼 늘고 하나를 빠뜨리면 **벗었는데 효과가 남는다.**
+- **`RemoveEntry`의 4단계 순서가 회수 자리를 이미 갖고 있다.** ① write-back → ② 스냅샷 → ③ `RemoveSelf` → ④ 캐스케이드에서 **①과 같은 칸**이다 — `RemoveSelf` 뒤에는 `GetEquippedEntryId()`가 `INDEX_NONE`이라 회수 대상을 잃는다(Step 05 05-3의 write-back과 **같은 함정**).
+- **`SwapEntries`(04-7)도 이 훅을 지난다** — 두 엔트리가 슬롯을 맞바꾸므로 회수 둘 + 부여 둘이거나, 같은 슬롯이면 0이다.
+
+#### ★ 핸들을 어디 두나 — **엔트리에 넣으면 안 된다**
+
+`FGameplayAbilitySpecHandle`은 **서버 전용 식별자**이고 `FEPInventoryEntry`는 **복제된다**. Lyra는 핸들을 인벤토리가 아니라 **장비 매니저의 별도 배열**(`FLyraAppliedEquipmentEntry::GrantedHandles`)에 두어 이 문제를 피한다.
+
+**우리는 컴포넌트에 서버 전용 맵을 둔다.**
+
+```cpp
+// UEPInventoryComponent — 복제하지 않는다. 서버에만 산다
+UPROPERTY(NotReplicated) TMap<int32, FEPGrantedHandles> GrantedByEntry;   // EntryId → 핸들
+```
+
+> **이게 §7-6(컴포넌트 3분할)의 첫 번째 실질적 근거가 된다.** *"서버 전용 핸들 맵"* 은 인벤토리(가진 것)의 관심사가 아니라 **장비(입은 것)의 관심사**다. 지금은 한 컴포넌트라 그냥 필드가 하나 느는 것이지만, 나눌 때 **통째로 따라가는 덩어리**로 미리 알아둔다.
+
+#### 하지 않는 것 — 그리고 결정 신호
+
+**지금 만들지 않는다. 소비자가 0개다** — `DT_Items`에 방어구 행이 하나도 없고 `UEPAbilitySet`도 없다(GAS 단계는 어빌리티를 직접 부여한다). CLAUDE.md §2 기준으로 *"두 번째 구현자가 없는 인터페이스"* 다.
+
+**결정 신호:** **방어구·헬멧이 기획에 들어올 때.** Step 05가 *"하지 않는 것"* 에 이미 이름으로 적어뒀다. 그때 §4-9의 *"아이템 종류를 늘려도 인벤토리를 안 고치게"* 가 이 필드 하나로 확장된다.
+
+> **잔탄과 같은 모양이지만 방향이 반대다.** 잔탄은 **값을 왕복**시킨다(`Charges` ↔ `Ammo`, §4-8). AbilitySet은 **핸들을 들고 있다가 되돌려준다** — 값이 오가지 않는다. 그래서 write-back 순서 함정은 공유하되 *"어느 쪽이 진실인가"* 라는 질문은 없다.
+
+---
+
+### 7-6. 컴포넌트 3분할 — **가진 것 / 입은 것 / 손에 든 것** (2026-08-26 신설)
+
+**`UEPInventoryComponent` 하나가 지금 셋을 든다.**
+
+| 관심사 | 지금 드는 것 |
+|---|---|
+| **가진 것** | `Entries`(FastArray) · `AddItem` · `RemoveEntry` · `CanFit` · `SortKey` 일습 |
+| **입은 것** | `SlotId` 판정 — `CanPlaceInSlot` · `GetEntryInSlot` · `BodySlots` · (§7-5의 핸들 맵) |
+| **손에 든 것** | `ActiveHotbarIndex` · `HotbarRefs` · `GetEquippedEntryId` · `Server_SetActiveHotbarIndex` |
+
+**실무 표준은 셋으로 나누는 것이고, 핵심은 "클래스 이름"이 아니라 소유자다** (Lyra 직독).
+
+```cpp
+ULyraInventoryManagerComponent : public UActorComponent        // 아무나 들 수 있다
+ULyraEquipmentManagerComponent : public UPawnComponent         // 몸에 붙는다
+ULyraQuickBarComponent         : public UControllerComponent   // 폰이 죽어도 산다
+```
+
+**소유자가 다른 것이 분할의 이유 전체다.** 상자·시체·자판기는 *"가진 것"* 만 있으면 되고 *"입은 것"* 이 없다. 핫바는 **폰보다 오래 살아야** 리스폰 후에도 유지된다.
+
+#### ★ 우리의 분할 신호는 §7-1이다
+
+**월드 컨테이너(나무 상자)가 `UEPInventoryComponent`를 통째로 달아야 하는 첫 소비자다.** 그러면 상자가 **몸 슬롯과 핫바를 갖는다.**
+
+> **§8 미정 #10이 이미 같은 지점을 짚었다** — *"`BodySlots`가 답해야 할 질문은 **이 소유자에게 그 슬롯이 있는가**인데 전역 싱글턴은 **그 이름이 몸 슬롯인가**만 답한다. §7-1에서 나무 상자가 상의를 입는다(검사 3·5를 다 통과한다)."*
+>
+> **미정 #10은 그것을 데이터의 자리 문제로 봤고(`UEPPawnInventoryData`), §7-6은 같은 것을 컴포넌트의 자리 문제로 본다.** 둘 다 맞고 **같이 온다** — 상자가 `Equipment` 컴포넌트를 안 달면 `BodySlots`를 읽는 코드에 애초에 도달하지 않는다.
+
+#### ★ 지금 확보돼 있는 것 — **데이터가 안 움직인다**
+
+**장착의 진실이 `FEPInventoryEntry::SlotId`, 즉 엔트리 안에 있다**(9차 확정). 그래서 장비를 별도 컴포넌트로 빼도 **배열은 인벤토리에 그대로 남고 함수만 옮긴다.**
+
+```
+Lyra :  Slots 배열이 QuickBar 컴포넌트에 있다   →  분리가 자료구조에 박혀 있다
+우리 :  SlotId 가 엔트리에 있다                 →  분리가 함수 배치의 문제일 뿐이다
+```
+
+**나갈 것은 `ActiveHotbarIndex` · `HotbarRefs` · `GetEquippedEntryId` · `SetActiveHotbarIndex` · `Server_SetActiveHotbarIndex` ＋ §7-5의 핸들 맵이다.** `Entries` · `SortKey` · `CanFit` · `RemoveEntry`는 **한 줄도 안 움직인다.**
+
+> **`GetEquippedEntryId()`가 셋을 관통한다** — `ActiveHotbarIndex`(손) → 슬롯 이름(입은 것) → `Entries` 조회(가진 것). **분할의 실제 비용은 이 함수 하나**이고, 컴포넌트 간 참조를 어느 방향으로 둘지가 그때의 유일한 설계 질문이다. Lyra는 `QuickBar → EquipmentManager`를 **찾아가는 함수**로 푼다(`FindEquipmentManager()`, `LyraQuickBarComponent.h:56`).
+
+#### 하지 않는 것 — 그리고 결정 신호
+
+**지금 나누지 않는다.** 소비자가 하나(플레이어 폰)이고, 세 상태가 서로를 읽는다. 나누면 **오늘 얻는 것 없이 컴포넌트 간 참조 배선이 생긴다** — CLAUDE.md §2의 *"소비자가 하나인 계층"* 이다.
+
+**결정 신호 둘:**
+- **ⓐ §7-1 월드 컨테이너** — *"가진 것"* 만 있는 소유자가 처음 생긴다. **이쪽이 먼저다**
+- **ⓑ 리스폰 후 핫바 유지** — 핫바가 폰보다 오래 살아야 하면 `UControllerComponent`로 나간다. 지금은 사망 시 전부 드랍(미정 #4)이라 **살릴 것이 없다**
+
+---
+
 ## 8. 열린 결정사항
 
 ### 확정된 것
@@ -789,7 +1173,9 @@ UObject의 약점은 애초에 "숫자 둘을 담는 게 무겁다"가 아니라
 | 개체 상태의 형태 | **`FEPItemState` (USTRUCT, 값 타입).** `UEPItemInstance`/`UEPWeaponInstance`/인스턴스 서브시스템 **전부 삭제** | 담는 게 숫자 둘이고 다형성은 이미 Definition에 있다. UObject성이 Outer·핸들·이관 프로토콜을 강제했다 (§4-1) |
 | 스택 | **없다.** 붕대 3개 = 엔트리 3개 | 타르코프식. 탄약은 탄약상자의 `Charges`, 돈은 현금뭉치의 `Charges` (§4-1) |
 | 균질 아이템 합치기 | **한다** (`FEPItemData::bFungible` — 현금뭉치·탄약상자) | 칸 수가 `Charges`와 무관해 스택의 부담이 하나도 안 따라온다. 가방이 차도 돈·탄약은 들어간다 (§4-6) |
-| 인벤토리 용량 | **컨테이너별 칸 수 합산.** 본체 10칸 + 배낭은 **별도 풀** | 무게 시스템과 동형. 격자 배치가 아니라 스칼라 판정 (§4-6) |
+| 인벤토리 용량 | **컨테이너별 칸 수 합산. 본체는 0칸이고 수납은 착용 컨테이너에서만 나온다** (2026-08-25) | 무게 시스템과 동형. 격자 배치가 아니라 스칼라 판정. `MaxSlots`는 테스트 중에만 10 (§4-6) |
+| 시작 장비 | **`UEPLootDeveloperSettings::StartingEquipment`** → `BeginPlay`에서 `TryAutoEquip` (2026-08-25) | 본체가 0칸이라 아무것도 안 입으면 첫 아이템도 못 줍는다. 로비가 생기면 **배열을 채우는 쪽만** 바뀐다 (§4-6) |
+| 서브트리 삽입 | **`AddSubtree(Parent, SlotId, In)`** — 목적지는 `(Parent, SlotId)` 쌍, **기본값 없음** (2026-08-25) | `InsertEntry`·`MoveEntry`와 같은 어휘. 반쪽만 받으니 슬롯 정보가 스냅샷에서 새거나 아예 표현이 안 됐다 (`05_Loot_03_Inventory.md` 함정 4y·4z) |
 | 컨테이너 중첩 | **`ParentEntryId`.** 배낭·부착물·상자가 전부 같은 표현 | 자기 타입 재귀는 `Fatal`이고, 평면 표현은 깊이와 무관하다 (§4-6, §7-3) |
 | 불변식 강제 | **`RemoveEntry()`의 반환값 + `AddEntryCharges()` 내부**에서. 문서 규칙 금지 | write-back 순서·`MarkItemDirty`를 규율에 맡기면 3개월 뒤 깨진다 (§4-7) |
 | 인벤토리 부착 위치 | **Character** | 사망 시 소실이 규칙과 일치 (§4-6) |
@@ -799,7 +1185,11 @@ UObject의 약점은 애초에 "숫자 둘을 담는 게 무겁다"가 아니라
 | 부분 획득 | **없다** — 전부 아니면 전무 | 픽업 하나 = 아이템 하나 (§4-4, §4-6) |
 | 아이템 버리기 | **포함** (Step 03) | `Pickup->State = Entry.State` 값 복사 (§4-7) |
 | 무기 장착 흐름 이관 | **포함** (Step 05) | 탄약은 엔트리가 진실, 어트리뷰트는 뷰 (§4-8) |
-| 장비 슬롯 | **별도 배열 없음** — `EquippedEntryId` **하나** | 값 타입에서는 핸들 이중화가 불필요. §4-7의 순서 규칙으로 대체 (§4-8) |
+| 장비 슬롯 | **별도 배열도 필드도 없음** — **`FEPInventoryEntry::SlotId`가 진실** (9차) | 슬롯 12개 + 부착 4를 필드로 표현하면 필드가 12개가 되거나 `TMap`을 따로 복제해야 한다. `SlotId`는 이미 엔트리 안에 있고 이미 복제된다. 엔진 선례: `SceneComponent.h:108-119` (§4-8) |
+| 장비 슬롯 — 남는 상태 | **`ActiveHotbarIndex`(int32) 하나** | 가리키는 것이 엔트리가 아니라 **슬롯**이라 죽은 번호가 생길 문법이 없다 (§4-8) |
+| 엔트리 이동 | **`MoveEntry(EntryId, NewParent, NewSlotId)`** 가 유일한 지점 | `InsertEntry`·`SetEntryCharges`·`RemoveSelf`와 같은 규칙의 네 번째 적용. `MarkItemDirty`를 빠뜨릴 문법이 없어진다 |
+| 슬롯 자격 | **`FEPItemData::SlotPriority`(`TArray<FName>`)** — 순서가 우선순위 | 태그 컨테이너는 순서를 표현하지 못한다. 열거형은 슬롯 추가가 코드 변경이 된다 |
+| 슬롯 종류 판정 | **`UEPLootDeveloperSettings::BodySlots`** | 몸 슬롯인지 부착 슬롯인지를 아는 유일한 곳. 없으면 *"가방 안에 든 상의를 입는다"* 가 표현된다 |
 | 인벤토리 복제 조건 | **`COND_OwnerOnly`** | 남의 가방이 보이면 치트 + 대역폭 (§4-6) |
 | 식별자 | **`FEPInventoryEntry::EntryId` (`int32`, 서버 발급, 재번호 없음)** | FastArray는 클라 배열 순서를 보장하지 않는다. `FGuid`/`SchemaVersion`은 제거 (§4-1) |
 | 상태 초기화 | **Definition의 virtual `InitState()`** + 기본 클래스 `InitialCharges` | static 팩토리로는 타입 분기가 계속 자란다 (§4-9) |
@@ -814,13 +1204,16 @@ UObject의 약점은 애초에 "숫자 둘을 담는 게 무겁다"가 아니라
 
 | # | 항목 | 선택지 | 비고 |
 |---|---|---|---|
-| 1 | **탄창이 별도 아이템인가** | ⓐ `[Mag]` 슬롯의 부착물 (탄창마다 `Charges`, 미리 채워 여러 개 휴대 — 타르코프) / ⓑ 무기 자신의 `Charges` + 확장탄창은 `MaxAmmo`를 올리는 스탯 부착물 (배그) | **깊이는 어느 쪽이든 1이고 자료구조가 같다** (§7-3). ⓐ면 `FEPItemState`에 `FName AmmoType`이 필요할 수 있다. **Step 00~05 범위 밖** — Step 05는 무기 자신의 `Charges`(=ⓑ)로 만들고, ⓐ로 갈 때 장착 시 읽는 대상만 자식 엔트리로 바꾼다 |
+| 1 | **탄창이 별도 아이템인가** | ⓐ `[Mag]` 슬롯의 부착물 (탄창마다 `Charges`, 미리 채워 여러 개 휴대 — 타르코프) / ⓑ 무기 자신의 `Charges` + 확장탄창은 `MaxAmmo`를 올리는 스탯 부착물 (배그) | **깊이는 어느 쪽이든 1이고 자료구조가 같다** (§7-3). **Step 00~05 범위 밖** — Step 05는 무기 자신의 `Charges`(=ⓑ)로 만들고, ⓐ로 갈 때 장착 시 읽는 대상만 자식 엔트리로 바꾼다. **★ ⓐ의 구현 기획은 §7-4에 있다** (2026-08-24) — 재장전이 `SwapEntries` 하나로 떨어지고 신규 API는 `FindReloadMag` 하나다. **`AmmoType`은 둘로 갈렸다**: 규격(`Caliber`)은 Definition, 안에 든 탄종(`LoadedAmmoId`)은 `FEPItemState`이되 **#6과 함께 온다** |
 | 2 | 스폰 시드 | 매치마다 랜덤 / 시드 고정 | 재현 가능한 테스트가 필요하면 `FRandomStream` + 서버 시드 복제 |
-| 3 | 배낭 종류·용량 | 소형/중형/대형 몇 칸씩인가 | 밸런싱 사항. 본체 10칸은 GAME.md 확정 |
+| 3 | 배낭 종류·용량 | ~~소형/중형/대형 몇 칸씩인가~~ | **✅ 테스트값 확정 (2026-08-25, §4-6).** A `SlotSize 15 / Cap 12`, B `10 / 8`. 상의 `11 / 10`, 하의 `6 / 5`, 본체 **0**. 종류는 DT 행 추가로 계속 는다. **규칙은 `ContainerCapacity < SlotSize`**(등호 없음 — 넣기 판정의 `≤`와 다른 식이다). 벗기·착용이 둘 다 칸 검사를 안 지나므로 `SlotSize`가 본체 용량에 **묶이지 않는다.** `IsDataValid()`가 강제한다 |
 | 4 | 사망 시 드랍 — **구현 시점만 미정** | ~~인벤토리 통째 / 배낭 하나로~~ | **선택지가 아니다.** GAME.md 인벤토리 절이 **"사망 시 전부 드랍"** 으로 이미 정했다. 시체 위치에 픽업 하나 + **전 엔트리**를 서브트리로 (§4-7). **이번 단계 범위 밖** |
-| 5 | 무기 2정 이상 | 주무기/보조 슬롯 | **GAME.md:163이 "주무기 1 + 보조무기 1"로 코어 스펙이다.** Step 05는 1정으로 만들고 `TMap<EEPEquipSlot, int32>`로 확장 (§4-8) |
-| 6 | **재장전의 탄약 소비** | 무한 재장전 유지 / 탄약상자 `Charges` 차감 | 루트 테이블에 `AmmoBox_545`가 들어가는데 `GA_Item_Reload`는 인벤토리를 보지 않는다 — §4-9의 소모품과 같은 "있는데 쓸 수 없는" 상태. **이번 단계 범위 밖**이지만, Step 05의 `Entry.State.Charges` 주입 구조가 들어오면 `AddEntryCharges(Id, -N)`이 차감 지점이 된다. #1의 답에 직접 걸린다 |
-| 7 | DB 영속화 대상 | 어떤 필드를 저장할 것인가 | `FEPItemState`는 `FJsonObjectConverter` 한 줄로 직렬화된다. 영구 식별자와 스키마 버전은 **행 봉투**에 둔다 (§4-1). **★ 셋을 같이 저장한다 — `NextEntryId` / `EquippedEntryId` / `EquippedBackpackEntryId`.** `NextEntryId`를 빠뜨리면 로드 후 1부터 재발급해 기존 엔트리와 충돌하고 `ParentEntryId`를 오염시킨다. 장착 번호만 저장하고 `NextEntryId`를 빠뜨리면 **죽은 번호를 가리킨다** |
+| 5 | ~~무기 2정 이상~~ | ~~주무기/보조 슬롯~~ | **✅ 확정으로 이동 (9차, 2026-08-22).** 핫바 1~4로 확정 — `Hotbar1`/`Hotbar2`는 무기 전부, `Hotbar3` 보조, `Hotbar4` 근접. `TMap`이 아니라 **엔트리의 `SlotId`** 로 표현한다. `DOCS/Mine/EquipmentSlots.md` §1 |
+| 6 | **재장전의 탄약 소비** | 무한 재장전 유지 / 탄약상자 `Charges` 차감 | 루트 테이블에 `AmmoBox_545`가 들어가는데 `GA_Item_Reload`는 인벤토리를 보지 않는다 — §4-9의 소모품과 같은 "있는데 쓸 수 없는" 상태. **이번 단계 범위 밖**이지만, Step 05의 `Entry.State.Charges` 주입 구조가 들어오면 `AddEntryCharges(Id, -N)`이 차감 지점이 된다. #1의 답에 직접 걸린다. **★ #1의 ⓐ와 같이 오지 않는다** (§7-4) — 재장전은 전투 중 어빌리티, 탄창 채우기는 인벤토리 화면 안의 시간 걸리는 조작이라 **섞지 않는다.** `FEPItemState::LoadedAmmoId`가 처음 의미를 갖는 지점이 여기다 |
+| 7 | DB 영속화 대상 | 어떤 필드를 저장할 것인가 | `FEPItemState`는 `FJsonObjectConverter` 한 줄로 직렬화된다. 영구 식별자와 스키마 버전은 **행 봉투**에 둔다 (§4-1). **★ 둘을 같이 저장한다 — `NextEntryId` / `ActiveHotbarIndex`.** 장착·배낭은 엔트리의 `SlotId`에 들어 있으므로 배열만 저장하면 따라온다(9차). `NextEntryId`를 빠뜨리면 로드 후 1부터 재발급해 기존 엔트리와 충돌하고 `ParentEntryId`를 오염시킨다 |
+| **8** | **상의·하의가 컨테이너를 유지하는가** | 유지 / **가방과 외투만 컨테이너** | 사용자 예고 (2026-08-25). 이행이 **데이터 둘**이다 — `DT_Items`의 `ContainerCapacity`를 0으로, `ContainerOrder`에서 제거. **코드 변경 0**(§4-6). 그때 `SlotSize` 11/6의 하한도 사라져(`0 < SlotSize`) *"접으면 2칸"* 같은 값으로 내려간다. **결정 신호:** 옷이 방어구 역할만 하고 수납은 조끼·배낭이 전담하게 될 때 |
+| **9** | **본체 0칸 전환 시점** | 지금 / Step 03 검증 후 | `MaxSlots = 10`은 **테스트값**이다(2026-08-25). 0으로 내리면 `StartingEquipment`가 **필수**가 되고 완료 조건 2~6의 검증 경로가 상의 컨테이너로 옮겨간다. **필드는 지운다가 아니라 0을 넣는다** — `GetInsertionOrder`의 맨 앞 `INDEX_NONE`이 그대로 남아도 `CanFit`이 걸러낸다. `GAME.md` 인벤토리 절도 같이 고친다. **★ 전환 시점은 03-B(줍기·버리기) 완료 이후다** (13차 답변) — `StartingEquipment`가 돌아야 컨테이너가 생기고, 그 전에는 `EP.Inv.Add`가 본체로만 넣는다. **그리고 전환 후 03-A 완료 조건 아홉 개를 다시 돌리려면 `EP.Inv.Add`에 `[Container]` 인자가 있어야 한다** — 없으면 회귀 테스트를 잃는다 |
+| **10** | **장비 구성 셋을 드는 곳** (14차에 `StartingEquipment` 하나에서 **셋**으로 넓어졌다 — ＋`BodySlots`·`ContainerOrder`) | `UEPLootDeveloperSettings` (지금) / **`UEPPawnInventoryData`**(`UPrimaryDataAsset`) | 지금은 **전역 기본값**이고 `UGameMapsSettings::GlobalDefaultGameMode`(`GameMapsSettings.h:216`)와 같은 모양이다 — *"다른 방법으로 지정되지 않았을 때 쓰는 값"*. **로비가 오면 드는 곳이 `UPrimaryDataAsset`으로 옮겨간다**(Lyra `ULyraPawnData`가 `AbilitySets`·`InputConfig`를 그렇게 든다 — `LyraPawnData.h:25-53`)이고 이 필드는 폴백이 된다. 결정 신호: *"모드나 캐릭터마다 시작 장비가 달라져야 한다"*<br>**★ 6차의 `UDeveloperSettings` 확정을 근거로 삼지 않는다** (13차 답변) — 6차 근거는 *"인스턴스 없이 읽어야 하는 소비자가 둘 이상"*(`BodySlots`는 `MoveEntry`와 UI가 읽는다)이었고, 이 필드는 **소비자가 하나이고 캐릭터 액터 문맥에서 읽는다.** 근거를 잘못 적으면 **다음에 오는 콘텐츠성 전역 필드가 6차를 인용해서 들어온다**<br>**★★ 14차 — 셋이 같은 배를 탄다.** `BodySlots`·`ContainerOrder`도 *"캐릭터가 무엇으로 이루어졌는가"* 라 같은 종류다. **`BodySlots`가 특히 그렇다** — 답해야 할 질문이 *"이 소유자에게 그 슬롯이 있는가"* 인데 전역 싱글턴은 *"그 이름이 몸 슬롯인가"* 만 답한다. **트리거가 둘로 늘었다:** ⓐ 로비(위) ⓑ **§7-1 월드 컨테이너** — 슬롯이 소유자별이 되는 첫 지점이고, 그때까지 나무 상자가 상의를 입는 것이 *"우연히 도달 불가"* 로만 막혀 있다. **이전 비용은 읽는 곳 둘**(`CanPlaceInSlot` · Step 04 UI)**이라 지금 만들지 않는다** — §9 참조 |
 
 ---
 
@@ -832,8 +1225,26 @@ UObject의 약점은 애초에 "숫자 둘을 담는 게 무겁다"가 아니라
 UEPLootDeveloperSettings : UDeveloperSettings
 ├─ bool                    bEnableLootDebugLog      스폰 판정 결과를 로그로
 ├─ bool                    bEnableSpawnerDebugDraw  에디터/PIE에서 스포너 위치·반경 시각화
-└─ TSoftObjectPtr<UDataTable> ItemDataTable         DT_Items (하드코딩 금지)
+├─ TSoftObjectPtr<UDataTable> ItemDataTable         DT_Items (하드코딩 금지)
+├─ TArray<FName>           BodySlots                몸 슬롯 12 (핫바 4 + 착용 8)      — 9차
+├─ TArray<FName>           ContainerOrder           획득 시 볼 컨테이너 순서          — 10차
+└─ TArray<FName>           StartingEquipment        스폰 시 입힐 아이템 ["Shirt_Basic","Pants_Basic"]  — 13차
 ```
+
+> **★★ 아래 셋(`BodySlots`·`ContainerOrder`·`StartingEquipment`)은 이 클래스의 나머지와 종류가 다르다 — 임시 자리다 (14차).**
+> 위 셋은 *"어디에 있는 무엇을 쓰나"* ＋ *"디버그"* 인데, 아래 셋은 **캐릭터가 무엇으로 이루어졌는가**다. **§8 미정 #10이 셋 전부를 관장한다** — 최종 자리는 `UEPPawnInventoryData`(DataAsset)다.
+>
+> **6차의 *"전역 데이터 참조는 `UDeveloperSettings`"* 를 근거로 인용하지 않는다.** 그 문장은 *"전역 **데이터 참조**"* 이지 *"전역 데이터"* 가 아니다 — `ItemDataTable`·`PickupClass`처럼 **가리키는 것**을 말한 것이다. 13차가 `StartingEquipment`를 붙이며 그 구분을 흘렸고, 검수에서 근거가 교체되며 미정 #10이 생긴 것이 그 흔적이다.
+>
+> **`BodySlots`가 지금 답하는 질문이 반쪽이다.** *"`Torso`가 몸 슬롯인가"*(전역, 설정이 답할 수 있다)와 *"이 인벤토리 소유자에게 `Torso`가 있는가"*(소유자별, 전역 싱글턴은 못 답한다)가 섞여 있다. 검사 3은 뒤를 물어야 하는데 앞을 묻는다 — **§7-1 월드 컨테이너에서 나무 상자가 상의를 입는다**(검사 3·5를 다 통과한다). 지금은 상자의 `MoveEntry`를 부르는 표면이 없어 도달 불가이고, 13차가 잡은 `GetOwner<AEPCharacter>()` 무보호 역참조와 **같은 종류의 우연**이다.
+>
+> **그래도 지금 옮기지 않는다** — 읽는 곳이 둘(`CanPlaceInSlot` 검사 3 · Step 04 슬롯 그리기)이라 이전 비용이 낮고, 지금 만들면 **소비자가 하나인 계층**이 는다(CLAUDE.md §2). 옮길 때의 모양은 `ItemDataTable`과 같다 — **설정이 가리키고, 내용은 에셋에 있다.**
+>
+> ```
+> TSoftObjectPtr<UEPPawnInventoryData> PawnInventoryData;   // ← 참조는 설정, 데이터는 DataAsset
+> ```
+
+> **★ 이 클래스의 규칙: 에셋 참조와 디버그만 둔다 (14차 명문화).** 위 다섯 필드가 이미 그 규칙을 지키고 있는데 적혀 있지 않아서 13차가 콘텐츠성 필드를 붙였다. **Lyra도 같다** — `ULyraDeveloperSettings`·`ULyraCosmeticDeveloperSettings`·`ULyraWeaponDebugSettings`가 **전부 `config=EditorPerProjectUserSettings`** 이고(`LyraDeveloperSettings.h:39` · `LyraCosmeticDeveloperSettings.h:25` · `LyraWeaponDebugSettings.h:14`) 내용은 `ExperienceOverride`·봇 수 오버라이드·`bTestFullGameFlowInPIE`·자주 쓰는 맵 목록이다. **게임플레이 구성은 DataAsset이 든다**(`ULyraPawnData : UPrimaryDataAsset` — `PawnClass`·`AbilitySets`·`InputConfig`·`DefaultCameraMode`, `LyraPawnData.h:24-53`). **슬롯 개수조차 컴포넌트 필드다** — `ULyraQuickBarComponent::NumSlots`(`LyraQuickBarComponent.h:63-64`).
 
 > **`FName` 경로가 아니라 `TSoftObjectPtr<UDataTable>`을 쓴다.** 다만 이유는 *"리다이렉터가 알아서 따라가서"* 가 **아니다** — `.ini`에 적힌 경로는 에셋 리네임 시 **자동으로 고쳐지지 않는다.** 엔진이 리네임 다이얼로그에 그렇게 적어 놓았다.
 >

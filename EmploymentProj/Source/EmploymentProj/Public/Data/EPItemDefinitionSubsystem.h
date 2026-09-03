@@ -41,4 +41,5 @@ private:
 	TMap<FName, TObjectPtr<UEPItemDefinition>> DefinitionCache;
 	
 	TSharedPtr<FStreamableHandle> DefinitionHandle;
+	TSharedPtr<FStreamableHandle> SharedAssetHandle;
 };

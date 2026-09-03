@@ -15,6 +15,8 @@ class UEPServerSideRewindComponent;
 // --- 입력 ---
 class UInputAction;
 struct FInputActionValue;
+// --- 인벤토리 ---
+class UEPInventoryComponent;
 
 // --- 메타 휴먼 ---
 class UGroomComponent;
@@ -43,6 +45,7 @@ public:
 	UCameraComponent* GetCameraComponent() const;
 	UEPCombatComponent* GetCombatComponent() const;
 	UEPInteractionComponent* GetInteractionComponent() const;
+	UEPInventoryComponent* GetInventoryComponent() const;
 	FORCEINLINE USkeletalMeshComponent* GetFaceMesh() const { return FaceMesh; }
 	FORCEINLINE USkeletalMeshComponent* GetOutfitMesh() const { return OutfitMesh; }
 	bool IsDead() const;
@@ -61,6 +64,8 @@ protected:
 	UEPServerSideRewindComponent* RewindComponent;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Interaction")
 	UEPInteractionComponent* InteractionComponent;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Inventory")
+	UEPInventoryComponent* InventoryComponent;
 	
 	UPROPERTY(EditDefaultsOnly, Category = "GAS")
 	TArray<TSubclassOf<UGameplayAbility>> DefaultAbilities;
@@ -118,6 +123,9 @@ protected:
 	
 	// 발사
 	void Input_Fire(const FInputActionValue& Value);
+	void Input_StopFire(const FInputActionValue& Value);
+	
+	// 좌우 패트롤
 	void Input_ToggleAutoStrafeTest();
 	
 	// 장전
@@ -160,8 +168,6 @@ private:
 	
 	// === 함수 ===
 	void InitASC();
-	
-	void OnMoveSpeedMultiplierChanged(const FOnAttributeChangeData& Data);
 	
 	UFUNCTION(NetMulticast, Unreliable)
 	void Multicast_PlayHitReact();

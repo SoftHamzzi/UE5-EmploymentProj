@@ -3,6 +3,7 @@
 
 #include "GAS/EPGA_Item_PrimaryUse.h"
 
+#include "TimerManager.h"
 #include "Camera/CameraComponent.h"
 #include "Combat/EPCombatComponent.h"
 #include "Combat/EPWeapon.h"
@@ -16,7 +17,7 @@ UEPGA_Item_PrimaryUse::UEPGA_Item_PrimaryUse()
 	NetExecutionPolicy = EGameplayAbilityNetExecutionPolicy::LocalPredicted;
 	InstancingPolicy = EGameplayAbilityInstancingPolicy::InstancedPerActor;
 	
-	bServerRespectsRemoteAbilityCancellation = false;
+	bServerRespectsRemoteAbilityCancellation = true;
 
 	FGameplayTagContainer Tags = GetAssetTags();
 	Tags.AddTag(EmpGameplayTags::TAG_Ability_Item_PrimaryUse);
@@ -40,60 +41,28 @@ void UEPGA_Item_PrimaryUse::ActivateAbility(const FGameplayAbilitySpecHandle Han
 		return;
 	}
 	
-	if (!CommitAbility(Handle, ActorInfo, ActivationInfo))
+	FireOnce();
+	
+	if (Weapon->WeaponDef->FireMode == EEPFireMode::Auto)
 	{
-		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
-		return;
+		const float Interval = GetFireInterval(Weapon);
+		GetWorld()->GetTimerManager().SetTimer(FireTimerHandle, this, &UEPGA_Item_PrimaryUse::FireOnce, Interval, true);
 	}
-	
-	const FVector Origin = Char->GetCameraComponent()->GetComponentLocation();
-	const AGameStateBase* GS = Char->GetWorld()->GetGameState<AGameStateBase>();
-	const float ClientTime = GS ? GS->GetServerWorldTimeSeconds()
-		: Char->GetWorld()->GetTimeSeconds();
-	
-	if (ActorInfo->IsNetAuthority())
+	else
 	{
-		UEPCombatComponent* Combat = Char->GetCombatComponent();
-		Combat->HandleServerFire(Origin, Char->GetControlRotation().Vector(), ClientTime);
+		EndAbility(Handle, ActorInfo, ActivationInfo, false, false);
 	}
-	
-	if (!ActorInfo->IsNetAuthority())
-	{
-		UEPCombatComponent* Combat = Char->GetCombatComponent();
-		if (Combat)
-		{
-			Combat->PlayLocalMuzzleEffect(Origin);
-			
-			if (Weapon->WeaponDef->BallisticType == EEPBallisticType::ProjectileFast)
-				Combat->SpawnLocalCosmeticProjectile(Origin, Char->GetControlRotation().Vector());
-		}
-	}
-	
-	EndAbility(Handle, ActorInfo, ActivationInfo, false, false);
-	
 }
 
-bool UEPGA_Item_PrimaryUse::CanActivateAbility(const FGameplayAbilitySpecHandle Handle,
-                                               const FGameplayAbilityActorInfo* ActorInfo, const FGameplayTagContainer* SourceTags,
-                                               const FGameplayTagContainer* TargetTags, FGameplayTagContainer* OptionalRelevantTags) const
+void UEPGA_Item_PrimaryUse::EndAbility(const FGameplayAbilitySpecHandle Handle,
+	const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo,
+	bool bReplicateEndAbility, bool bWasCancelled)
 {
-	if (!Super::CanActivateAbility(Handle, ActorInfo, SourceTags, TargetTags, OptionalRelevantTags))
-		return false;
-	
-	const AEPCharacter* Char = Cast<AEPCharacter>(ActorInfo->AvatarActor.Get());
-	const AEPWeapon* Weapon = Char ? Char->GetCombatComponent()->GetEquippedWeapon() : nullptr;
-	
-	return Char && Weapon && Weapon->CanFire();
-}
-
-const FGameplayTagContainer* UEPGA_Item_PrimaryUse::GetCooldownTags() const
-{
-	FGameplayTagContainer* MutableTags = const_cast<FGameplayTagContainer*>(&TempCooldownTags);
-	MutableTags->Reset();
-	if (const FGameplayTagContainer* ParentTags = Super::GetCooldownTags())
-		MutableTags->AppendTags(*ParentTags);
-	MutableTags->AppendTags(CooldownTags);
-	return MutableTags;
+	if (GetWorld())
+	{
+		GetWorld()->GetTimerManager().ClearTimer(FireTimerHandle);
+	}
+	Super::EndAbility(Handle, ActorInfo, ActivationInfo, bReplicateEndAbility, bWasCancelled);
 }
 
 void UEPGA_Item_PrimaryUse::ApplyCooldown(const FGameplayAbilitySpecHandle Handle,
@@ -105,12 +74,63 @@ void UEPGA_Item_PrimaryUse::ApplyCooldown(const FGameplayAbilitySpecHandle Handl
 	FGameplayEffectSpecHandle SpecHandle =
 		MakeOutgoingGameplayEffectSpec(CooldownGE->GetClass(), GetAbilityLevel());
 	
-	SpecHandle.Data->DynamicGrantedTags.AppendTags(CooldownTags);
-	
 	const AEPCharacter* Char = Cast<AEPCharacter>(ActorInfo->AvatarActor.Get());
 	const AEPWeapon* Weapon = Char ? Char->GetCombatComponent()->GetEquippedWeapon() : nullptr;
-	const float Duration = Weapon ? (1.f/ Weapon->WeaponDef->FireRate) : 0.2f;
+	const float Duration = GetFireInterval(Weapon);
 	
 	SpecHandle.Data->SetSetByCallerMagnitude(EmpGameplayTags::TAG_Data_Cooldown, Duration);
 	ApplyGameplayEffectSpecToOwner(Handle, ActorInfo, ActivationInfo, SpecHandle);
+}
+
+bool UEPGA_Item_PrimaryUse::ServerConfirmOneShot(const FVector& Origin, const FVector& Direction)
+{
+	if (!CommitAbilityCost(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo))
+		return false;
+	
+	if (AEPCharacter* Char = Cast<AEPCharacter>(CurrentActorInfo->AvatarActor.Get()))
+		if (UEPCombatComponent* Combat = Char->GetCombatComponent())
+			Combat->HandleServerFire(Origin, Direction);
+	
+	return true;
+}
+
+void UEPGA_Item_PrimaryUse::FireOnce()
+{
+	AEPCharacter* Char = Cast<AEPCharacter>(CurrentActorInfo->AvatarActor.Get());
+	AEPWeapon* Weapon = Char ? Char->GetCombatComponent()->GetEquippedWeapon() : nullptr;
+	if (!Char || !Weapon || !Weapon->CanFire())
+	{
+		EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, false, true);
+		return;
+	}
+	
+	CommitAbilityCooldown(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true);
+	
+	if (!CurrentActorInfo->IsLocallyControlled()) return;
+	
+	const FVector Origin = Char->GetCameraComponent()->GetComponentLocation();
+	const FVector Direction = Char->GetControlRotation().Vector();
+	UEPCombatComponent* Combat = Char->GetCombatComponent();
+	
+	if (!Combat) return;
+	
+	if (CurrentActorInfo->IsNetAuthority())
+	{
+		if (!ServerConfirmOneShot(Origin, Direction))
+		{
+			EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, false, true);
+		}
+	}
+	else
+	{
+		Combat->PlayLocalMuzzleEffect(Origin);
+		if (Weapon->WeaponDef->BallisticType == EEPBallisticType::ProjectileFast)
+			Combat->SpawnLocalCosmeticProjectile(Origin, Char->GetControlRotation().Vector());
+		Combat->Server_ConfirmFire(Origin, Char->GetControlRotation().Vector(), CurrentSpecHandle);
+	}
+}
+
+float UEPGA_Item_PrimaryUse::GetFireInterval(const AEPWeapon* Weapon)
+{
+	return Weapon ? (1.f / Weapon->WeaponDef->FireRate) : 0.2f;
 }

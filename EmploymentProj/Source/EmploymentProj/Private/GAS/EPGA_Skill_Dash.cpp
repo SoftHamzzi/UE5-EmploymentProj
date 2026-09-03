@@ -13,7 +13,7 @@ UEPGA_Skill_Dash::UEPGA_Skill_Dash()
 	Tags.AddTag(EmpGameplayTags::TAG_Ability_Skill_Dash);
 	SetAssetTags(Tags);
 	
-	ActivationBlockedTags.AddTag(EmpGameplayTags::TAG_Cooldown_Skill_Dash);
+	SetCooldownTag(EmpGameplayTags::TAG_Cooldown_Skill_Dash);
 }
 
 void UEPGA_Skill_Dash::OnCastComplete()
@@ -31,10 +31,5 @@ void UEPGA_Skill_Dash::OnCastComplete()
 		Char->LaunchCharacter(LaunchVel, true, true);
 	}
 	
-	if (GE_DashCooldownClass)
-	{
-		FGameplayEffectSpecHandle CDSpec = MakeOutgoingGameplayEffectSpec(GE_DashCooldownClass);
-		CDSpec.Data->SetSetByCallerMagnitude(EmpGameplayTags::TAG_Data_Cooldown, DashCooldown);
-		ApplyGameplayEffectSpecToOwner(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, CDSpec);
-	}
+	ApplyCooldownGE();
 }

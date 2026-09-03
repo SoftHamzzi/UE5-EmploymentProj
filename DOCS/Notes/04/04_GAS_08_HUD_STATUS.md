@@ -135,10 +135,59 @@ LastShownRemaining = Remaining;
 
 | # | 위치 | 내용 |
 |---|---|---|
-| 1 | `EPSkillSlotWidget.cpp:143-149` | `RecomputeState`가 상태 변화 여부와 무관하게 `ApplyState`를 호출한다. 방벽 진행 중(Active) 힐을 시전하면 `OnLockTagChanged` → 여전히 Active인데 `LastShownRemaining`이 리셋된다. `ApplyState` 선두에 `if (NewState == CurrentState) return;` 가드를 넣을 수 있으나, `CurrentState` 기본값이 `Ready`라 초기 시각 세팅이 통째로 스킵되지 않도록 `Uninitialized` 항목 추가 등이 필요 |
+| 1 | ~~`EPSkillSlotWidget.cpp:143-149`~~ | **해결됨 (2026-09-02).** 아래 "이슈 #1 해결" 참고 |
 | 2 | `EPSkillSlotWidget.cpp:163-168` | Active 진입 시에만 `SetPercent(1.f)`. Cooldown 진입 시 `SetPercent(0.f)`가 없어 첫 틱 전 1프레임 동안 이전 값이 남을 수 있음 |
 | 3 | `EPCastGaugeWidget.cpp:72-80` | `OnChannelTagChanged`가 활성화 시 진행도를 밀어주지 않는다(`SetGaugeProgress(1.f)` 없음). UMG 틱 순서상 실제로 보이지 않을 가능성이 높아 미조치 |
 | 4 | 명명 | `UEPCastGaugeWidget`은 이제 시전 전용이 아니다(방벽 지속시간에도 씀). `UEPDurationGaugeWidget` / `ChannelTag` → `WatchTag`로의 개명은 CoreRedirects가 필요해 보류 |
+
+---
+
+## 이슈 #1 해결 (2026-09-02)
+
+**증상 재현:** 방벽 진행 중(Active)에 힐을 시전하면 `OnLockTagChanged`가 불려 `RecomputeState`가
+다시 `ApplyState(Active)`를 호출한다. 상태 자체는 안 바뀌었는데 `LastShownRemaining`이
+`-1.f`로 리셋되고, 다음 틱에 클램프가 한 프레임 풀려서 게이지가 순간적으로 튈 수 있다.
+
+**1차 시도 — `RecomputeState`에 가드만 추가:**
+```cpp
+void UEPSkillSlotWidget::RecomputeState()
+{
+    EEPSkillSlotState NewState = ...;
+    if (NewState == CurrentState) return;   // 상태 안 바뀌면 스킵
+    ApplyState(NewState);
+}
+```
+**부작용 발견:** `CurrentState`의 기본값이 `Ready`라, 게임 시작 시 `InitWithASC`가 처음
+`RecomputeState`를 호출할 때 계산된 `NewState`도 `Ready`면 가드에 걸려 **`ApplyState`가
+단 한 번도 안 불린다.** 가시성·색상 등 초기 비주얼 세팅이 통째로 빠짐.
+
+**기각한 대안 — 기본값을 `Locked`로:** `CurrentState` 기본값을 `Ready` 대신 `Locked`로
+바꾸는 안도 고려했으나, 이건 "처음부터 잠긴 슬롯"에서 똑같은 문제가 재발한다(그 경우
+`NewState`도 `Locked`로 계산되므로). 근본 원인(값이 같다 ≠ 이미 적용됐다)을 안 고치고
+증상만 옮기는 것이라 기각.
+
+**최종 해결 — `InitWithASC`에서 강제 적용:**
+```cpp
+EEPSkillSlotState UEPSkillSlotWidget::ComputeState() const
+{
+    if (bActive)      return EEPSkillSlotState::Active;
+    if (bLocked)      return EEPSkillSlotState::Locked;
+    if (bCoolingDown) return EEPSkillSlotState::Cooldown;
+    return EEPSkillSlotState::Ready;
+}
+
+void UEPSkillSlotWidget::RecomputeState()
+{
+    const EEPSkillSlotState NewState = ComputeState();
+    if (NewState == CurrentState) return;
+    ApplyState(NewState);
+}
+```
+`InitWithASC` 끝의 `RecomputeState();` 호출을 `ApplyState(ComputeState());`로 교체 —
+초기화·재바인딩 시점에는 항상 강제 적용한다. `InitWithASC`가 "이미 바인딩된 ASC가 있으면
+리스너부터 정리한다"는 코드를 갖고 있어 슬롯이 다른 스킬/ASC로 재바인딩될 수 있는
+구조이므로, 이 지점에서 강제 적용하는 게 별도 `bStateInitialized` 플래그보다 정확하다
+(재바인딩 시에도 항상 새로 적용되므로).
 
 ---
 

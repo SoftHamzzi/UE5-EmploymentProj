@@ -28,7 +28,14 @@
       "Bash(sed -n 144,190p __TRACKED_VAR__/Source/LyraGame/System/LyraAssetManager.cpp)",
       "PowerShell(Get-ChildItem -Recurse -File C:\\\\Github\\\\UE5-EmploymentProj\\\\EmploymentProj\\\\Source\\\\EmploymentProj\\\\Public | Select-Object -ExpandProperty FullName | ForEach-Object { $_.Replace\\('C:\\\\Github\\\\UE5-EmploymentProj\\\\EmploymentProj\\\\Source\\\\EmploymentProj\\\\Public\\\\',''\\) })",
       "PowerShell(Select-String *)",
-      "Bash(awk '/^## *5|^# *5|^§5/{f=1} f' DOCS/DOCS.md)"
+      "Bash(awk '/^## *5|^# *5|^§5/{f=1} f' DOCS/DOCS.md)",
+      "Read(//c/Users/wnsgn/AppData/Local/Temp/claude/C--Github-UE5-EmploymentProj/2d5cde9e-8422-40c0-a9da-55420c8f162d/scratchpad/**)",
+      "Bash(python final.py)",
+      "Bash(python -c ' *)",
+      "Bash(sed -n '/^### 2. LeaderPoseComponent/,/^### 4. 사망/p' 2026-02-27-EP_Replication-2.md)",
+      "Bash(sed -n '/^### 2. Linked Anim Layer/,/^### 4. AnimGraph/p' 2026-03-01-EP_Replication-6.md)",
+      "Bash(sed -n '/^### 5. Property Access/,/^### 7/p' 2026-03-01-EP_Replication-6.md)",
+      "Bash(read s *)"
     ]
   }
 }

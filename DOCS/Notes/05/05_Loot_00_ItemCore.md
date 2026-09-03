@@ -219,6 +219,30 @@ EDataValidationResult UEPItemDefinition::IsDataValid(FDataValidationContext& Con
                 "DataTable Row의 ItemDefinition이 이 에셋을 가리키지 않습니다."));
             Result = EDataValidationResult::Invalid;
         }
+
+        // ★★ SlotSize 하한 — 위 컨테이너 증명이 "SlotSize는 양의 정수"를 쓴다 (13차)
+        //   기본값이 1일 뿐 하한이 아니고 ClampMin도 없다. 0을 넣으면:
+        //     CanFit(본체 0칸) = GetUsedSlots(0) + 0 <= 0  →  참
+        //   그 아이템만 0칸짜리 본체에 무한히 들어가고 GetUsedSlots가 0으로 세서 영원히 안 찬다.
+        //   GetInsertionOrder의 맨 앞이 본체라 **컨테이너에는 절대 안 들어간다** — 조용히 갈린다
+        if (Row->SlotSize < 1)
+        {
+            Context.AddError(FText::Format(
+                NSLOCTEXT("EP", "SlotSizeMin",
+                    "SlotSize({0})가 1 미만입니다 — 칸을 안 먹는 아이템은 용량 판정을 무력화합니다."),
+                Row->SlotSize));
+            Result = EDataValidationResult::Invalid;
+        }
+
+        // ★ 컨테이너 중첩 깊이를 유한하게 유지한다 (05_Loot_DOCS.md §4-6)
+        if (Row->ContainerCapacity > 0 && Row->ContainerCapacity >= Row->SlotSize)
+        {
+            Context.AddError(FText::Format(
+                NSLOCTEXT("EP", "ContainerNestUnbounded",
+                    "ContainerCapacity({0})가 SlotSize({1}) 이상입니다 — 컨테이너 중첩 깊이가 무한해집니다."),
+                Row->ContainerCapacity, Row->SlotSize));
+            Result = EDataValidationResult::Invalid;
+        }
     }
     return Result;
 }
@@ -226,6 +250,20 @@ EDataValidationResult UEPItemDefinition::IsDataValid(FDataValidationContext& Con
 ```
 
 > UE 5.3부터 `IsDataValid(TArray<FText>&)`와 non-const 버전은 deprecated다 (`Object.h:1100,1110`). **`IsDataValid(FDataValidationContext&) const`** 를 쓴다. `#include "Misc/DataValidation.h"` 필요.
+
+#### ★★ 세 번째 검사가 다른 종류인 이유 — 게임 규칙을 데이터 검증으로 강제한다
+
+앞의 둘은 **참조 정합**(같은 것을 두 곳에 적어서 어긋난다)이다. 셋째는 **게임 규칙**이다 — §4-6이 정한 *"모든 컨테이너는 `ContainerCapacity < SlotSize`"* 를 지킨다.
+
+```
+A를 B에 넣으려면   SlotSize(A) ≤ Capacity(B) < SlotSize(B)   ⇒   깊어질수록 SlotSize가 작아진다
+```
+
+이 규칙이 있으면 **`MoveEntry`에 깊이 검사를 붙이지 않아도** 배낭 안 배낭 안 배낭이 유한하다. 런타임 코드가 0줄이다.
+
+**그런데 규칙을 문서에만 두면 반드시 깨진다.** `ContainerCapacity`는 DT 컬럼이라, 반년 뒤 새 배낭 행에 `Cap 20 / SlotSize 8`을 넣는 순간 **아무 에러 없이 무한 중첩이 열린다.** 증상은 크래시가 아니라 *"어떤 유저가 배낭 7겹으로 500칸을 들고 다닌다"* 라서 **발견이 아주 늦다.** 여기 한 줄이면 **에디터에서 DT를 저장할 때** 걸린다.
+
+> 이 문서가 `RowName != ItemId`를 런타임에서도 다시 보는 이유(`00-6`)와 같은 판단이다 — **검증은 사람이 실수하는 지점에 둔다.**
 
 ---
 
@@ -641,7 +679,9 @@ public:
 | `Scrap` | Misc | Common | 1 | 0 | ❌ | 0 | 50 | `DA_Scrap` |
 | `Resume` | QuestItem | Rare | 1 | 0 | ❌ | 0 | 0 | `DA_Resume` |
 | `Cash_10000` | Misc | Common | 1 | **10000** | **✅** | 0 | **0** ★ | `DA_Cash_10000` |
-| `Backpack_Small` | Misc | Uncommon | **2** | 0 | ❌ | **12** | 1500 | `DA_Backpack_Small` |
+| `Backpack_B` | Misc | Uncommon | **10** | 0 | ❌ | **8** | 1500 | `DA_Backpack_B` |
+| `Shirt_Basic` | Misc | Common | **11** | 0 | ❌ | **10** | 100 | `DA_Shirt_Basic` |
+| `Pants_Basic` | Misc | Common | **6** | 0 | ❌ | **5** | 100 | `DA_Pants_Basic` |
 
 > **★ `SellPrice` 열을 반드시 채운다.** `FEPItemData::SellPrice`의 기본값이 **`100`** 이라(`EPItemData.h:43`) 비워두면 `Cash_10000`을 **10,000원짜리를 100원에 파는** 상태가 된다.
 >
@@ -654,12 +694,34 @@ public:
 | `AmmoBox_545` | 기본 `InitState()` + `InitialCharges` 경로 |
 | `Bandage` | **3개 주우면 엔트리 3개**인지 (스택 안 됨) |
 | `Cash_10000` | **둘 주우면 엔트리 1개, `Charges=20000`** 인지 (`bFungible`) |
-| `Backpack_Small` | **본체 10칸과 별개로 12칸이 열리는지.** 버리면 안의 아이템이 같이 나가는지 |
+| `Backpack_B` | **상의 10칸과 별개로 8칸이 열리는지.** 버리면 안의 아이템이 같이 나가는지 |
+| `Shirt_Basic` · `Pants_Basic` | **스폰 시 착용**(`StartingEquipment`)되고 **수납 칸이 거기서 나오는지.** 본체는 0칸이다 |
 | `Resume` | 비무기 Definition이 AssetManager에 잡히는지 |
 
 그리고 **기존 무기 3행의 `SlotSize`를 4~5로 올린다.** 전부 1이면 "칸 수 합산"과 "엔트리 개수 세기"가 구분되지 않아 Step 03에서 합산 로직의 버그가 무증상으로 지나간다.
 
-> **본체가 10칸이므로**(GAME.md) 무기 5칸 + 배낭 2칸이면 벌써 7칸이다. Step 03의 "칸이 모자라 못 줍는" 경로를 손쉽게 재현할 수 있다 — 의도한 것이다.
+> **기본 상의가 10칸을 제공하므로** 무기 5칸 + 구급상자 3칸이면 벌써 8칸이다. Step 03의 "칸이 모자라 못 줍는" 경로를 손쉽게 재현할 수 있다 — 의도한 것이다.
+
+> ### ★★ 컨테이너 행은 `ContainerCapacity < SlotSize`를 지켜야 한다 (13차, 2026-08-25)
+>
+> **초안의 `Backpack_Small`(`SlotSize 2 / Cap 12`)은 이 규칙을 위반한다** — `IsDataValid()`가 **거부하는 행**이다. `05_Loot_DOCS.md` §4-6이 이 규칙을 확정하기 전에 적힌 값이라 그대로 남아 있었다.
+>
+> ```
+> 넣기 판정   :  SlotSize(넣을 것)  ≤  Capacity(담을 것)     ← ≤ 다
+> 데이터 규칙 :  Capacity(X)        <  SlotSize(X)           ← < 다. 등호도 안 된다
+> ```
+>
+> 등호를 허용하면 `SlotSize 10 / Cap 10`짜리 가방이 **자기 안에 들어가** 중첩 깊이가 무한해진다. 위 표의 값은 전부 `<`를 만족한다(11>10, 6>5, 10>8).
+>
+> **`Backpack_A`(`15 / 12`)는 지금 안 만든다** — 두 번째 배낭은 *"A 안에 B는 되고 A 안에 A는 안 된다"* 를 보이는 용도라 **Step 03-B(줍기·버리기) 검증 때 추가한다.**
+
+> ### ★★ 네 번째 검사(`SlotSize >= 1`)가 왜 지금 생겼나 (13차)
+>
+> **본체가 10칸인 동안은 `SlotSize = 0`이 무해했다.** 0이 되면(`05_Loot_DOCS.md` §4-6) `0 + 0 <= 0`이 참이라 **그 아이템만 무한히 들어간다.** 증상이 크래시도 경고도 아니고 *"이 아이템만 가방에 안 들어간다"* 라 발견이 늦다.
+>
+> 그리고 `SlotSize = 0`은 **실수하기 쉬운 값이다** — *"열쇠·퀘스트 토큰은 자리를 안 먹었으면"* 이라는 기획이 오면 DT에 0을 넣는 것이 가장 자연스러운 표현이다.
+>
+> **그 기획이 오면 답은 `SlotSize`가 아니라 슬롯이다.** 몸 슬롯(`SlotId != None`)이 이미 *"칸을 안 먹는다"* 의 유일한 표현이고(`GetUsedSlots`의 `continue` 한 줄), **두 번째 표현을 만들지 않는다.**
 
 ### ★ 모든 행이 Definition 에셋을 가진다
 

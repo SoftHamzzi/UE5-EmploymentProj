@@ -6,6 +6,8 @@
 #include "Abilities/GameplayAbility.h"
 #include "EPGA_Item_PrimaryUse.generated.h"
 
+class AEPWeapon;
+
 UCLASS()
 class EMPLOYMENTPROJ_API UEPGA_Item_PrimaryUse : public UGameplayAbility
 {
@@ -20,23 +22,28 @@ public:
 		const FGameplayAbilityActivationInfo ActivationInfo,
 		const FGameplayEventData* TriggerEventData) override;
 	
-	virtual bool CanActivateAbility(
+	virtual void EndAbility(
 		const FGameplayAbilitySpecHandle Handle,
 		const FGameplayAbilityActorInfo* ActorInfo,
-		const FGameplayTagContainer* SourceTags = nullptr,
-		const FGameplayTagContainer* TargetTags = nullptr,
-		FGameplayTagContainer* OptionalRelevantTags = nullptr) const override;
+		const FGameplayAbilityActivationInfo ActivationInfo,
+		bool bReplicateEndAbility,
+		bool bWasCancelled) override;
 	
-	virtual const FGameplayTagContainer* GetCooldownTags() const override;
 	virtual void ApplyCooldown(
 		const FGameplayAbilitySpecHandle Handle,
 		const FGameplayAbilityActorInfo* ActorInfo,
 		const FGameplayAbilityActivationInfo ActivationInfo) const override;
 	
-protected:
-	UPROPERTY(EditDefaultsOnly, Category = "Cooldown")
-	FGameplayTagContainer CooldownTags; // Cooldown.Weapon.PrimaryUse
+	bool ServerConfirmOneShot(const FVector& Origin, const FVector& Direction);
 	
-	UPROPERTY(Transient)
-	mutable FGameplayTagContainer TempCooldownTags;
+protected:
+	
+private:
+	// === 변수 ===
+	FTimerHandle FireTimerHandle;
+	
+	// === 함수 ===
+	void FireOnce();
+	
+	static float GetFireInterval(const AEPWeapon* Weapon);
 };

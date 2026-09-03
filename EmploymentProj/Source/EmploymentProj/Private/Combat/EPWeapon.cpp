@@ -66,12 +66,10 @@ float AEPWeapon::GetDamage() const
 	return WeaponDef ? WeaponDef->Damage : 0.f;
 }
 
-void AEPWeapon::Fire(const FVector& AimDir, float ClientFireTime, TArray<FVector>& OutPellets)
+void AEPWeapon::Fire(const FVector& AimDir, TArray<FVector>& OutPellets)
 {
 	if (!HasAuthority()) return;
 	if (!WeaponDef) return;
-	
-	LastFireTime = GetWorld()->GetTimeSeconds();
 	
 	// 퍼짐 누적
 	CurrentSpread = FMath::Min(

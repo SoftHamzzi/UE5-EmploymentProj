@@ -11,8 +11,9 @@ UEPGA_Skill_ShieldOn::UEPGA_Skill_ShieldOn()
 	Tags.AddTag(EmpGameplayTags::TAG_Ability_Skill_Shield);
 	SetAssetTags(Tags);
 	
-	ActivationBlockedTags.AddTag(EmpGameplayTags::TAG_Cooldown_Skill_Shield);
+	SetCooldownTag(EmpGameplayTags::TAG_Cooldown_Skill_Shield);
 	ActivationBlockedTags.AddTag(EmpGameplayTags::TAG_State_Shielded);
+	ActiveChannelTag = EmpGameplayTags::TAG_State_Shielded;
 }
 
 void UEPGA_Skill_ShieldOn::OnCastComplete()
@@ -21,13 +22,9 @@ void UEPGA_Skill_ShieldOn::OnCastComplete()
 	{
 		FGameplayEffectSpecHandle ShieldSpec = MakeOutgoingGameplayEffectSpec(GE_ShieldOnClass);
 		ShieldSpec.Data->SetSetByCallerMagnitude(EmpGameplayTags::TAG_Data_Duration, ShieldDuration);
-		ApplyGameplayEffectSpecToOwner(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, ShieldSpec); 
+		ApplyGameplayEffectSpecToOwner(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, ShieldSpec);
+		BroadcastActiveDuration(ShieldDuration);
 	}
 	
-	if (GE_ShieldCooldownClass)
-	{
-		FGameplayEffectSpecHandle CDSpec = MakeOutgoingGameplayEffectSpec(GE_ShieldCooldownClass);
-		CDSpec.Data->SetSetByCallerMagnitude(EmpGameplayTags::TAG_Data_Cooldown, ShieldCooldown);
-		ApplyGameplayEffectSpecToOwner(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, CDSpec);
-	}
+	ApplyCooldownGE();
 }

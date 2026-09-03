@@ -25,6 +25,7 @@
 #include "Net/UnrealNetwork.h"
 #include "GameFramework/GameStateBase.h"
 #include "GameFramework/PlayerState.h"
+#include "Inventory/EPInventoryComponent.h"
 
 // GAS
 #include "AbilitySystemComponent.h"
@@ -67,6 +68,7 @@ AEPCharacter::AEPCharacter(const FObjectInitializer& ObjectInitializer)
 	// --- Combat ---
 	CombatComponent = CreateDefaultSubobject<UEPCombatComponent>(TEXT("CombatComponent"));
 	RewindComponent = CreateDefaultSubobject<UEPServerSideRewindComponent>(TEXT("ServerSideRewindComponent"));
+	InventoryComponent = CreateDefaultSubobject<UEPInventoryComponent>(TEXT("InventoryComponent"));
 	
 	// --- Movement ---
 	UEPCharacterMovement* Movement = Cast<UEPCharacterMovement>(GetCharacterMovement());
@@ -224,12 +226,26 @@ void AEPCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCompone
 		&AEPCharacter::Input_UnCrouch
 	);
 	
+	// PrimaryInput
 	EnhancedInput->BindAction(
 		PC->GetFireAction(),
 		ETriggerEvent::Started, this,
 		&AEPCharacter::Input_Fire
 	);
 	
+	EnhancedInput->BindAction(
+		PC->GetFireAction(),
+		ETriggerEvent::Completed, this,
+		&AEPCharacter::Input_StopFire
+	);
+	
+	EnhancedInput->BindAction(
+		PC->GetFireAction(),
+		ETriggerEvent::Canceled, this,
+		&AEPCharacter::Input_StopFire
+	);
+	
+	// Reload
 	EnhancedInput->BindAction(
 		PC->GetReloadAction(),
 		ETriggerEvent::Started, this,
@@ -289,6 +305,11 @@ UEPCombatComponent* AEPCharacter::GetCombatComponent() const
 UEPInteractionComponent* AEPCharacter::GetInteractionComponent() const
 {
 	return InteractionComponent;
+}
+
+UEPInventoryComponent* AEPCharacter::GetInventoryComponent() const
+{
+	return InventoryComponent;
 }
 
 bool AEPCharacter::IsDead() const
@@ -420,6 +441,15 @@ void AEPCharacter::Input_Fire(const FInputActionValue& Value)
 	}
 }
 
+void AEPCharacter::Input_StopFire(const FInputActionValue& Value)
+{
+	if (ASC)
+	{
+		FGameplayTagContainer UseTags(EmpGameplayTags::TAG_Ability_Item_PrimaryUse);
+		ASC->CancelAbilities(&UseTags);
+	}
+}
+
 void AEPCharacter::Input_ToggleAutoStrafeTest()
 {
 	if (!IsLocallyControlled()) return;
@@ -520,24 +550,7 @@ void AEPCharacter::InitASC()
 	
 	ASC->InitAbilityActorInfo(PS, this);
 	
-	if (MoveSpeedMultiplierHandle.IsValid())
-		ASC->GetGameplayAttributeValueChangeDelegate(UEPAttributeSet::GetMoveSpeedMultiplierAttribute())
-			.Remove(MoveSpeedMultiplierHandle);
-	
-	MoveSpeedMultiplierHandle = ASC->GetGameplayAttributeValueChangeDelegate(UEPAttributeSet::GetMoveSpeedMultiplierAttribute())
-		.AddUObject(this, &AEPCharacter::OnMoveSpeedMultiplierChanged);
-	
-	if (UEPCharacterMovement* CMC = Cast<UEPCharacterMovement>(GetCharacterMovement()))
-		CMC->MoveSpeedMultiplier = ASC->GetNumericAttribute(UEPAttributeSet::GetMoveSpeedMultiplierAttribute());
-	
 	if (IsLocallyControlled())
 		if (AEPPlayerController* PC = GetController<AEPPlayerController>())
 			PC->InitHUD(ASC);
 }
-
-void AEPCharacter::OnMoveSpeedMultiplierChanged(const FOnAttributeChangeData& Data)
-{
-	if (UEPCharacterMovement* CMC = Cast<UEPCharacterMovement>(GetCharacterMovement()))
-		CMC->MoveSpeedMultiplier = Data.NewValue;
-}
-

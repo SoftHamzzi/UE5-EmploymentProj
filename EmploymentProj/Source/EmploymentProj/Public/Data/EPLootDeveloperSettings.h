@@ -32,4 +32,7 @@ public:
 	
 	UPROPERTY(Config, EditAnywhere, Category = "Loot")
 	TSoftClassPtr<AEPPickup> PickupClass;
+	
+	UPROPERTY(Config, EditAnywhere, Category = "Inventory")
+	TArray<FName> BodySlots;
 };

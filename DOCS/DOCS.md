@@ -40,7 +40,7 @@
 |------|------|
 | Animation | AnimBP, 스테이트 머신, 몽타주 (이동/사격/재장전/사망), 네트워크 동기화 |
 | Map/Level Design | 맵 제작 (창고/컨테이너 구역, 파밍 포인트, 탈출 지점, 자판기 배치) |
-| UI/HUD | 체력바, 탄약, 타이머, 킬 피드, 인벤토리 UI (UMG, 최소한으로) |
+| UI/HUD | 체력바, 탄약, 타이머, 킬 피드, **인벤토리 UI (UMG — 정사각형 격자 + 착용 12슬롯 + 드래그앤드롭)** |
 | Inventory + Economy | 슬롯 기반 인벤토리, 아이템 판매, 자판기 비용 |
 | Asset & Data Driven | `FTableRowBase` + `UItemDefinition(UPrimaryDataAsset)` + `FItemState`(값 타입 개체 상태) |
 

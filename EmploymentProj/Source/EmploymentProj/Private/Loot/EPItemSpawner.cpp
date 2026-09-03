@@ -51,10 +51,11 @@ void AEPItemSpawner::SpawnLoot()
 	const UEPLootDeveloperSettings* Settings = GetDefault<UEPLootDeveloperSettings>();
 	UClass* PickupClass = Settings->PickupClass.IsNull()
 		? AEPPickup::StaticClass()
-		: Settings->PickupClass.LoadSynchronous();
+		: Settings->PickupClass.Get();
 	
 	if (!PickupClass)
 	{
+		PickupClass = AEPPickup::StaticClass();
 		UE_LOG(LogTemp, Error, TEXT("[Loot] PickupClass 로드 실패: %s"),
 			*Settings->PickupClass.ToString());
 		return;

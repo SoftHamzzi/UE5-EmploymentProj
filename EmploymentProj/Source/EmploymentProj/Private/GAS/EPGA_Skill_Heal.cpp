@@ -16,7 +16,7 @@ UEPGA_Skill_Heal::UEPGA_Skill_Heal() {
 	Tags.AddTag(EmpGameplayTags::TAG_Ability_Skill_Heal);
 	SetAssetTags(Tags);
 	
-	ActivationBlockedTags.AddTag(EmpGameplayTags::TAG_Cooldown_Skill_Heal);
+	SetCooldownTag(EmpGameplayTags::TAG_Cooldown_Skill_Heal);
 }
 
 void UEPGA_Skill_Heal::OnCastComplete()
@@ -27,12 +27,8 @@ void UEPGA_Skill_Heal::OnCastComplete()
 		HealSpec.Data->SetSetByCallerMagnitude(EmpGameplayTags::TAG_Data_HealAmount, HealAmount);
 		ApplyGameplayEffectSpecToOwner(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, HealSpec);
 	}
-	if (GE_HealCooldownClass)
-	{
-		FGameplayEffectSpecHandle CDSpec = MakeOutgoingGameplayEffectSpec(GE_HealCooldownClass);
-		CDSpec.Data->SetSetByCallerMagnitude(EmpGameplayTags::TAG_Data_Cooldown, HealCooldown);
-		ApplyGameplayEffectSpecToOwner(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, CDSpec);
-	}
+	
+	ApplyCooldownGE();
 }
 
 void UEPGA_Skill_Heal::ConfigureCastingSpec(FGameplayEffectSpecHandle& SpecHandle)

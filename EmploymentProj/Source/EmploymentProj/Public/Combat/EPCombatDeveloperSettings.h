@@ -15,6 +15,9 @@ public:
 	UPROPERTY(Config, EditAnywhere, Category="LagComp")
 	float MaxRewindSeconds = 0.5f;
 	
+	UPROPERTY(Config, EditAnywhere, Category="LagComp")
+	float PredictionFudgeSeconds = 0.02f;
+	
 	UPROPERTY(Config, EditAnywhere, Category="Trace")
 	float BroadPhasePaddingCm = 50.f;
 	

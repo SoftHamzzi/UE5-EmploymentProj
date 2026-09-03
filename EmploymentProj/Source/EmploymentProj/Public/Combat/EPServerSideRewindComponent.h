@@ -17,13 +17,14 @@ class EMPLOYMENTPROJ_API UEPServerSideRewindComponent : public UActorComponent
 
 public:
 	UEPServerSideRewindComponent();
+	
+	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 
 	bool ConfirmHitscan(
 		AEPCharacter* Shooter,
 		AEPWeapon* EquippedWeapon,
 		const FVector& Origin,
 		const TArray<FVector>& Directions,
-		float ClientFireTime,
 		TArray<FHitResult>& OutConfirmedHits);
 
 	FEPHitboxSnapshot GetSnapshotAtTime(float TargetTime) const;
@@ -54,8 +55,12 @@ protected:
 		AEPWeapon* EquippedWeapon,
 		const FVector& Origin,
 		const TArray<FVector>& Directions,
-		float ClientFireTime) const;
-
-public:
-	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
+		float ServerNow) const;
+	
+private:
+	float ComputeRewindTime(
+		const AEPCharacter* Shooter,
+		const AEPCharacter* Target,
+		float ServerNow) const;
+	
 };

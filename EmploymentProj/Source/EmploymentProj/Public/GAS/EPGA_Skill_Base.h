@@ -27,27 +27,50 @@ public:
 		bool bReplicateEndAbility, bool bWasCancelled) override;
 	
 protected:
+	// === 변수 ===
+	// --- Cast ---
 	UPROPERTY(EditDefaultsOnly, Category = "Cast")
 	float CastTime = 0.f;
-	
+
 	UPROPERTY(EditDefaultsOnly, Category = "Cast")
 	bool bInterruptibleOnDamage = false;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Cast")
 	TSubclassOf<UGameplayEffect> GE_CastingClass;
-	
-	virtual void OnCastComplete() PURE_VIRTUAL(UEPGA_Skill_Base::OnCastComplete, );
 
+	// --- Cooldown ---
+	UPROPERTY(EditDefaultsOnly, Category = "Cooldown")
+	float Cooldown = 0.f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Cooldown")
+	TSubclassOf<UGameplayEffect> GE_CooldownClass;
+
+	// --- Active ---
+	FGameplayTag ActiveChannelTag;
+
+	// === 함수 ===
+	// --- Cast ---
+	virtual void OnCastComplete() PURE_VIRTUAL(UEPGA_Skill_Base::OnCastComplete, );
 	virtual void OnCastInterrupted() {}
-	
 	virtual void ConfigureCastingSpec(FGameplayEffectSpecHandle& SpecHandle) {}
-	
+
+	// --- Cooldown ---
+	void SetCooldownTag(FGameplayTag Tag);
+	void ApplyCooldownGE();
+
+	// --- Active ---
+	void BroadcastActiveDuration(float Duration);
+
 private:
+	// === 변수 ===
+	FGameplayTag CooldownChannelTag;
+
+	// === 함수 ===
 	UFUNCTION()
 	void OnCastTimerComplete();
-	
+
 	UFUNCTION()
 	void OnDamageDuringCast(FGameplayEventData Payload);
-	
-	FActiveGameplayEffectHandle CastingEffectHandle;
+
+	void BroadcastDurationMessage(FGameplayTag Channel, float Duration);
 };

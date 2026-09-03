@@ -8,10 +8,13 @@
 #include "Core/EPCharacter.h"
 #include "DrawDebugHelpers.h"
 #include "EngineUtils.h"
+#include "Components/SkeletalMeshComponent.h"
 #include "Movement/EPCharacterMovement.h"
 #include "GameFramework/GameStateBase.h"
 #include "GameFramework/PlayerState.h"
 #include "Kismet/GameplayStatics.h"
+#include "Misc/ConfigCacheIni.h"
+#include "PhysicalMaterials/PhysicalMaterial.h"
 #include "PhysicsEngine/AggregateGeom.h"
 #include "PhysicsEngine/BodyInstance.h"
 #include "PhysicsEngine/BodySetup.h"
@@ -108,7 +111,12 @@ UEPServerSideRewindComponent::UEPServerSideRewindComponent()
 void UEPServerSideRewindComponent::BeginPlay()
 {
 	Super::BeginPlay();
-
+	
+	AEPCharacter* OwnerChar = Cast<AEPCharacter>(GetOwner());
+	if (!OwnerChar) return;
+	
+	AddTickPrerequisiteComponent(OwnerChar->GetMesh());
+	
 	const UEPCombatDeveloperSettings* CombatSettings = GetDefault<UEPCombatDeveloperSettings>();
 	const float RewindWindow = FMath::Max(0.05f, CombatSettings->MaxRewindSeconds);
 	// ClientNetSendMoveDeltaTime: DefaultGame.ini [/Script/Engine.GameNetworkManager] 에서 설정
@@ -121,13 +129,9 @@ void UEPServerSideRewindComponent::BeginPlay()
 	if (MoveDeltaTime <= 0.f) MoveDeltaTime = 1.f / 60.f;
 	MaxHistoryCount = FMath::CeilToInt(RewindWindow / MoveDeltaTime) + 4;
 
-	// CMC의 OnServerMoveProcessed 델리게이트 구독
-	if (AEPCharacter* OwnerChar = Cast<AEPCharacter>(GetOwner()))
+	if (UEPCharacterMovement* CMC = Cast<UEPCharacterMovement>(OwnerChar->GetCharacterMovement()))
 	{
-		if (UEPCharacterMovement* CMC = Cast<UEPCharacterMovement>(OwnerChar->GetCharacterMovement()))
-		{
-			CMC->OnServerMoveProcessed.AddUObject(this, &UEPServerSideRewindComponent::OnServerMoveProcessed);
-		}
+		CMC->OnServerMoveProcessed.AddUObject(this, &UEPServerSideRewindComponent::OnServerMoveProcessed);
 	}
 }
 
@@ -164,15 +168,16 @@ void UEPServerSideRewindComponent::SaveHitboxSnapshot(float Time, const FVector&
 {
 	AEPCharacter* OwnerChar = Cast<AEPCharacter>(GetOwner());
 	if (!OwnerChar) return;
-
+	
 	FEPHitboxSnapshot Snapshot;
-	Snapshot.ServerTime = Time;
-	Snapshot.Location = Location;
-
+	
 	// const AGameStateBase* GS = GetWorld()->GetGameState<AGameStateBase>();
 	// const float ServerNow = GS ? GS->GetServerWorldTimeSeconds() : GetWorld()->GetTimeSeconds();
 	// UE_LOG(LogTemp, Warning, TEXT("[SHS] Now=%.4f Param=%.4f Diff=%.4f"), ServerNow, Time, ServerNow - Time);
-
+	
+	Snapshot.ServerTime = Time;
+	Snapshot.Location = Location;
+	
 	for (const FName& BoneName : HitBones)
 	{
 		const int32 BoneIndex = OwnerChar->GetMesh()->GetBoneIndex(BoneName);
@@ -258,7 +263,7 @@ TArray<AEPCharacter*> UEPServerSideRewindComponent::GetHitscanCandidates(
 	AEPWeapon* EquippedWeapon,
 	const FVector& Origin,
 	const TArray<FVector>& Directions,
-	float ClientFireTime) const
+	float ServerNow) const
 {
 	TArray<AEPCharacter*> Candidates;
 	const UEPCombatDeveloperSettings* CombatSettings = GetDefault<UEPCombatDeveloperSettings>();
@@ -272,7 +277,9 @@ TArray<AEPCharacter*> UEPServerSideRewindComponent::GetHitscanCandidates(
 		const UEPServerSideRewindComponent* TargetSSR = Char->GetServerSideRewindComponent();
 		if (!TargetSSR) continue;
 
-		const FEPHitboxSnapshot Snap = TargetSSR->GetSnapshotAtTime(ClientFireTime);
+		const FEPHitboxSnapshot Snap = TargetSSR->GetSnapshotAtTime(
+			ComputeRewindTime(Shooter, Char, ServerNow)
+		);
 		const float CapsuleRadius = Char->GetCapsuleComponent()->GetScaledCapsuleRadius();
 		const float BroadRadius = CapsuleRadius + CombatSettings->BroadPhasePaddingCm;
 
@@ -294,12 +301,36 @@ TArray<AEPCharacter*> UEPServerSideRewindComponent::GetHitscanCandidates(
 	return Candidates;
 }
 
+float UEPServerSideRewindComponent::ComputeRewindTime(const AEPCharacter* Shooter, const AEPCharacter* Target, float ServerNow) const
+{
+	const UEPCombatDeveloperSettings* CombatSettings = GetDefault<UEPCombatDeveloperSettings>();
+
+	float PredictionDelay = 0.f;
+	if (const APlayerState* PS = Shooter ? Shooter->GetPlayerState() : nullptr)
+	{
+		PredictionDelay = FMath::Clamp(
+			PS->GetPingInMilliseconds() * 0.001f - CombatSettings->PredictionFudgeSeconds,
+			0.f, CombatSettings->MaxRewindSeconds);
+	}
+
+	float InterpDelay = 0.f;
+	if (const UCharacterMovementComponent* TargetCMC = Target ? Target->GetCharacterMovement() : nullptr)
+	{
+		if (TargetCMC->NetworkSmoothingMode == ENetworkSmoothingMode::Exponential)
+		{
+			InterpDelay = TargetCMC->NetworkSimulatedSmoothLocationTime;
+		}
+	}
+
+	const float TotalDelay = FMath::Clamp(PredictionDelay, 0.f, CombatSettings->MaxRewindSeconds);
+	return ServerNow - TotalDelay;
+}
+
 bool UEPServerSideRewindComponent::ConfirmHitscan(
 	AEPCharacter* Shooter,
 	AEPWeapon* EquippedWeapon,
 	const FVector& Origin,
 	const TArray<FVector>& Directions,
-	float ClientFireTime,
 	TArray<FHitResult>& OutConfirmedHits)
 {
 	OutConfirmedHits.Reset();
@@ -320,20 +351,21 @@ bool UEPServerSideRewindComponent::ConfirmHitscan(
 	bDebugDraw = false;
 	bDebugLog = false;
 #endif
-	
-	if (ServerNow - ClientFireTime > CombatSettings->MaxRewindSeconds)
-	{
-		UE_LOG(LogTemp, Log, TEXT("Exceed MaxRewindSeconds"));
-		ClientFireTime = ServerNow;
-	}
 
 	const TArray<AEPCharacter*> Candidates =
-		GetHitscanCandidates(Shooter, EquippedWeapon, Origin, Directions, ClientFireTime);
+		GetHitscanCandidates(Shooter, EquippedWeapon, Origin, Directions, ServerNow);
 
 	if (bDebugLog)
 	{
-		UE_LOG(LogTemp, Log, TEXT("[SSR] ServerNow=%.3f ClientFireTime=%.3f Delta=%.3f Candidates=%d"),
-			ServerNow, ClientFireTime, ServerNow - ClientFireTime, Candidates.Num());
+		float PredictionDelayLog = 0.f;
+		if (const APlayerState* PS = Shooter ? Shooter->GetPlayerState() : nullptr)
+		{
+			PredictionDelayLog = FMath::Clamp(
+				PS->GetPingInMilliseconds() * 0.001f - CombatSettings->PredictionFudgeSeconds,
+				0.f, CombatSettings->MaxRewindSeconds);
+		}
+		UE_LOG(LogTemp, Log, TEXT("[SSR] ServerNow=%.3f PredictionDelay=%.3f, Candidates=%d"),
+			ServerNow, PredictionDelayLog, Candidates.Num());
 	}
 
 	TSet<TObjectPtr<AEPCharacter>> CandidateSet;
@@ -353,12 +385,13 @@ bool UEPServerSideRewindComponent::ConfirmHitscan(
 
 		FEPRewindEntry& Entry = RewindEntries.AddDefaulted_GetRef();
 		Entry.Character = Char;
-		const FEPHitboxSnapshot Snap = TargetSSR->GetSnapshotAtTime(ClientFireTime);
+		const float RewindTime = ComputeRewindTime(Shooter, Char, ServerNow);
+		const FEPHitboxSnapshot Snap = TargetSSR->GetSnapshotAtTime(RewindTime);
 
 		if (bDebugLog && Snap.Bones.Num() > 0)
 		{
-			UE_LOG(LogTemp, Log, TEXT("[SERVER_REWIND_POS] ClientFireTime=%.3f Actor=%s ServerPos=%s RewindPos=%s"),
-				ClientFireTime,
+			UE_LOG(LogTemp, Log, TEXT("[SERVER_REWIND_POS] RewindTime=%.3f, Actor=%s ServerPos=%s RewindPos=%s"),
+				RewindTime,
 				*Char->GetName(),
 				*Char->GetActorLocation().ToString(),
 				*Snap.Location.ToString());

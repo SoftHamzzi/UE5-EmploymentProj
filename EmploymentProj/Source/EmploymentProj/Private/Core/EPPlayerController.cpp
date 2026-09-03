@@ -9,6 +9,7 @@
 #include "HUD/EPCrosshairWidget.h"
 #include "HUD/EPHUDWidget.h"
 #include "Kismet/GameplayStatics.h"
+#include "GameFramework/CheatManagerDefines.h"
 
 AEPPlayerController::AEPPlayerController()
 {
@@ -65,6 +66,15 @@ void AEPPlayerController::BeginPlay()
 		if (CrosshairWidget)
 			CrosshairWidget->AddToViewport();
 	}
+}
+
+void AEPPlayerController::AddCheats(bool bForce)
+{
+#if UE_WITH_CHEAT_MANAGER
+	Super::AddCheats(true);
+#else
+	Super::AddCheats(bForce);
+#endif
 }
 
 void AEPPlayerController::OnPossess(APawn* InPawn)

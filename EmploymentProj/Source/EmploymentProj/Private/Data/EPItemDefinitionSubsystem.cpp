@@ -102,6 +102,18 @@ void UEPItemDefinitionSubsystem::LoadAllDefinitions()
 	
 	DefinitionHandle = Manager.LoadPrimaryAssets(Ids);
 	
+	// GC 언로드 방지
+	const UEPLootDeveloperSettings* Settings = GetDefault<UEPLootDeveloperSettings>();
+	TArray<FSoftObjectPath> ExtraPaths;
+	
+	if (!Settings->PlaceholderPickupMesh.IsNull())
+		ExtraPaths.Add(Settings->PlaceholderPickupMesh.ToSoftObjectPath());
+	if (!Settings->PickupClass.IsNull())
+		ExtraPaths.Add(Settings->PickupClass.ToSoftObjectPath());
+	
+	if (ExtraPaths.Num() > 0)
+		SharedAssetHandle = UAssetManager::GetStreamableManager().RequestSyncLoad(ExtraPaths);
+	
 	if (DefinitionHandle.IsValid())
 	{
 		DefinitionHandle->WaitUntilComplete();

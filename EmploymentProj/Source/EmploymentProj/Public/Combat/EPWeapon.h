@@ -30,7 +30,7 @@ public:
 	
 	// --- 인터페이스 ---
     bool CanFire() const;
-    void Fire(const FVector& AimDir, float ClientFireTime, TArray<FVector>& OutPellets);
+    void Fire(const FVector& AimDir, TArray<FVector>& OutPellets);
     FVector ApplySpread(const FVector& Direction) const;
     
     float GetDamage() const;
@@ -41,7 +41,6 @@ public:
 protected:
 	// === 변수 ===
 	// --- 서버 런타임 상태 (복제 X) ---
-	float LastFireTime = 0.f;
 	float CurrentSpread = 0.f; // 현재 퍼짐 (연사 시 누적)
 	uint8 ConsecutiveShots = 0; // 연속 발사 수
 	

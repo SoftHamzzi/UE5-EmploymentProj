@@ -2,8 +2,11 @@
 
 #include "Movement/EPCharacterMovement.h"
 
+#include "AbilitySystemComponent.h"
+#include "AbilitySystemGlobals.h"
 #include "GameFramework/Character.h"
 #include "GameFramework/GameStateBase.h"
+#include "GAS/EPAttributeSet.h"
 
 UEPCharacterMovement::UEPCharacterMovement()
 {
@@ -32,11 +35,21 @@ void UEPCharacterMovement::OnMovementUpdated(
 	OnServerMoveProcessed.Broadcast(T, GetActorLocation());
 }
 
+bool UEPCharacterMovement::CanCrouchInCurrentState() const
+{
+	return Super::CanCrouchInCurrentState() && IsMovingOnGround();
+}
+
 float UEPCharacterMovement::GetMaxSpeed() const {
 	float Base = Super::GetMaxSpeed();
-	if (bWantsToSprint && IsMovingOnGround()) Base = SprintSpeed;
+	if (bWantsToSprint && IsMovingOnGround() && !IsCrouching()) Base = SprintSpeed;
 	else if (bWantsToAim) Base = AimSpeed;
-	return Base * MoveSpeedMultiplier;
+	
+	float Multiplier = 1.f;
+	if (const UAbilitySystemComponent* ASC = UAbilitySystemGlobals::GetAbilitySystemComponentFromActor(GetOwner()))
+		Multiplier = ASC->GetNumericAttribute(UEPAttributeSet::GetMoveSpeedMultiplierAttribute());
+	
+	return Base * Multiplier;
 }
 
 void UEPCharacterMovement::UpdateFromCompressedFlags(uint8 Flags)

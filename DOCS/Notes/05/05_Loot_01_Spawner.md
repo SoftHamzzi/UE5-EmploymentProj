@@ -767,7 +767,7 @@ Step 01이 **존재하지 않는 채널을 참조하지 않으므로 채널 생�
 
 > **프로파일 에셋(`.ini`의 `+Profiles=`)을 지금 만들지 않는 이유.** 사용자가 픽업 하나뿐이고, 프로파일은 값이 에디터에서 안 보이는 곳(`DefaultEngine.ini`)에 흩어진다. 반응이 세 줄이면 코드가 읽기 쉽다.
 >
-> **옮길 시점은 상호작용 대상이 셋이 될 때다** — 픽업 / 컨테이너(§7-1) / 자판기(§7-2). 그때 `"EPInteractable"` 프로파일로 묶는다. `EquippedEntryId`가 셋이 되면 `TMap`으로 간다는 판단(`LOOT_STATUS.md:60`)과 같은 기준이다.
+> **옮길 시점은 상호작용 대상이 셋이 될 때다** — 픽업 / 컨테이너(§7-1) / 자판기(§7-2). 그때 `"EPInteractable"` 프로파일로 묶는다. **소비자가 둘일 때는 그 자리에 두고 셋이 될 때 뺀다**는 이 프로젝트의 일반 기준과 같다.
 
 > **★ 5.5부터 필드 직접 대입은 deprecated다.** `NetCullDistanceSquared`(`Actor.h:869`)와 `NetUpdateFrequency`(`Actor.h:874`)에 `UE_DEPRECATED(5.5, ...)`가 붙어 있어 `NetCullDistanceSquared = ...`로 쓰면 5.7에서 경고가 난다. **세터를 쓴다.** 반면 `bReplicates`(`Actor.h:556`) / `bAlwaysRelevant`(`Actor.h:300`) / `NetDormancy`(`Actor.h:832`)는 deprecated가 아니므로 생성자 대입 그대로 둔다.
 

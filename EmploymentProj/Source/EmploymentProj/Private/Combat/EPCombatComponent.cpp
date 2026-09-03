@@ -56,7 +56,7 @@ AEPWeapon* UEPCombatComponent::GetEquippedWeapon() const
 	return EquippedWeapon;
 }
 
-void UEPCombatComponent::HandleServerFire(const FVector& Origin, const FVector& Direction, float ClientFireTime)
+void UEPCombatComponent::HandleServerFire(const FVector& Origin, const FVector& Direction)
 {
 	// 연사 속도, 탄약 검증
 	if (!EquippedWeapon || !EquippedWeapon->WeaponDef) return;
@@ -64,9 +64,13 @@ void UEPCombatComponent::HandleServerFire(const FVector& Origin, const FVector& 
 	AEPCharacter* Owner = GetOwnerCharacter();
 	if (!Owner) return;
 	
-	constexpr float MaxOriginDrift = 200.f;
-	if (FVector::DistSquared(Origin, Owner->GetActorLocation()) > FMath::Square(MaxOriginDrift))
-		return;
+	constexpr float MaxOriginDrift = 200.f;                                                                                                                                       
+	if (FVector::DistSquared(Origin, Owner->GetActorLocation()) > FMath::Square(MaxOriginDrift))                                                                                  
+	{                                                                                                                                                                             
+		UE_LOG(LogTemp, Warning, TEXT("[HandleServerFire] Origin drift rejected: %.1f"),                                                                                          
+			FVector::Dist(Origin, Owner->GetActorLocation()));                                                                                                                    
+		return;                                                                                                                                                                   
+	}
 	
 	// --- 탄도 분기 ---
 	switch (EquippedWeapon->WeaponDef->BallisticType)
@@ -75,8 +79,8 @@ void UEPCombatComponent::HandleServerFire(const FVector& Origin, const FVector& 
 	default:
 		{
 			TArray<FVector> PelletDirs;
-			EquippedWeapon->Fire(Direction, ClientFireTime, PelletDirs);
-			HandleHitscanFire(Owner, Origin, PelletDirs, ClientFireTime);
+			EquippedWeapon->Fire(Direction, PelletDirs);
+			HandleHitscanFire(Owner, Origin, PelletDirs);
 			break;
 		}
 	case EEPBallisticType::ProjectileFast:
@@ -84,7 +88,7 @@ void UEPCombatComponent::HandleServerFire(const FVector& Origin, const FVector& 
 		{
 			FVector SpreadDir = Direction;
 			TArray<FVector> DiscardedPellets;
-			EquippedWeapon->Fire(SpreadDir, ClientFireTime, DiscardedPellets);
+			EquippedWeapon->Fire(SpreadDir, DiscardedPellets);
 			HandleProjectileFire(Owner, Origin, SpreadDir);
 			break;
 		}
@@ -158,6 +162,16 @@ void UEPCombatComponent::OnRep_EquippedWeapon()
 	{
 		Owner->GetMesh()->LinkAnimClassLayers(EquippedWeapon->WeaponDef->WeaponAnimLayer);
 	}
+}
+
+void UEPCombatComponent::Server_ConfirmFire_Implementation(FVector_NetQuantize Origin,
+	FVector_NetQuantizeNormal Direction, FGameplayAbilitySpecHandle AbilityHandle)
+{
+	AEPCharacter* Char = GetOwnerCharacter();                                                                                                                                 
+	UAbilitySystemComponent* ASC = Char ? Char->GetAbilitySystemComponent() : nullptr;                                                                                        
+	FGameplayAbilitySpec* Spec = ASC ? ASC->FindAbilitySpecFromHandle(AbilityHandle) : nullptr;                                                                               
+	if (UEPGA_Item_PrimaryUse* Ability = Spec ? Cast<UEPGA_Item_PrimaryUse>(Spec->GetPrimaryInstance()) : nullptr)                                                            
+		Ability->ServerConfirmOneShot(Origin, Direction);
 }
 
 // 서버 전용
@@ -294,13 +308,12 @@ void UEPCombatComponent::ApplyGEDamage(AActor* Target, AActor* Instigator, TSubc
 void UEPCombatComponent::HandleHitscanFire(
 	AEPCharacter* Owner,
 	const FVector& Origin,
-	const TArray<FVector>& Directions,
-	float ClientFireTime)
+	const TArray<FVector>& Directions)
 {
 	if (!Owner || !Owner->GetServerSideRewindComponent()) return;
 	
 	TArray<FHitResult> ConfirmedHits;
-	Owner->GetServerSideRewindComponent()->ConfirmHitscan(Owner, EquippedWeapon, Origin, Directions, ClientFireTime, ConfirmedHits);
+	Owner->GetServerSideRewindComponent()->ConfirmHitscan(Owner, EquippedWeapon, Origin, Directions, ConfirmedHits);
 	
 	TArray<FVector_NetQuantize> ImpactPoints;
 	TArray<FVector_NetQuantize> ImpactNormals;

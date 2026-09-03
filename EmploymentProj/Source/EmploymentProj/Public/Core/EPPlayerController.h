@@ -95,6 +95,8 @@ protected:
 	// --- 오버라이드 ---
 	virtual void BeginPlay() override;
 	
+	virtual void AddCheats(bool bForce) override;
+	
 	// Input Mapping Context 등록
 	virtual void OnPossess(APawn* InPawn) override;
 	

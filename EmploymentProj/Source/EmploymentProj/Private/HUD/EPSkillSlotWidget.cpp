@@ -4,6 +4,7 @@
 #include "HUD/EPSkillSlotWidget.h"
 
 #include "AbilitySystemComponent.h"
+#include "GAS/EPDurationMessage.h"
 #include "Components/Image.h"
 #include "Components/ProgressBar.h"
 #include "Components/TextBlock.h"
@@ -12,16 +13,11 @@ void UEPSkillSlotWidget::InitWithASC(UAbilitySystemComponent* InASC)
 {
 	if (ASC.IsValid())
 	{
-		if (CooldownTag.IsValid() && CooldownHandle.IsValid())
-			ASC->RegisterGameplayTagEvent(CooldownTag, EGameplayTagEventType::NewOrRemoved).Remove(CooldownHandle);
+		if (CooldownMessageHandle.IsValid())
+			CooldownMessageHandle.Unregister();
 		
-		int32 ActiveIdx = 0;
-		for (const FGameplayTag& Tag : ActiveTags)
-		{
-			if (ActiveHandles.IsValidIndex(ActiveIdx) && ActiveHandles[ActiveIdx].IsValid())
-				ASC->RegisterGameplayTagEvent(Tag, EGameplayTagEventType::NewOrRemoved).Remove(ActiveHandles[ActiveIdx]);
-			++ActiveIdx;
-		}
+		if (ActiveMessageHandle.IsValid())
+			ActiveMessageHandle.Unregister();
 		
 		int32 LockIdx = 0;
 		for (const FGameplayTag& LockTag : LockTags)
@@ -31,107 +27,73 @@ void UEPSkillSlotWidget::InitWithASC(UAbilitySystemComponent* InASC)
 			++LockIdx;
 		}
 	}
-	ActiveHandles.Reset();
 	LockHandles.Reset();
 		
 	ASC = InASC;
 	if (!ASC.IsValid()) return;
 	
-	if (CooldownTag.IsValid())
-		CooldownHandle = ASC->RegisterGameplayTagEvent(CooldownTag, EGameplayTagEventType::NewOrRemoved)
-			.AddUObject(this, &UEPSkillSlotWidget::OnCooldownTagChanged);
-	
-	for (const FGameplayTag& Tag : ActiveTags)
-		ActiveHandles.Add(ASC->RegisterGameplayTagEvent(Tag, EGameplayTagEventType::NewOrRemoved)
-			.AddUObject(this, &UEPSkillSlotWidget::OnActiveTagChanged));
+	if (CooldownChannelTag.IsValid())
+		CooldownMessageHandle = UGameplayMessageSubsystem::Get(this)
+			.RegisterListener<FEPDurationMessage>(CooldownChannelTag, this, &UEPSkillSlotWidget::OnCooldownDurationMessage);
+
+	if (ActiveChannelTag.IsValid())
+		ActiveMessageHandle = UGameplayMessageSubsystem::Get(this)
+			.RegisterListener<FEPDurationMessage>(ActiveChannelTag, this, &UEPSkillSlotWidget::OnActiveDurationMessage);
 	
 	for (const FGameplayTag& Tag : LockTags)
 		LockHandles.Add(ASC->RegisterGameplayTagEvent(Tag, EGameplayTagEventType::NewOrRemoved)
 			.AddUObject(this, &UEPSkillSlotWidget::OnLockTagChanged));
 	
-	bCoolingDown = CooldownTag.IsValid() && ASC->HasMatchingGameplayTag(CooldownTag);
-	bActive = ASC->HasAnyMatchingGameplayTags(ActiveTags);
 	bLocked = ASC->HasAnyMatchingGameplayTags(LockTags);
-	RecomputeState();
+	ApplyState(ComputeState());
 }
 
 void UEPSkillSlotWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
 {
 	Super::NativeTick(MyGeometry, InDeltaTime);
-	
-	const bool bTickActive = CurrentState == EEPSkillSlotState::Active;
-	const bool bTickCooldown = CurrentState == EEPSkillSlotState::Cooldown;
-	if ((!bTickActive && !bTickCooldown) || !ASC.IsValid()) return;
-	
-	const FGameplayEffectQuery Query =
-		FGameplayEffectQuery::MakeQuery_MatchAnyOwningTags(
-			bTickActive ? ActiveTags : FGameplayTagContainer(CooldownTag)
-		);
-	
-	TArray<TPair<float, float>> Results = ASC->GetActiveEffectsTimeRemainingAndDuration(Query);
-	
-	float Remaining = 0.f;
-	float Duration = 0.f;
-	for (const TPair<float, float>& Pair : Results)
-	{
-		if (Pair.Key > Remaining)
-		{
-			Remaining = Pair.Key;
-			Duration = Pair.Value;
-		}
-	}
-	
-	if (Duration <= 0.f) return;
-	if (LastShownRemaining >= 0.f)
-		Remaining = FMath::Min(Remaining, LastShownRemaining);
-	LastShownRemaining = Remaining;
-	
-	if (bTickCooldown && CooldownBar)
-	{
-		const float Progress = Duration > 0.f ? FMath::Clamp(1.f - Remaining / Duration, 0.f, 1.f) : 0.f;
-		CooldownBar->SetPercent(Progress);
-	}
+
+	// Active는 더 이상 틱에서 할 일이 없다 — 바는 ApplyState가 이미 1.0으로 고정해뒀고,
+	// 남은 숫자는 활성화 동안 안 보여주기로 했으므로(사용자 결정) 갱신할 것도 없다.
+	if (CurrentState != EEPSkillSlotState::Cooldown) return;
+
+	UWorld* World = GetWorld();
+	if (!World) return;
+	const float Now = World->GetTimeSeconds();
+
+	if (CooldownDuration <= 0.f) return;
+	const float Remaining = FMath::Clamp(
+		CooldownStartTime + CooldownDuration - Now, 0.f, CooldownDuration);
+
 	if (CooldownText)
+	{
+		CooldownText->SetVisibility(ESlateVisibility::HitTestInvisible);
 		CooldownText->SetText(FText::AsNumber(FMath::CeilToInt(Remaining)));
+	}
+	if (CooldownBar)
+		CooldownBar->SetPercent(1.f - Remaining / CooldownDuration);
 }
 
 void UEPSkillSlotWidget::NativeDestruct()
 {
-	if (ASC.IsValid())
+	if (!ASC.IsValid()) return;
+	
+	int32 LockIdx = 0;
+	for (const FGameplayTag& LockTag : LockTags)
 	{
-		if (CooldownTag.IsValid() && CooldownHandle.IsValid())
-			ASC->RegisterGameplayTagEvent(CooldownTag, EGameplayTagEventType::NewOrRemoved).Remove(CooldownHandle);
-		
-		int32 ActiveIdx = 0;
-		for (const FGameplayTag& Tag : ActiveTags)
-		{
-			if (ActiveHandles.IsValidIndex(ActiveIdx) && ActiveHandles[ActiveIdx].IsValid())
-				ASC->RegisterGameplayTagEvent(Tag, EGameplayTagEventType::NewOrRemoved).Remove(ActiveHandles[ActiveIdx]);
-			++ActiveIdx;
-		}
-		
-		int32 LockIdx = 0;
-		for (const FGameplayTag& LockTag : LockTags)
-		{
-			if (LockHandles.IsValidIndex(LockIdx) && LockHandles[LockIdx].IsValid())
-				ASC->RegisterGameplayTagEvent(LockTag, EGameplayTagEventType::NewOrRemoved).Remove(LockHandles[LockIdx]);
-			++LockIdx;
-		}
+		if (LockHandles.IsValidIndex(LockIdx) && LockHandles[LockIdx].IsValid())
+			ASC->RegisterGameplayTagEvent(LockTag, EGameplayTagEventType::NewOrRemoved).Remove(LockHandles[LockIdx]);
+		++LockIdx;
 	}
 	
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(CooldownTimerHandle);
+		World->GetTimerManager().ClearTimer(ActiveTimerHandle);
+	}
+	CooldownMessageHandle.Unregister();
+	ActiveMessageHandle.Unregister();
+	
 	Super::NativeDestruct();
-}
-
-void UEPSkillSlotWidget::OnCooldownTagChanged(const FGameplayTag Tag, int32 NewCount)
-{
-	bCoolingDown = NewCount > 0;
-	RecomputeState();
-}
-
-void UEPSkillSlotWidget::OnActiveTagChanged(const FGameplayTag Tag, int32 NewCount)
-{
-	bActive = ASC.IsValid() && ASC->HasAnyMatchingGameplayTags(ActiveTags);
-	RecomputeState();
 }
 
 void UEPSkillSlotWidget::OnLockTagChanged(const FGameplayTag Tag, int32 NewCount)
@@ -140,26 +102,77 @@ void UEPSkillSlotWidget::OnLockTagChanged(const FGameplayTag Tag, int32 NewCount
 	RecomputeState();
 }
 
+void UEPSkillSlotWidget::OnCooldownDurationMessage(FGameplayTag Channel, const FEPDurationMessage& Message)
+{
+	if (!ASC.IsValid() || !Message.Instigator || Message.Instigator != ASC->GetAvatarActor())
+		return;
+
+	UWorld* World = GetWorld();
+	if (!World) return;
+
+	CooldownStartTime = World->GetTimeSeconds();
+	CooldownDuration = Message.Duration;
+	bCoolingDown = true;
+	RecomputeState();
+	
+	World->GetTimerManager().SetTimer(
+		CooldownTimerHandle, this, &UEPSkillSlotWidget::OnCooldownFinished, Message.Duration, false);
+}
+
+void UEPSkillSlotWidget::OnActiveDurationMessage(FGameplayTag Channel, const FEPDurationMessage& Message)
+{
+	if (!ASC.IsValid() || !Message.Instigator || Message.Instigator != ASC->GetAvatarActor())
+		return;
+
+	UWorld* World = GetWorld();
+	if (!World) return;
+
+	bActive = true;
+	RecomputeState();
+
+	World->GetTimerManager().SetTimer(
+		ActiveTimerHandle, this, &UEPSkillSlotWidget::OnActiveFinished, Message.Duration, false);
+}
+
+void UEPSkillSlotWidget::OnActiveFinished()
+{
+	bActive = false;
+	RecomputeState();
+}
+
+void UEPSkillSlotWidget::OnCooldownFinished()
+{
+	bCoolingDown = false;
+	RecomputeState();
+}
+
+EEPSkillSlotState UEPSkillSlotWidget::ComputeState() const
+{
+	if (bActive) return EEPSkillSlotState::Active;
+	if (bLocked) return EEPSkillSlotState::Locked;
+	if (bCoolingDown) return EEPSkillSlotState::Cooldown;
+	return EEPSkillSlotState::Ready;
+}
+
 void UEPSkillSlotWidget::RecomputeState()
 {
-	if (bActive) ApplyState(EEPSkillSlotState::Active);
-	else if (bLocked) ApplyState(EEPSkillSlotState::Locked);
-	else if (bCoolingDown) ApplyState(EEPSkillSlotState::Cooldown);
-	else ApplyState(EEPSkillSlotState::Ready);
+	const EEPSkillSlotState NewState = ComputeState();
+	if (NewState == CurrentState) return;
+	ApplyState(NewState);
 }
 
 void UEPSkillSlotWidget::ApplyState(EEPSkillSlotState NewState)
 {
 	CurrentState = NewState;
-	LastShownRemaining = -1.f;
-	
+
 	const bool bShowBar = (NewState == EEPSkillSlotState::Cooldown || NewState == EEPSkillSlotState::Active);
+	const bool bShowText = (NewState == EEPSkillSlotState::Cooldown);   // Active 동안은 남은 숫자 안 보여줌(사용자 결정)
 	if (CooldownBar)
 		CooldownBar->SetVisibility(bShowBar ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
 	if (CooldownText)
 		CooldownText->SetVisibility(
-			bShowBar ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
-	
+			bShowText ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+
 	if (bShowBar && CooldownBar)
 	{
 		CooldownBar->SetFillColorAndOpacity(CooldownFillColor);

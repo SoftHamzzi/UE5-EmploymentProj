@@ -132,7 +132,8 @@ Project Settings 피커에 **`FEPItemData` 행을 쓰는 DT만** 뜬다. 두 번
 | `AmmoBox_545` | `Ammo/DA_AmmoBox_545` | **기본 `InitState`** (`Charges = InitialCharges`) + `bFungible` | 01·03-A |
 | `Bandage` | `Consumable/DA_Bandage` | 기본 `InitState` | 01 |
 | **`Cash_10000`** | `Misc/DA_Cash_10000` | **`bFungible` 합치기** (`Charges` 합산) | **03-A** |
-| **`Backpack_Small`** | `Misc/DA_Backpack_Small` | **`ContainerCapacity`** / 배낭 자동 착용 / 서브트리 | **03-B** |
+| **`Backpack_B`** | `Misc/DA_Backpack_B` | **`ContainerCapacity`** / 배낭 자동 착용 / 서브트리 | **03-B** |
+| **`Shirt_Basic` · `Pants_Basic`** | `Misc/DA_Shirt_Basic` · `DA_Pants_Basic` | **시작 장비 + 수납이 착용에서 나온다** (13차) | **03-B** |
 | `Scrap` | `Misc/DA_Scrap` | 루트 테이블 등급 분포 (일반 등급 채우기) | 01 |
 | `Resume` | `QuestItem/DA_Resume` | 〃 + `bIsQuestItem` | 01 |
 
@@ -150,7 +151,7 @@ Project Settings 피커에 **`FEPItemData` 행을 쓰는 DT만** 뜬다. 두 번
 |---|---|---|
 | **`Cash_10000`의 `SellPrice`** | 기본값 `100` — **1만원짜리가 100원에 팔린다** | 상점이 생길 때 (한참 뒤) |
 | `Cash_10000` / `AmmoBox_545`의 `bFungible` | `false`면 합치기 경로를 영영 안 탄다 — **03-A가 검증 대상 없이 구현된다** | Step 03-A |
-| `Backpack_Small`의 `ContainerCapacity` | `0`이면 배낭이 아무것도 못 담는다 | Step 03-B |
+| `Backpack_B`의 `ContainerCapacity` | `0`이면 배낭이 아무것도 못 담는다. **그리고 `SlotSize`보다 작아야 한다** — `IsDataValid()`가 거부한다 (13차, `05_Loot_DOCS.md` §4-6) | Step 03-A |
 | 무기 `SlotSize` | `1`이면 칸 합산 검증이 무의미하다 (4~5로 올린다) | Step 03-A |
 
 **`InitialCharges`만 지금 바로 보인다** — `EP.Item.State AmmoBox_545` / `Cash_10000`의 `Charges`·`SlotSize` 열. 나머지 셋은 DT를 열어 눈으로 본다.

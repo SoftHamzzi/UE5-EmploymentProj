@@ -27,8 +27,6 @@ public:
 	UPROPERTY(EditDefaultsOnly, Category = "Movement")
 	float AimSpeed = 200.f;
 	
-	float MoveSpeedMultiplier = 1.f;
-	
 	// 서버 NewMove 완료 델리게이트 — SSR 등이 구독
 	FEPOnServerMoveProcessed OnServerMoveProcessed;
 
@@ -37,4 +35,5 @@ public:
 	virtual void UpdateFromCompressedFlags(uint8 Flags) override;
 	virtual class FNetworkPredictionData_Client* GetPredictionData_Client() const override;
 	virtual void OnMovementUpdated(float DeltaSeconds, const FVector& OldLocation, const FVector& OldVelocity) override;
+	virtual bool CanCrouchInCurrentState() const override;
 };

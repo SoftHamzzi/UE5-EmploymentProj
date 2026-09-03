@@ -44,6 +44,9 @@ struct FEPItemData : public FTableRowBase
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Item")
 	int32 InitialCharges = 0;
 	
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Item")
+	TArray<FName> SlotPriority;
+	
 	// 경제
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Item")
 	int32 SellPrice = 100;
