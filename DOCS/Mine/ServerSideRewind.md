@@ -553,7 +553,7 @@ if (USkeletalMeshComponent* Mesh = OwnerChar->GetMesh())
 
 > 지금 코드가 의존하는 건 **"실측으로 맞더라"**다. 이 글이 스스로 세운 기준
 > ("값이 일정하게 틀리면 구조를 의심한다")을 적용하면, 여기는 구조로 못 박아야 하는 자리다.
-> 틱 그룹 자체의 근거는 `DOCS/Mine/TickGroup.md` §SkeletalMeshComponent 참고 —
+> 틱 그룹 자체의 근거는 `DOCS/Mine/Concepts/TickGroup.md` §SkeletalMeshComponent 참고 —
 > `EndTickGroup`은 생성자 상수가 아니라 매 프레임 재계산되는 값이다.
 
 #### ★★ 2026-09-01 추가 — CMC 자신이 같은 처방을 쓴다

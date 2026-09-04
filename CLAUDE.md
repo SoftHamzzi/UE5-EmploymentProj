@@ -80,6 +80,13 @@ UE5 C++ multiplayer extraction shooter ("EmploymentProj") - portfolio project. A
 - **DOCS/Mine/**: System design docs (Item, Animation, MetaHuman, CMC, Rep, Proj)
 - **DOCS/Notes/**: Per-stage study notes and implementation checklists (03_BoneHitbox, 04_GAS etc.)
 
+## Session Start
+
+`.claude/PROJECT_CONTEXT.md`를 소스 파일 탐색 전에 먼저 읽는다 — 클래스/함수 구조를 파일당 읽지 않고 한 번에 파악할 수 있다. `.cpp`/`.h`가 바뀐 커밋에서는 pre-commit 훅이 자동 갱신하므로 보통은 재생성할 필요 없음. 훅 없이 수동 갱신하려면:
+```bash
+python .claude/scripts/code_mapper.py . -o .claude/PROJECT_CONTEXT.md
+```
+
 ## Architecture
 
 UE5 dedicated server model. All game logic is server-authoritative.
@@ -92,25 +99,14 @@ UE5 dedicated server model. All game logic is server-authoritative.
 
 **Animation:** Lyra-style Linked Anim Layer. `LinkAnimClassLayers()` swaps weapon anim at runtime via `WeaponDef->WeaponAnimLayer`.
 
-## GAS Migration State (feature-gas branch)
+## GAS Migration State
 
-Master spec: `DOCS/Notes/04/04_GAS_DOCS.md`. Implementation order:
-
-1. Foundation (ASC + AttributeSet) — `04_GAS_01_Foundation.md`
-2. Damage/HP pipeline — `04_GAS_02_DamagePipeline.md`
-3. `GA_Item_PrimaryUse` (replaces `Server_Fire`) — `04_GAS_03_PrimaryUse.md`
-4. `GA_Item_Reload` (replaces `Server_Reload`) — `04_GAS_04_Reload.md`
-5. Spread CDF table — `04_GAS_05_Spread.md`
-6. Hit zone damage tag system — `04_GAS_06_HitZoneDamage.md`
-
-**진행 상태의 진실의 원천은 STATUS 파일이다, 단계 문서가 아니다.**
-- `DOCS/Notes/04/GAS_STATUS.md` — 전체 단계 진행 상황
-- `DOCS/Notes/04/04_GAS_0X_XXX_STATUS.md` — 단계별 상세 (Step 완료 여부, 버그, 미완료 항목)
-- 단계 문서(`04_GAS_0X_XXX.md`)는 예정 코드를 보여줄 뿐 실제 구현 여부를 보장하지 않음 — 항상 STATUS 파일로 확인할 것
+**완료 (2026-07-26).** 전체 이력과 레거시 제거 확인(grep 검증)은
+`DOCS/Notes/04/GAS_STATUS.md`에 있다. 마스터 스펙은 `DOCS/Notes/04/04_GAS_DOCS.md`.
+이후 작업은 GAS 밖 — `DOCS/DOCS.md` §5 실행 순서 참조, 현재 `feature-loot`
+브랜치에서 Loot/Inventory 진행 중.
 
 NativeGameplayTags: `Public/GAS/EPNativeGameplayTags.h` (`namespace EmpGameplayTags`).
-
-Key pending removals: `Server_Fire`/`Server_Reload` RPCs, `AEPCharacter::HP`/`TakeDamage()`, `AEPWeapon::CurrentAmmo`/`StartReload`/`FinishReload`, `BoneDamageMultiplierMap`.
 
 ## Project Structure
 
@@ -150,9 +146,15 @@ UnrealBuildTool.exe EmploymentProj Win64 Development -project="EmploymentProj/Em
 - **코드는 사용자가 직접 작성한다.** Claude는 코드 파일을 직접 수정하지 않는다.
 - **Claude는 구현 방법을 문서에 기술한다.** 구현 지침은 `DOCS/Notes/` 하위 해당 단계 문서에 작성한다.
 - 코드 검토, 오류 지적, 설계 설명은 허용. 파일 Edit/Write는 문서에만 사용한다.
-- GAS 관련 작업 시작 시 `GAS_STATUS.md` + 해당 단계 STATUS 파일을 먼저 확인한다.
+- **STATUS 파일이 진행 상태의 진실의 원천이다.** GAS/Loot/Polish 등 이 프로젝트의
+  모든 단계별 작업 영역이 이 방식을 쓴다 — `GAS_STATUS.md`, `LOOT_STATUS.md`,
+  `04_Polish_STATUS.md` 등. 해당 영역 작업 시작 시 그 영역 STATUS 파일 + 세부
+  단계 STATUS 파일을 먼저 확인한다. 단계 문서(`_XXX.md`)는 예정 코드를 보여줄
+  뿐 실제 구현 여부를 보장하지 않는다 — 항상 STATUS 파일로 확인할 것.
 - 코드 수정 후 사용자가 요청하면 STATUS 파일을 코드 기준으로 갱신한다. 세부 사항은 `SESSION.md` 참고.
+- **Notes 문서를 쓰거나 크게 고칠 때마다 `notes-review` 스킬을 쓴다** — 실무성·확장성·간결성 자체 점검 + 외부 리뷰 필요 여부 판단. 요청받지 않아도 기본으로 한다.
+- **외부 리뷰(`Review/*_Answer.md`) 답변이 있으면 그대로 반영하지 않고 `review-verifier` 서브에이전트에 위임해 검증한다.** CONFIRMED된 주장만 설계·STATUS 문서에 반영한다.
 
 ## Agent Rules
 
-- **No sub-agents**: Do NOT use the Task tool to spawn sub-agents unless the user explicitly permits it
+- **No sub-agents by default**: Do NOT use the Task tool to spawn sub-agents unless the user explicitly permits it — **except** `review-verifier`(리뷰 답변 검증, 위 Workflow 규칙대로 항상 허용)와 `unreal-engine-researcher`(자기완결적인 UE5 기능 조사, 대화 맥락이 필요 없을 때 허용). 이 둘은 매번 물어보지 않고 쓴다.

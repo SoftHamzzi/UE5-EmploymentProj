@@ -2,7 +2,7 @@
 
 > 작성일: 2026-08-02
 > 근거: 프로젝트 `Content/` 실측 + Lyra 직독(`C:\Users\wnsgn\문서\Unreal Projects\LyraStarterGame\Content`) + UE 5.7 플러그인 소스
-> 관련: `DOCS/Mine/SourceNavigation.md` (Source 쪽 탐색)
+> 관련: `DOCS/Mine/Concepts/SourceNavigation.md` (Source 쪽 탐색)
 
 ---
 

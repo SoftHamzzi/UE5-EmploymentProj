@@ -265,7 +265,7 @@ if (GetLocalRole() == ROLE_SimulatedProxy)
 
 > **★ 마지막 줄에는 예외가 있다 — Dormancy(휴면).**
 > 클라가 액터를 파괴할지는 채널이 닫혔는지가 아니라 **왜 닫혔는지**로 갈린다. `EChannelCloseReason::Relevancy`면 파괴하지만 `Dormancy`면 **유지한다**(`DataChannel.cpp:2691`). 값이 안 변하는 액터(바닥 아이템, 문)를 휴면으로 재우면 멀어져도 안 사라지고 대역폭은 0이 된다.
-> 전체 내용은 **`DOCS/Mine/Dormancy.md`**. 5단계 `AEPPickup`이 이 경로를 쓴다.
+> 전체 내용은 **`DOCS/Mine/Concepts/Dormancy.md`**. 5단계 `AEPPickup`이 이 경로를 쓴다.
 
 ### Priority
 ```cpp
@@ -370,10 +370,10 @@ public:
 
 ### 한국어 자료
 - [언리얼 멀티플레이 이해하기 — MoOrY (velog)](https://velog.io/@seok9403/%EC%96%B8%EB%A6%AC%EC%96%BC-%EB%A9%80%ED%8B%B0%ED%94%8C%EB%A0%88%EC%9D%B4-%EC%9D%B4%ED%95%B4%ED%95%98%EA%B8%B0)
-  — 이 문서와 범위가 거의 겹친다. **§6 Relevancy가 특히 상세하다** (기본 동작 규칙 6가지). 휴면(dormancy)은 안 다루므로 그 부분만 `DOCS/Mine/Dormancy.md`로 간다
+  — 이 문서와 범위가 거의 겹친다. **§6 Relevancy가 특히 상세하다** (기본 동작 규칙 6가지). 휴면(dormancy)은 안 다루므로 그 부분만 `DOCS/Mine/Concepts/Dormancy.md`로 간다
 
 ### 프로젝트 문서
-- `DOCS/Mine/Dormancy.md` — 휴면. §6 Relevancy의 예외 경로
+- `DOCS/Mine/Concepts/Dormancy.md` — 휴면. §6 Relevancy의 예외 경로
 
 ### UE5 소스 코드
 - `Engine/Source/Runtime/Engine/Public/Net/UnrealNetwork.h` - DOREPLIFETIME 매크로

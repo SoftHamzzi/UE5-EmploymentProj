@@ -68,6 +68,9 @@ private:
 	// === 함수 ===
 	UFUNCTION()
 	void OnCastTimerComplete();
+	
+	UFUNCTION()
+	void OnCastSynced();
 
 	UFUNCTION()
 	void OnDamageDuringCast(FGameplayEventData Payload);

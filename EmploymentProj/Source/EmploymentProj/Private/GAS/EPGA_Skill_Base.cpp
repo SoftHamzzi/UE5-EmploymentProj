@@ -6,6 +6,7 @@
 #include "Abilities/Tasks/AbilityTask_WaitDelay.h"
 #include "Abilities/Tasks/AbilityTask_WaitGameplayEvent.h"
 #include "GameFramework/GameplayMessageSubsystem.h"
+#include "Abilities/Tasks/AbilityTask_NetworkSyncPoint.h"
 #include "GAS/EPDurationMessage.h"
 #include "GAS/EPNativeGameplayTags.h"
 
@@ -111,10 +112,20 @@ void UEPGA_Skill_Base::BroadcastDurationMessage(FGameplayTag Channel, float Dura
 
 void UEPGA_Skill_Base::OnCastTimerComplete()
 {
-	FScopedPredictionWindow ScopedPrediction(
-		GetAbilitySystemComponentFromActorInfo(),
-		CurrentActivationInfo.GetActivationPredictionKey());
-	
+	UAbilityTask_NetworkSyncPoint* Sync =
+		UAbilityTask_NetworkSyncPoint::WaitNetSync(this, EAbilityTaskNetSyncType::OnlyServerWait);
+	Sync->OnSync.AddDynamic(this, &UEPGA_Skill_Base::OnCastSynced);
+	Sync->ReadyForActivation();
+	// FScopedPredictionWindow ScopedPrediction(
+	// 	GetAbilitySystemComponentFromActorInfo(),
+	// 	CurrentActivationInfo.GetActivationPredictionKey());
+	//
+	// OnCastComplete();
+	// EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, false);
+}
+
+void UEPGA_Skill_Base::OnCastSynced()
+{
 	OnCastComplete();
 	EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, false);
 }
