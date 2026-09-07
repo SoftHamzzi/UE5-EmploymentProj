@@ -57,8 +57,8 @@
 
 ## Polish (GAS 밖 버그 모음)
 
-GAS 마이그레이션 이후 발견된, 특정 Step에 안 묶이는 잡버그들은 `DOCS/Notes/Polish/04/`
-아래 별도로 쌓는다 — 진행 상황은 `Polish/04/04_Polish_STATUS.md` 참고.
+GAS 마이그레이션 이후 발견된, 특정 Step에 안 묶이는 잡버그들은 `../Polish/`
+아래 별도로 쌓는다 — 진행 상황은 `04_Polish_STATUS.md` 참고.
 
 ---
 

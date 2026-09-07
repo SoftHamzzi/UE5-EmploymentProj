@@ -35,13 +35,7 @@ void AEPWeapon::Tick(float DeltaTime)
 	
 	if (!HasAuthority()) return;
 	
-	if (CurrentSpread > 0.f)
-	{
-		CurrentSpread = FMath::Max(
-			0.f,
-			CurrentSpread - WeaponDef->SpreadRecoveryRate * DeltaTime
-		);
-	}
+	UpdateSpread(DeltaTime);
 	
 }
 
@@ -71,16 +65,16 @@ void AEPWeapon::Fire(const FVector& AimDir, TArray<FVector>& OutPellets)
 	if (!HasAuthority()) return;
 	if (!WeaponDef) return;
 	
-	// 퍼짐 누적
-	CurrentSpread = FMath::Min(
-		CurrentSpread + WeaponDef-> SpreadPerShot,
-		WeaponDef->MaxSpread
-	);
-	ConsecutiveShots++;
-	
 	const int32 Count = FMath::Max(1, WeaponDef->PelletCount);
 	OutPellets.Reserve(Count);
 	const float HalfAngle = FMath::DegreesToRadians(CalculateSpread() * 0.5f);
+	
+	// 퍼짐 누적
+    CurrentSpread = FMath::Min(
+    	CurrentSpread + WeaponDef->SpreadPerShot,
+    	WeaponDef->MaxSpread
+    );
+    ConsecutiveShots++;
 	
 	FVector Up, Right;
 	AimDir.FindBestAxisVectors(Up, Right);
@@ -109,9 +103,21 @@ FVector AEPWeapon::ApplySpread(const FVector& Direction) const
 	return FMath::VRandCone(Direction, HalfAngle);
 }
 
+void AEPWeapon::UpdateSpread(float DeltaTime)
+{
+	if (CurrentSpread > 0.f)
+	{
+		CurrentSpread = FMath::Max(
+			0.f,
+			CurrentSpread - WeaponDef->SpreadRecoveryRate * DeltaTime
+		);
+	}
+}
+
 float AEPWeapon::CalculateSpread() const
 {
 	float Spread = WeaponDef->BaseSpread + CurrentSpread;
+	UE_LOG(LogTemp, Log, TEXT("%.3f"), Spread);
 	
 	if (AEPCharacter* EPOwner = Cast<AEPCharacter>(GetOwner()))
 	{

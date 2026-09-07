@@ -122,7 +122,7 @@ Combat->Server_ConfirmFire(Origin, Char->GetControlRotation().Vector(), CurrentS
 
 - **`Entry.State.Charges` 이관** — 탄약을 GAS `Ammo` 어트리뷰트 대신
   인벤토리 아이템 인스턴스에 귀속시키는 것. `05_Loot_05_Equipment.md`에
-  이미 설계돼 있고(`LOOT_STATUS.md`: "탄약은 `Entry.State.Charges`가
+  이미 설계돼 있고(`DOCS/Notes/05/Status/LOOT_STATUS.md`: "탄약은 `Entry.State.Charges`가
   진실, GAS `Ammo`는 뷰"), Step 03(인벤토리)·04(인벤토리 UI) 완성을
   전제로 짜여 있어 지금 당겨오지 않는다. 이관 시 `CommitAbilityCost`
   자리만 `Entry.State.Charges` 기반으로 바뀌고 `ServerConfirmOneShot`
@@ -130,3 +130,84 @@ Combat->Server_ConfirmFire(Origin, Char->GetControlRotation().Vector(), CurrentS
 - **`FireMode::Burst`** — "N발 고정 연사 후 자동 종료" 분기(발사 카운터)가
   아직 없다. 지금은 `Auto`만 타이머 루프로 처리하고 `Single`/`Burst`는
   기존 즉시-종료 경로로 묶여 있다.
+
+---
+
+## 4. 미해결 — `FireMode::Single`이 쿨다운 GE에 막힌다
+
+> 2026-09-05 추가. 증상 확인, 원인 규명 완료, 코드 미적용.
+
+### 증상
+
+마우스를 클릭해 단발로 쏘려 하면 발사가 안 되거나 크게 늦다. 연사(Auto)는 정상이다.
+
+### 경로
+
+```
+1. Input Started → TryActivateAbility
+2. ActivateAbility → FireOnce()
+3. FireOnce() → CommitAbilityCooldown(..., /*ForceCooldown*/ true)
+                → 쿨다운 GE 적용, 상태 태그 Cooldown.Weapon.PrimaryUse 부착 (1/FireRate 초)
+4. FireMode != Auto → 즉시 EndAbility
+5. 다음 클릭 → TryActivateAbility → CanActivateAbility → CheckCooldown()
+                → 상태 태그가 아직 붙어 있음 → 활성화 거부
+```
+
+`ForceCooldown = true`는 **적용**만 강제한다. 다음 활성화의 **검사**는 못 건너뛴다.
+
+`Auto`가 멀쩡한 이유는 어빌리티가 살아 있는 동안 `FireOnce`를 타이머가 직접 부르기 때문이다.
+`CheckCooldown()`을 아예 안 거친다. `Single`은 발마다 새 활성화라 매번 거친다.
+
+### 왜 `1/FireRate`보다 훨씬 길게 느껴지나
+
+`04_Polish_SkillDisplay.md`와 같은 원인이다. 클라이언트에는 예측본과 서버본 두 개의 쿨다운 GE가
+생기는데, 서버본이 도착하면 `GameplayEffect.cpp:2948`의 `StartWorldTime` 재계산이 경과 시간을
+0으로 만든다. 클라의 `CheckCooldown()`은 그 되돌아간 값을 본다.
+
+**실질 차단 시간 ≈ `1/FireRate` + RTT.** `FireRate`가 낮은 무기(2~4)일수록 체감이 크다.
+
+### 설계 오류의 본질
+
+발사 간격 하나가 서로 다른 두 가지 일을 하고 있고, 둘 다 쿨다운 GE에 얹혀 있다.
+
+| | 무엇이 필요한가 | 지금 |
+|---|---|---|
+| `Auto` | 루프 페이싱 | `SetTimer`가 이미 하고 있다. **GE가 필요 없다** |
+| `Single` | 클릭 연타 제한 | 검사는 필요하지만 복제도 예측도 필요 없는 **로컬 제한**이다 |
+
+쿨다운 GE는 복제되고 예측되므로 둘 중 어느 쪽에도 안 맞는다.
+
+### 안 A — 발사 간격을 쿨다운 GE에서 뺀다 (채택)
+
+1. `UEPGA_Item_PrimaryUse`에서 `ApplyCooldown` 오버라이드와 쿨다운 GE 지정을 제거한다
+2. `AEPWeapon`에 `float LastFireTime = -BIG_NUMBER;`를 둔다 — 복제하지 않는다
+3. `AEPWeapon::CanFire()`에 간격 검사를 넣는다
+
+```cpp
+// 클라와 서버가 같은 시계를 본다 — 03단계 SSR과 같은 규칙
+const float Now = GetWorld()->GetGameState()->GetServerWorldTimeSeconds();
+if (Now - LastFireTime < GetFireInterval() * IntervalEpsilon) return false;
+```
+
+4. `FireOnce()`의 `CommitAbilityCooldown` 자리에 `Weapon->MarkFired(Now)`를 넣는다
+5. `ServerConfirmOneShot`에서 같은 검사를 한 번 더 한다 — 이게 치트 방어다.
+   클라 시계 추정 오차 때문에 관용치가 필요하고, `PredictionFudgeSeconds`를 재사용할 수 있다
+
+**함정 하나.** `Auto`의 타이머 간격이 `1/FireRate`와 정확히 같으므로, `CanFire()`가
+`Now - LastFireTime < 1/FireRate`를 엄격하게 보면 부동소수점 오차로 한 발씩 건너뛴다.
+`CommitAbility()`가 자기 쿨다운에 걸리던 것과 **같은 함정**이다. `IntervalEpsilon`(0.95 안팎)을
+곱하거나 상수를 빼서 여유를 둔다.
+
+**대가.** `CheckCooldown()`을 안 타므로 GAS의 활성화 실패 로그에 안 잡히고,
+HUD에서 "발사 쿨다운 중"을 태그로 볼 수 없다. 발사 간격은 표시할 대상이 아니라 문제되지 않는다.
+
+### 안 B — `Single`일 때 `CommitAbilityCooldown`을 안 부른다 (기각)
+
+한 줄로 끝나지만 연타 제한이 통째로 사라진다. 서버 검증이 없으므로 클라가 무제한 연사할 수 있다.
+
+### 함께 볼 것
+
+- `ServerConfirmOneShot`이 `CommitAbilityCost`를 **서버에서만** 부른다. 클라는 탄약을 예측
+  차감하지 않으므로 HUD 잔탄이 RTT만큼 늦게 준다. 의도한 것이면 그대로, 아니면 안 A와 같이 본다
+- `AEPWeapon::CalculateSpread()`에 디버그 `UE_LOG(LogTemp, Log, TEXT("%.3f"), Spread)`가
+  남아 있다. 발사마다 서버에서 돈다

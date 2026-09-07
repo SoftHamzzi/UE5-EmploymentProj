@@ -1,7 +1,7 @@
 # Step 00 — ItemCore (아이템 계층 정비)
 
 > 마스터 기획: `05_Loot_DOCS.md` (§4-1, §4-9)
-> 진행 상황: `LOOT_STATUS.md`
+> 진행 상황: `Status/LOOT_STATUS.md`
 
 ---
 

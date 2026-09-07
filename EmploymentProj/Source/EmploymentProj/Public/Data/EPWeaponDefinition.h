@@ -60,8 +60,8 @@ public:
 	float ReloadTime = 2.0f;
 	
 	// --- 탄 퍼짐 ---
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Spread")
-	float BaseSpread = 0.5f;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon|Spread")
+	float BaseSpread = 1.f;
 	
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Spread")
 	float SpreadPerShot = 0.1f;
@@ -99,6 +99,9 @@ public:
 	// --- 비주얼 ---
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Visual")
 	TSoftObjectPtr<USkeletalMesh> WeaponMesh;
+	
+	UPROPERTY(EditDefaultsOnly, Category = "Weapon|Anim")
+	FTransform LeftHandGripOffset;
 	
 	// --- 트레이스 ---
 	float TraceDistanceCm = 10000.f;

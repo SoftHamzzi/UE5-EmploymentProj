@@ -28,10 +28,14 @@ void UEPCharacterMovement::OnMovementUpdated(
 
 	// NewMove일 때만 저장 — 묶음의 마지막 이동이 완료된 시점
 	const FCharacterNetworkMoveData* MoveData = GetCurrentNetworkMoveData();
-	if (!MoveData || MoveData->NetworkMoveType != FCharacterNetworkMoveData::ENetworkMoveType::NewMove) return;
+	if (!MoveData || MoveData->NetworkMoveType != FCharacterNetworkMoveData::ENetworkMoveType::NewMove)
+	{
+		return;
+	}
 
 	const AGameStateBase* GS = GetWorld()->GetGameState<AGameStateBase>();
 	const float T = GS ? GS->GetServerWorldTimeSeconds() : GetWorld()->GetTimeSeconds();
+	
 	OnServerMoveProcessed.Broadcast(T, GetActorLocation());
 }
 

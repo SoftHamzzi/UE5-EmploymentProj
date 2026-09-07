@@ -1,7 +1,7 @@
 # Loot 총괄 기획서 (EmploymentProj)
 
 > 아이템 획득 파이프라인 전체 그림을 담은 마스터 문서.
-> 세부 구현: `05_Loot_01_Spawner.md` ~ / 진행 상황: `LOOT_STATUS.md`
+> 세부 구현: `05_Loot_01_Spawner.md` ~ / 진행 상황: `Status/LOOT_STATUS.md`
 > 관련: `DOCS/Mine/Item.md`(아이템 아키텍처), `DOCS/GAME.md`(자판기·경제 기획)
 
 ---

@@ -102,7 +102,7 @@ UE5 dedicated server model. All game logic is server-authoritative.
 ## GAS Migration State
 
 **완료 (2026-07-26).** 전체 이력과 레거시 제거 확인(grep 검증)은
-`DOCS/Notes/04/GAS_STATUS.md`에 있다. 마스터 스펙은 `DOCS/Notes/04/04_GAS_DOCS.md`.
+`DOCS/Notes/04/Status/GAS_STATUS.md`에 있다. 마스터 스펙은 `DOCS/Notes/04/04_GAS_DOCS.md`.
 이후 작업은 GAS 밖 — `DOCS/DOCS.md` §5 실행 순서 참조, 현재 `feature-loot`
 브랜치에서 Loot/Inventory 진행 중.
 

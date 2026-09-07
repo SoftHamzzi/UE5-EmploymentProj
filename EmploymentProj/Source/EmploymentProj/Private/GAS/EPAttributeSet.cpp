@@ -35,7 +35,7 @@ void UEPAttributeSet::PostGameplayEffectExecute(const FGameplayEffectModCallback
 		SetAmmo(FMath::Clamp(GetAmmo(), 0.f, GetMaxAmmo()));
 	
 	// 타겟 캐릭터
-	AEPCharacter* TargetCharacter = Cast<AEPCharacter>(GetOwningActor());
+	AEPCharacter* TargetCharacter = Cast<AEPCharacter>(GetOwningAbilitySystemComponent()->GetAvatarActor());
 	
 	// 소스 액터
 	UAbilitySystemComponent* SourceASC = Data.EffectSpec.GetContext().GetOriginalInstigatorAbilitySystemComponent();
@@ -64,6 +64,11 @@ void UEPAttributeSet::PostGameplayEffectExecute(const FGameplayEffectModCallback
 			const float NewHealth = FMath::Max(GetHealth() - RemainingDamage, 0.f);
 			SetHealth(NewHealth);
 			
+			if (TargetCharacter && NewHealth > 0.f) {
+				TargetCharacter->Multicast_PlayHitReact();
+				TargetCharacter->Multicast_PlayPainSound();
+			}
+			
 			// 힐 채널링 취소 이벤트 발송
 			if (TargetASC)
 			{
@@ -90,11 +95,11 @@ void UEPAttributeSet::GetLifetimeReplicatedProps(TArray<class FLifetimeProperty>
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 	
-	DOREPLIFETIME_CONDITION_NOTIFY(UEPAttributeSet, Health, COND_None, REPNOTIFY_Always);
-	DOREPLIFETIME_CONDITION_NOTIFY(UEPAttributeSet, MaxHealth, COND_None, REPNOTIFY_Always);
-	DOREPLIFETIME_CONDITION_NOTIFY(UEPAttributeSet, Ammo, COND_None, REPNOTIFY_Always);
-	DOREPLIFETIME_CONDITION_NOTIFY(UEPAttributeSet, MaxAmmo, COND_None, REPNOTIFY_Always);
-	DOREPLIFETIME_CONDITION_NOTIFY(UEPAttributeSet, MoveSpeedMultiplier, COND_None, REPNOTIFY_Always);
+	DOREPLIFETIME_CONDITION_NOTIFY(UEPAttributeSet, Health, COND_OwnerOnly, REPNOTIFY_Always);
+	DOREPLIFETIME_CONDITION_NOTIFY(UEPAttributeSet, MaxHealth, COND_OwnerOnly, REPNOTIFY_Always);
+	DOREPLIFETIME_CONDITION_NOTIFY(UEPAttributeSet, Ammo, COND_OwnerOnly, REPNOTIFY_Always);
+	DOREPLIFETIME_CONDITION_NOTIFY(UEPAttributeSet, MaxAmmo, COND_OwnerOnly, REPNOTIFY_Always);
+	DOREPLIFETIME_CONDITION_NOTIFY(UEPAttributeSet, MoveSpeedMultiplier, COND_OwnerOnly, REPNOTIFY_Always);
 }
 
 void UEPAttributeSet::OnRep_Health(const FGameplayAttributeData& OldValue)

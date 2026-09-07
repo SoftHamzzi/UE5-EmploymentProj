@@ -13,11 +13,16 @@
 영역마다 2단 구조(작아서 단계가 안 나뉘는 영역은 위 단계 하나로 끝나기도 한다 — Polish가 그 예):
 
 - `<영역>_STATUS.md` — 그 영역 전체 진행 상황(어느 단계까지 완료됐는지)
-  - `DOCS/Notes/04/GAS_STATUS.md`
-  - `DOCS/Notes/05/LOOT_STATUS.md`
-  - `DOCS/Notes/Polish/04/04_Polish_STATUS.md`
+  - `DOCS/Notes/04/Status/GAS_STATUS.md`
+  - `DOCS/Notes/05/Status/LOOT_STATUS.md`
+  - `DOCS/Notes/04/Status/04_Polish_STATUS.md`
 - `<단계>_STATUS.md` — 단계별 상세 상태(Step별 완료 여부, 버그, 미완료 항목).
   예: `04_GAS_0X_XXX_STATUS.md`, `05_Loot_0X_XXX_STATUS.md`
+
+**폴더 규칙 — 2026-09-04부터:** 각 영역 폴더(`Notes/0N/`) 안에서 `*_STATUS.md`는
+전부 `Status/` 서브폴더에, 그 영역에서 파생된 Polish 작업은 `Polish/` 서브폴더에
+모은다(예: `Notes/04/Status/`, `Notes/04/Polish/`). 새 영역을 시작할 때도 이
+구조를 그대로 따른다 — 최상위에 남는 건 그 영역의 본편 구현 문서뿐이다.
 
 코드는 사용자가 직접 작성, Claude는 구현 방법을 단계 문서(`<영역>_0X_XXX.md`)에
 기술한다. 코드 수정 후 "STATUS 파일 정리해줘"라고 요청하면 Claude가 코드를 읽고

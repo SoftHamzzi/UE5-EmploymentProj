@@ -47,9 +47,11 @@ void UEPAnimInstance::NativeUpdateAnimation(float DeltaSeconds)
 			UMeshComponent* WeaponMesh = Weapon->WeaponMesh;
 			if (WeaponMesh)
 			{
-				FTransform WorldLeftHandIK = WeaponMesh->GetSocketTransform(FName("LeftHandIK"));
-				FTransform HandR_World = Character->GetMesh()->GetBoneTransform(FName("hand_r"));
+				FTransform SocketTransform = WeaponMesh->GetSocketTransform(FName("LeftHandIK"));
+				FTransform WorldLeftHandIK = Weapon->WeaponDef
+					? Weapon->WeaponDef->LeftHandGripOffset * SocketTransform : SocketTransform;
 				
+				FTransform HandR_World = Character->GetMesh()->GetBoneTransform(FName("hand_r"));
 				LeftHandIKTransform = WorldLeftHandIK.GetRelativeTransform(HandR_World);
 			}
 		}

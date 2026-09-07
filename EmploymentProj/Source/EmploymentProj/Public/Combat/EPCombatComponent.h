@@ -36,7 +36,7 @@ public:
 	
 	void HandleServerFire(const FVector& Origin, const FVector& Direction);
 	
-	UFUNCTION(Server, Unreliable)
+	UFUNCTION(Server, Reliable)
 	void Server_ConfirmFire(FVector_NetQuantize Origin, FVector_NetQuantizeNormal Direction, FGameplayAbilitySpecHandle AbilityHandle);
 	
 	static void ApplyGEDamage(

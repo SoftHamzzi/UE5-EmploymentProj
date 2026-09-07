@@ -53,6 +53,12 @@ public:
 
 	UFUNCTION(NetMulticast, Reliable)
 	void Multicast_Die();
+	
+	UFUNCTION(NetMulticast, Unreliable)
+	void Multicast_PlayHitReact();
+
+	UFUNCTION(NetMulticast, Unreliable)
+	void Multicast_PlayPainSound();
 
 protected:
 	// === 변수 ===
@@ -168,11 +174,5 @@ private:
 	
 	// === 함수 ===
 	void InitASC();
-	
-	UFUNCTION(NetMulticast, Unreliable)
-	void Multicast_PlayHitReact();
-
-	UFUNCTION(NetMulticast, Unreliable)
-	void Multicast_PlayPainSound();
 	
 };

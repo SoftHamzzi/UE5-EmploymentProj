@@ -96,7 +96,7 @@
 - GameplayEffect: 데미지, 힐, 버프
 - GameplayAbility: Dash, Heal, ShieldOn (3개면 충분)
 - 면접에서 보는 것: Ability 발동 흐름, Attribute 변화, Effect 적용/태그 처리, 네트워크 동작 방식
-- 구현 가이드: `DOCS/Notes/04/04_GAS_DOCS.md` (마스터 스펙), `DOCS/Notes/04/GAS_STATUS.md` (진행 상황)
+- 구현 가이드: `DOCS/Notes/04/04_GAS_DOCS.md` (마스터 스펙), `DOCS/Notes/04/Status/GAS_STATUS.md` (진행 상황)
 
 ### 4-1단계: GAS 스킬 + Overwatch형 UI
 - GAS 스킬 3종 구현 후 HUD에 쿨타임/상태를 시각화
