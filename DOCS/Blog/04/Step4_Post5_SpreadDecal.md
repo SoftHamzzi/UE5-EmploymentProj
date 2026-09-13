@@ -1,7 +1,7 @@
 # Post 4-5 작성 가이드 — 탄 분포와 탄흔: CDF 역변환 샘플링 + 데칼
 
 > **예상 제목**: `[UE5] 추출 슈터 4-5. 산탄 분포 설계: CDF 역변환 샘플링과 층화 샘플링, 그리고 탄흔 데칼`
-> **참고 문서**: `DOCS/Notes/04/04_GAS_05_Spread.md`, `04_GAS_05_WeaponDecals.md`, `04_GAS_05_WeaponDecals_STATUS.md`
+> **참고 문서**: `DOCS/Notes/04/04_GAS_05A_Spread.md`, `04_GAS_05B_WeaponDecals.md`, `04_GAS_05B_WeaponDecals_STATUS.md`
 
 ---
 
@@ -305,7 +305,7 @@ else if (!HitChar)          // ★ 추가 — 환경(벽/바닥) 히트, 이펙�
 
 ## 참고
 
-- `DOCS/Notes/04/04_GAS_05_Spread.md` — CDF 구현 + 층화 샘플링
-- `DOCS/Notes/04/04_GAS_05_WeaponDecals.md` — 데칼 아키텍처
-- `DOCS/Notes/04/04_GAS_05_WeaponDecals_STATUS.md` — 버그 3종 기록
+- `DOCS/Notes/04/04_GAS_05A_Spread.md` — CDF 구현 + 층화 샘플링
+- `DOCS/Notes/04/04_GAS_05B_WeaponDecals.md` — 데칼 아키텍처
+- `DOCS/Notes/04/04_GAS_05B_WeaponDecals_STATUS.md` — 버그 3종 기록
 - Step 3-2 포스팅 — `ConfirmHitscan` 원래 구조 (이 편에서 계약을 넓힌 대상)

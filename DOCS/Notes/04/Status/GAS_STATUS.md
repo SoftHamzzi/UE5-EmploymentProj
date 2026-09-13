@@ -11,8 +11,8 @@
 - [x] 04_GAS_02 DamagePipeline
 - [x] 04_GAS_03 PrimaryUse
 - [x] 04_GAS_04 Reload (PIE 검수 완료) — `04_GAS_04_Reload_STATUS.md`
-- [x] 04_GAS_05 WeaponDecals (PIE 검수 완료) — `04_GAS_05_WeaponDecals_STATUS.md`
-- [x] 04_GAS_05 Spread CDF (PIE 검수 완료) — `04_GAS_05_Spread_STATUS.md`
+- [x] 04_GAS_05A Spread CDF (PIE 검수 완료) — `04_GAS_05A_Spread_STATUS.md`
+- [x] 04_GAS_05B WeaponDecals (PIE 검수 완료) — `04_GAS_05B_WeaponDecals_STATUS.md`
 - [x] 04_GAS_06 HitZoneDamage (PIE 검수 완료) — `04_GAS_06_HitZoneDamage_STATUS.md`
 - [x] 04_GAS_07 Skills (Step 0~8 완료, `UEPGA_Skill_Base` 마이그레이션 완료, PIE 검수 완료) — `04_GAS_07_Skills_STATUS.md`
 - [x] 04_GAS_08 HUD (4-상태 슬롯 + 중앙 게이지 2종 + `IEPGaugeVisual` 분리 완료, PIE 검수 완료) — `04_GAS_08_HUD_STATUS.md`

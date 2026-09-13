@@ -1,11 +1,11 @@
-# 04_GAS_05_WeaponDecals — 구현 상태
+# 04_GAS_05B_WeaponDecals — 구현 상태
 
 **전체 상태: 완료 (PIE 검수 완료)**
 
 > 세션 시작 시 이 파일을 반드시 읽을 것.
 > 현재 코드 상태의 정확한 스냅샷.
 > 구현 방식: `BP_PlayImpactEffect` BlueprintImplementableEvent + `Spawn Decal at Location` (무기 BP 담당).
-> `04_GAS_05_Spread.md` Section 9의 `ImpactDecal UPROPERTY` 방식은 채택되지 않았음.
+> `04_GAS_05A_Spread.md` Section 9의 `ImpactDecal UPROPERTY` 방식은 채택되지 않았음.
 
 ---
 

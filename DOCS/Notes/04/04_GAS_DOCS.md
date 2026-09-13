@@ -218,8 +218,8 @@ GA는 C++ 클래스. GE는 Blueprint 에셋으로 생성. `Content/Data/GAS/`에
 | 02 | `04_GAS_02_DamagePipeline.md` | ✅ | 피격 → Health 감소 → 0 도달 → `State.Dead` 복제 → 래그돌 |
 | 03 | `04_GAS_03_PrimaryUse.md` | ✅ | 발사 GA 활성화 → FireRate 쿨타임 GE 동작 → 히트 판정 정상 |
 | 04 | `04_GAS_04_Reload.md` | ✅ | 재장전 GA → `State.Reloading` 복제 → 발사 차단 → 탄약 보충 |
-| 05 | `04_GAS_05_WeaponDecals.md` | ✅ | 벽 사격 → 탄흔 데칼 생성. 샷건 다중 탄흔 확인 |
-| 05 | `04_GAS_05_Spread.md` | ✅ | 중심 집중 커브로 산탄총 PelletCount=5 발사 시 중심 밀집 확인 |
+| 05A | `04_GAS_05A_Spread.md` | ✅ | 중심 집중 커브로 산탄총 PelletCount=5 발사 시 중심 밀집 확인 |
+| 05B | `04_GAS_05B_WeaponDecals.md` | ✅ | 벽 사격 → 탄흔 데칼 생성. 샷건 다중 탄흔 확인 |
 | 06 | `04_GAS_06_HitZoneDamage.md` | ✅ | `HitZone.Head` 피격 → 2.5배. 태그 없는 부위 → 1.0x 폴백 |
 | 07 | `04_GAS_07_Skills.md` | ⬜ | Dash/Heal/ShieldOn 각 GA 활성화, 쿨타임 GE 동작, 채널링 피격 취소, State.Shielded 태그 복제 |
 | 08 | `04_GAS_08_HUD.md` (예정) | ⬜ | 체력바/탄약/스킬 쿨타임 UI가 GAS Tag/Attribute 변화에 실시간 반응 |
