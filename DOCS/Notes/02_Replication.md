@@ -286,45 +286,40 @@ CMC는 이동 예측-검증-보정을 자동으로 처리한다:
 3. **서버 보정**: 결과가 다르면 클라이언트에 보정 전송
 4. **클라이언트 리플레이**: 보정 수신 시, 보정 위치에서 미확인 입력을 재실행
 
-### CMC 확장 (Sprint 예시)
+### CMC 확장 (Sprint/ADS 예시)
 
-Sprint 같은 커스텀 상태를 네트워크에서 올바르게 처리하려면 FSavedMove를 확장해야 한다:
+Sprint·ADS 같은 커스텀 이동 상태를 네트워크에서 올바르게 처리하려면 FSavedMove를 확장하여 CompressedFlags로 전송해야 한다.
+Server RPC + UPROPERTY 복제 방식보다 클라 예측-서버 재시뮬레이션이 정확히 일치하여 보정(스냅)이 최소화된다.
 
 ```cpp
-// 커스텀 CMC
+// 커스텀 CMC — FObjectInitializer로 캐릭터 생성자에서 기본 CMC를 교체
 UCLASS()
-class UMyCharacterMovement : public UCharacterMovementComponent
+class UEPCharacterMovement : public UCharacterMovementComponent
 {
     GENERATED_BODY()
 public:
     uint8 bWantsToSprint : 1;
+    uint8 bWantsToAim : 1;
 
-    virtual float GetMaxSpeed() const override
-    {
-        if (bWantsToSprint && IsMovingOnGround())
-            return MaxWalkSpeed * 1.5f;
-        return Super::GetMaxSpeed();
-    }
+    UPROPERTY(EditDefaultsOnly, Category = "Movement")
+    float SprintSpeed = 650.f;
 
-    virtual void UpdateFromCompressedFlags(uint8 Flags) override
-    {
-        Super::UpdateFromCompressedFlags(Flags);
-        bWantsToSprint = (Flags & FSavedMove_Character::FLAG_Custom_0) != 0;
-    }
-
+    virtual float GetMaxSpeed() const override;           // Sprint/ADS 속도 반영
+    virtual void UpdateFromCompressedFlags(uint8 Flags) override; // FLAG_Custom_0/1 복원
     virtual class FNetworkPredictionData_Client* GetPredictionData_Client() const override;
 };
 ```
 
 ```cpp
-// 커스텀 SavedMove
-class FSavedMove_MyCharacter : public FSavedMove_Character
+// 커스텀 SavedMove — Sprint·ADS 플래그를 이동 패킷에 포함
+class FSavedMove_EPCharacter : public FSavedMove_Character
 {
 public:
     uint8 bSavedWantsToSprint : 1;
+    uint8 bSavedWantsToAim : 1;
 
     virtual void Clear() override;
-    virtual uint8 GetCompressedFlags() const override;
+    virtual uint8 GetCompressedFlags() const override;    // FLAG_Custom_0/1 설정
     virtual bool CanCombineWith(const FSavedMovePtr& NewMove, ACharacter* InCharacter,
                                 float MaxDelta) const override;
     virtual void SetMoveFor(ACharacter* C, float InDeltaTime, FVector const& NewAccel,
@@ -343,14 +338,16 @@ public:
 ## 8. EmploymentProj 2단계 구현 체크리스트
 
 - [ ] Character에 `bReplicates = true`, `SetReplicateMovement(true)` 확인
-- [ ] 이동 구현 (CMC 기본: 걷기, 점프)
-  - [ ] 달리기: CMC 확장 또는 `MaxWalkSpeed` 변경 + 상태 복제
-  - [ ] 앉기: `Crouch()`/`UnCrouch()` (CMC 기본 지원)
-  - [ ] 에임(ADS): 이동속도 감소 상태 복제
+- [ ] CMC 확장 (UEPCharacterMovement)
+  - [ ] FSavedMove_EPCharacter + FNetworkPredictionData_Client_EPCharacter 구현
+  - [ ] FObjectInitializer로 기본 CMC 교체
+  - [ ] 달리기: CompressedFlags `FLAG_Custom_0` → `bWantsToSprint`
+  - [ ] 에임(ADS): CompressedFlags `FLAG_Custom_1` → `bWantsToAim`
+  - [ ] 앉기: CMC 기본 지원 (`bCanCrouch = true`)
 - [ ] 복제 프로퍼티 구현
-  - [ ] `bIsSprinting` : `ReplicatedUsing=OnRep_IsSprinting`
   - [ ] `EquippedWeapon` : `Replicated`
   - [ ] `HP` : `ReplicatedUsing=OnRep_HP` (UI 갱신용)
+  - [ ] `CurrentAmmo` : `COND_OwnerOnly`
 - [ ] 사격 RPC 기본 구현
   - [ ] `Server_Fire()` : 서버에서 레이캐스트
   - [ ] `Multicast_PlayFireEffect()` : 총구 이펙트/사운드

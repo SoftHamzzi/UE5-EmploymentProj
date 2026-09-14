@@ -10,6 +10,8 @@ class UInputMappingContext;
 class UInputAction;
 class AEPCharacter;
 
+class UEPCrosshairWidget;
+
 UCLASS()
 class EMPLOYMENTPROJ_API AEPPlayerController : public APlayerController
 {
@@ -22,6 +24,9 @@ public:
 	FORCEINLINE UInputAction* GetLookAction() const { return LookAction; }
 	FORCEINLINE UInputAction* GetJumpAction() const { return JumpAction; }
 	FORCEINLINE UInputAction* GetSprintAction() const { return SprintAction; }
+	FORCEINLINE UInputAction* GetADSAction() const { return ADSAction; }
+	FORCEINLINE UInputAction* GetCrouchAction() const { return CrouchAction; }
+	FORCEINLINE UInputAction* GetFireAction() const { return FireAction; }
 	
 protected:
 	// --- Enhanced Input ---
@@ -42,15 +47,37 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Input")
 	TObjectPtr<UInputAction> SprintAction;
 	
+	UPROPERTY(EditDefaultsOnly, Category = "Input")
+	TObjectPtr<UInputAction> ADSAction;
+	
+	UPROPERTY(EditDefaultsOnly, Category = "Input")
+	TObjectPtr<UInputAction> CrouchAction;
+	
+	UPROPERTY(EditDefaultsOnly, Category = "Input")
+	TObjectPtr<UInputAction> FireAction;
+	
 	// --- 오버라이드 ---
 	virtual void BeginPlay() override;
 	
 	// Input Mapping Context 등록
 	virtual void OnPossess(APawn* InPawn) override;
 	
+private:
+	UPROPERTY(EditDefaultsOnly, Category = "HUD")
+	TSubclassOf<UEPCrosshairWidget> CrosshairWidgetClass;
+	
+	UPROPERTY()
+	TObjectPtr<UEPCrosshairWidget> CrosshairWidget;
+	
+	UPROPERTY(EditDefaultsOnly, Category = "HUD")
+	TObjectPtr<USoundBase> HitConfirmSound;
+	
 public:
 	// --- Client RPC ---
 	// 킬 피드백 (서버 -> 킬러 클라)
 	UFUNCTION(Client, Reliable)
-	void Client_OnKill(AEPCharacter* Victim);
+	void Client_OnKill(const FString& VictimName);
+	
+	UFUNCTION(Client, Unreliable)
+	void Client_PlayHitConfirmSound();
 };

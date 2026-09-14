@@ -8,6 +8,7 @@
 
 class APlayerStart;
 class AEPGameState;
+class AEPWeapon;
 
 UCLASS()
 class EMPLOYMENTPROJ_API AEPGameMode : public AGameMode
@@ -17,30 +18,43 @@ class EMPLOYMENTPROJ_API AEPGameMode : public AGameMode
 public:
 	AEPGameMode();
 
+	// === 함수 ===
 	// --- Exec 테스트 ---
 	// 서버 콘솔에서 호출: 특정 플레이어의 킬 카운트 증가
 	UFUNCTION(Exec)
 	void AddKillToPlayer(int32 PlayerIndex);
 	
+	// --- 선언 ---
+	void OnPlayerKilled(AController* Killer, AController* Victim);
+	
 protected:
+	// === 변수 ===
 	UPROPERTY(EditDefaultsOnly, Category = "Match")
 	float MatchDuration = 300.f; // 이후 30분으로 수정.
 	
 	UPROPERTY(EditDefaultsOnly, Category = "Match")
 	int32 MinPlayersToStart = 1;
 	
-	FTimerHandle MatchTimerHandle;
-
-	UPROPERTY()
-	TObjectPtr<AEPGameState> EPGameState;
-	
 	// 생존 플레이어 수 (서버 전용, 복제 안 함)
 	int32 AlivePlayerCount = 0;
 	
 	UPROPERTY()
+    TObjectPtr<AEPGameState> EPGameState;
+	
+	// 초반에 총을 테스트로 쥐어주기 위한 변수
+	UPROPERTY(EditDefaultsOnly, Category = "Combat")
+	TSubclassOf<AEPWeapon> DefaultWeaponClass;
+	
+	FTimerHandle MatchTimerHandle;
+	
+	UPROPERTY()
 	TArray<AActor*> PlayerStarts;
 	
-	// --- AGameMode 오버라이드 ---
+	UPROPERTY()
+	TSet<TWeakObjectPtr<AActor>> UsedPlayerStarts;
+	
+	// === 함수 ===
+	// --- 오버라이드 ---
 	virtual void BeginPlay() override;
 	
 	// 플레이어 로그인 완료 시
@@ -59,9 +73,7 @@ protected:
 	
 	// 매치 시작 가능 여부
 	virtual bool ReadyToStartMatch_Implementation() override;
-	
-	TSet<TWeakObjectPtr<AActor>> UsedPlayerStarts;
-	
+	virtual void HandleStartingNewPlayer_Implementation(APlayerController* NewPlayer) override;
 	
 	// --- 매치 로직 ---
 	// 매치 타이머 틱 (1초마다)
