@@ -3,7 +3,6 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "DataWrappers/ChaosVDParticleDataWrapper.h"
 #include "GameFramework/Character.h"
 #include "EPCharacter.generated.h"
 
@@ -11,6 +10,7 @@
 class UCameraComponent;
 // --- 전투 ---
 class UEPCombatComponent;
+class UEPServerSideRewindComponent;
 // --- 입력 ---
 class UInputAction;
 struct FInputActionValue;
@@ -26,7 +26,7 @@ class EMPLOYMENTPROJ_API AEPCharacter : public ACharacter
 public:
 	// 기본 CMC 대신 커스텀 CMC 사용
 	AEPCharacter(const FObjectInitializer& ObjectInitializer);
-	
+
 	// --- Getter/Setter ---
 	bool GetIsSprinting() const;
 	bool GetIsAiming() const;
@@ -34,6 +34,8 @@ public:
 	UEPCombatComponent* GetCombatComponent() const;
 	FORCEINLINE USkeletalMeshComponent* GetFaceMesh() const { return FaceMesh; }
 	FORCEINLINE USkeletalMeshComponent* GetOutfitMesh() const { return OutfitMesh; }
+	FORCEINLINE bool IsDead() const { return HP <= 0; }
+	UEPServerSideRewindComponent* GetServerSideRewindComponent() const;
 
 protected:
 	// === 변수 ===
@@ -41,8 +43,13 @@ protected:
 	UCameraComponent* FirstPersonCamera;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat")
 	UEPCombatComponent* CombatComponent;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Rewind")
+	UEPServerSideRewindComponent* RewindComponent;
 	
-	// // --- 메타 휴먼 ---
+	void TickAutoStrafeInputTest(float DeltaSeconds);
+	
+	
+	// --- 메타 휴먼 ---
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "MetaHuman")
 	TObjectPtr<USkeletalMeshComponent> FaceMesh;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "MetaHuman")
@@ -58,6 +65,7 @@ protected:
 	// === 함수 ===
 	// --- 오버라이드 ---
 	virtual void BeginPlay() override;
+	virtual void Tick(float DeltaSeconds) override;
 	
 	// Enhanced Input 바인딩
 	virtual void SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent) override;
@@ -95,6 +103,7 @@ protected:
 	
 	// 발사
 	void Input_Fire(const FInputActionValue& Value);
+	void Input_ToggleAutoStrafeTest();
 	
 	// OnRep
 	UFUNCTION()
@@ -109,7 +118,7 @@ protected:
 private:
 	UFUNCTION(NetMulticast, Unreliable)
 	void Multicast_PlayHitReact();
-	
+
 	UFUNCTION(NetMulticast, Unreliable)
 	void Multicast_PlayPainSound();
 	
@@ -118,4 +127,18 @@ private:
 	
 	UPROPERTY(EditDefaultsOnly, Category = "Combat")
 	TObjectPtr<USoundBase> PainSound;
+
+	// --- 테스트: 로컬 입력 기반 자동 좌우 이동 ---
+	// T 키로 토글. 클라이언트 입력 -> 서버 검증 경로를 그대로 사용한다.
+	UPROPERTY(EditAnywhere, Category = "Debug|NetPrediction")
+	bool bEnableAutoStrafeInputTest = false;
+
+	UPROPERTY(EditAnywhere, Category = "Debug|NetPrediction", meta = (ClampMin = "0.1"))
+	float AutoStrafeSwitchInterval = 3.f;
+
+	UPROPERTY(EditAnywhere, Category = "Debug|NetPrediction", meta = (ClampMin = "0.1"))
+	float AutoStrafeInputScale = 1.0f;
+
+	float AutoStrafeElapsed = 0.f;
+	float AutoStrafeDirectionSign = 1.f;
 };

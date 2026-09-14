@@ -1,43 +1,53 @@
 // Fill out your copyright notice in the Description page of Project Settings.
 
-
 #include "Core/EPCharacter.h"
-#include "Camera/CameraComponent.h"
-#include "Core/EPPlayerController.h"
-#include "Movement/EPCharacterMovement.h"
 
+// 입력
 #include "InputAction.h"
 #include "InputActionValue.h"
 #include "EnhancedInputComponent.h"
-#include "Components/SkeletalMeshComponent.h"
+#include "Movement/EPCharacterMovement.h"
 
+// Combat
 #include "Combat/EPWeapon.h"
 #include "Combat/EPCombatComponent.h"
+#include "Combat/EPServerSideRewindComponent.h"
+
+// Core
+#include "EngineUtils.h"
+#include "Camera/CameraComponent.h"
+#include "Core/EPPlayerController.h"
+#include "Components/SkeletalMeshComponent.h"
 #include "Components/CapsuleComponent.h"
-#include "Core/EPCorpse.h"
+#include "InputCoreTypes.h"
 #include "Core/EPGameMode.h"
 #include "Kismet/GameplayStatics.h"
 #include "Net/UnrealNetwork.h"
-#include "Runtime/AIModule/Classes/AITypes.h"
+#include "GameFramework/GameStateBase.h"
+#include "GameFramework/PlayerState.h"
 
 AEPCharacter::AEPCharacter(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer.SetDefaultSubobjectClass<UEPCharacterMovement>(
 		ACharacter::CharacterMovementComponentName))
 {
+	PrimaryActorTick.bCanEverTick = true;
+	SetNetUpdateFrequency(66.f);
+	SetMinNetUpdateFrequency(33.f);
+	
 	// --- Body Mesh 설정 ---
 	GetMesh()->SetRelativeLocation(FVector(0.f, 0.f, -90.f));
 	GetMesh()->SetRelativeRotation(FRotator(0.f, -90.f, 0.f));
+	GetMesh()->VisibilityBasedAnimTickOption = EVisibilityBasedAnimTickOption::AlwaysTickPoseAndRefreshBones;
 	
 	// 메타휴먼
 	FaceMesh = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("Face"));
 	FaceMesh->SetupAttachment(GetMesh());
-	FaceMesh->SetLeaderPoseComponent(GetMesh());
+	FaceMesh->SetLeaderPoseComponent(GetMesh(), false, true);
 	FaceMesh->bOwnerNoSee = true;
 	
 	OutfitMesh = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("Outfit"));
 	OutfitMesh->SetupAttachment(GetMesh());
 	OutfitMesh->SetLeaderPoseComponent(GetMesh());
-	//OutfitMesh->bOwnerNoSee = true;
 	
 	// --- Camera ---
 	FirstPersonCamera = CreateDefaultSubobject<UCameraComponent>("Camera");
@@ -48,6 +58,7 @@ AEPCharacter::AEPCharacter(const FObjectInitializer& ObjectInitializer)
 	
 	// --- Combat ---
 	CombatComponent = CreateDefaultSubobject<UEPCombatComponent>(TEXT("CombatComponent"));
+	RewindComponent = CreateDefaultSubobject<UEPServerSideRewindComponent>(TEXT("ServerSideRewindComponent"));
 	
 	// --- Movement ---
 	UEPCharacterMovement* Movement = Cast<UEPCharacterMovement>(GetCharacterMovement());
@@ -62,7 +73,7 @@ AEPCharacter::AEPCharacter(const FObjectInitializer& ObjectInitializer)
 void AEPCharacter::BeginPlay()
 {
 	Super::BeginPlay();
-	
+
 	if (IsLocallyControlled())
 	{
 		// GetMesh() 제외한 모든 스켈레탈 메시 컴포넌트 숨김
@@ -75,6 +86,13 @@ void AEPCharacter::BeginPlay()
 				Comp->bOwnerNoSee = true;
 		}
 	}
+}
+
+void AEPCharacter::Tick(float DeltaSeconds)
+{
+	Super::Tick(DeltaSeconds);
+
+	TickAutoStrafeInputTest(DeltaSeconds);
 }
 
 // Enhanced Input 바인딩
@@ -145,9 +163,11 @@ void AEPCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCompone
 	
 	EnhancedInput->BindAction(
 		PC->GetFireAction(),
-		ETriggerEvent::Triggered, this,
+		ETriggerEvent::Started, this,
 		&AEPCharacter::Input_Fire
 	);
+
+	PlayerInputComponent->BindKey(EKeys::T, IE_Pressed, this, &AEPCharacter::Input_ToggleAutoStrafeTest);
 }
 
 UCameraComponent* AEPCharacter::GetCameraComponent() const { return FirstPersonCamera; }
@@ -157,24 +177,29 @@ UEPCombatComponent* AEPCharacter::GetCombatComponent() const
 	return CombatComponent;
 }
 
+UEPServerSideRewindComponent* AEPCharacter::GetServerSideRewindComponent() const
+{
+	return RewindComponent;
+}
+
 float AEPCharacter::TakeDamage(
 	float DamageAmount, struct FDamageEvent const& DamageEvent,
 	class AController* EventInstigator, AActor* DamageCause)
 {
-	if(!HasAuthority()) return 0.f;
-	float ActualDamage = Super::TakeDamage(DamageAmount, DamageEvent,
-		EventInstigator, DamageCause);
-	
-	HP = FMath::Clamp(HP - ActualDamage, 0.f, MaxHP);
-	if (HP <= 0.f) Die(EventInstigator);
-	
+	if (!HasAuthority()) return 0.f;
+
+	HP = FMath::Clamp(HP - DamageAmount, 0.f, static_cast<float>(MaxHP));
+
 	Multicast_PlayHitReact();
 	Multicast_PlayPainSound();
-	
+
 	if (AEPPlayerController* InstigatorPC = Cast<AEPPlayerController>(EventInstigator))
 		InstigatorPC->Client_PlayHitConfirmSound();
-	
-	return ActualDamage;
+
+	if (HP <= 0.f) Die(EventInstigator);
+
+	ForceNetUpdate();
+	return DamageAmount;
 }
 
 void AEPCharacter::Die(AController* Killer)
@@ -308,10 +333,55 @@ void AEPCharacter::Input_UnCrouch(const FInputActionValue& Value)
 void AEPCharacter::Input_Fire(const FInputActionValue& Value)
 {
 	if (!CombatComponent) return;
+	
+	const AGameStateBase* GS = GetWorld()->GetGameState<AGameStateBase>();
+	const float ClientFireTime = GS ? GS->GetServerWorldTimeSeconds()
+									: GetWorld()->GetTimeSeconds();
+	
+	#if !(UE_BUILD_SHIPPING || UE_BUILD_TEST)
+    	for (TActorIterator<AEPCharacter> It(GetWorld()); It; ++It)
+    	{
+    		AEPCharacter* Other = *It;
+    		if (Other == this) continue;
+    		UE_LOG(LogTemp, Log, TEXT("[CLIENT_POS] FireTime=%.3f Actor=%s Pos=%s"),
+    			ClientFireTime, *Other->GetName(), *Other->GetActorLocation().ToString());
+    	}
+    #endif
+	
 	CombatComponent->RequestFire(
 		FirstPersonCamera->GetComponentLocation(),
-		FirstPersonCamera->GetForwardVector()
+		FirstPersonCamera->GetForwardVector(),
+		ClientFireTime
 	);
+	
+}
+
+void AEPCharacter::Input_ToggleAutoStrafeTest()
+{
+	if (!IsLocallyControlled()) return;
+
+	bEnableAutoStrafeInputTest = !bEnableAutoStrafeInputTest;
+	AutoStrafeElapsed = 0.f;
+	AutoStrafeDirectionSign = 1.f;
+
+	UE_LOG(LogTemp, Log, TEXT("[AutoStrafeTest] %s"), bEnableAutoStrafeInputTest ? TEXT("ON") : TEXT("OFF"));
+}
+
+void AEPCharacter::TickAutoStrafeInputTest(float DeltaSeconds)
+{
+	if (!bEnableAutoStrafeInputTest) return;
+	if (!IsLocallyControlled()) return;
+	if (IsDead()) return;
+	if (!Controller) return;
+
+	AutoStrafeElapsed += DeltaSeconds;
+	if (AutoStrafeElapsed >= FMath::Max(0.1f, AutoStrafeSwitchInterval))
+	{
+		AutoStrafeElapsed = 0.f;
+		AutoStrafeDirectionSign *= -1.f;
+	}
+
+	AddMovementInput(GetActorRightVector(), AutoStrafeDirectionSign * AutoStrafeInputScale);
 }
 
 void AEPCharacter::OnRep_HP()
@@ -324,6 +394,16 @@ void AEPCharacter::Multicast_Die_Implementation()
 	GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	GetMesh()->SetCollisionProfileName(TEXT("Ragdoll"));
 	GetMesh()->SetSimulatePhysics(true);
+	GetCharacterMovement()->StopMovementImmediately();
+	GetCharacterMovement()->DisableMovement();
+	
+	if (FaceMesh)
+	{
+		TArray<USceneComponent*> FaceChildren;
+		FaceMesh->GetChildrenComponents(false, FaceChildren);
+		for (USceneComponent* Child : FaceChildren)
+			Child->SetVisibility(false, true);
+	}
 }
 
 void AEPCharacter::Multicast_PlayHitReact_Implementation()
@@ -337,6 +417,7 @@ void AEPCharacter::Multicast_PlayPainSound_Implementation()
 	if (PainSound)
 		UGameplayStatics::PlaySoundAtLocation(this, PainSound, GetActorLocation());
 }
+
 
 void AEPCharacter::GetLifetimeReplicatedProps(TArray<class FLifetimeProperty>& OutLifetimeProps) const
 {

@@ -6,9 +6,9 @@
 #include "Data/EPItemDefinition.h"
 #include "EPWeaponDefinition.generated.h"
 
-/**
- * 
- */
+class AEPProjectile;
+class UCurveFloat;
+
 UCLASS()
 class EMPLOYMENTPROJ_API UEPWeaponDefinition : public UEPItemDefinition
 {
@@ -26,6 +26,17 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Combat")
 	float Damage = 20.f;
 	
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Ballistic")
+	EEPBallisticType BallisticType = EEPBallisticType::Hitscan;
+	
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Ballistic",
+		meta=(EditCondition = "BallisticType != EEPBallisticType::Hitscan"))
+	TSubclassOf<AEPProjectile> ProjectileClass;
+	
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Ballistic",
+		meta=(EditCondition="BallisticType == EEPBallisticType::Hitscan", ClampMin = 1))
+	int32 PelletCount = 1;
+	
 	// 연사 속도 (초당 발수)
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Weapon|Combat")
 	float FireRate = 5.f;
@@ -33,6 +44,9 @@ public:
 	// 최대 탄약
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Combat")
 	uint8 MaxAmmo = 30;
+	
+	// 부위별 대미지(GAS 이후 태그 기반으로 수정)
+	TMap<FName, float> BoneDamageMultiplierMap;
 	
 	// 장전 시간
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Combat")
@@ -57,6 +71,10 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Spread")
 	float MovingSpreadMultiplier = 1.5f;
 	
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Spread",
+		meta=(EditCondition="BallisticType == EEPBallisticType::Hitscan"))
+	TObjectPtr<UCurveFloat> SpreadDistributionCurve;
+	
 	// --- 반동 ---
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Recoil")
 	float RecoilPitch = 0.3f;
@@ -74,6 +92,9 @@ public:
 	// --- 비주얼 ---
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Visual")
 	TSoftObjectPtr<USkeletalMesh> WeaponMesh;
+	
+	// --- 트레이스 ---
+	float TraceDistanceCm = 10000.f;
 	
 	// PrimaryDataAsset Id 오버라이드
 	virtual FPrimaryAssetId GetPrimaryAssetId() const override;

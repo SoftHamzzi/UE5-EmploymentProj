@@ -77,11 +77,12 @@ float AEPWeapon::GetDamage() const
 	return WeaponDef ? WeaponDef->Damage : 0.f;
 }
 
-void AEPWeapon::Fire(FVector& OutDirection)
+void AEPWeapon::Fire(const FVector& AimDir, float ClientFireTime, TArray<FVector>& OutPellets)
 {
 	if (!HasAuthority()) return;
+	if (!WeaponDef) return;
 	
-	CurrentAmmo--;
+	CurrentAmmo = FMath::Max(0, CurrentAmmo - 1);
 	LastFireTime = GetWorld()->GetTimeSeconds();
 	
 	// 퍼짐 누적
@@ -91,11 +92,29 @@ void AEPWeapon::Fire(FVector& OutDirection)
 	);
 	ConsecutiveShots++;
 	
-	// 서버 퍼짐 적용
-	OutDirection = ApplySpread(OutDirection);
-	
-	// 상태 전환
 	WeaponState = EEPWeaponState::Firing;
+	
+	const int32 Count = FMath::Max(1, WeaponDef->PelletCount);
+	OutPellets.Reserve(Count);
+	const float HalfAngle = FMath::DegreesToRadians(CalculateSpread() * 0.5f);
+	
+	FVector Up, Right;
+	AimDir.FindBestAxisVectors(Up, Right);
+	
+	for (int32 i=0; i<Count; i++)
+	{
+		const float R = WeaponDef->SpreadDistributionCurve
+			? WeaponDef->SpreadDistributionCurve->GetFloatValue(FMath::FRand())
+			: FMath::FRand();
+		
+		const float Theta = R * HalfAngle;
+		const float Phi = FMath::FRand() * TWO_PI;
+		OutPellets.Add(
+			AimDir	* FMath::Cos(Theta)
+			+ Up		* FMath::Sin(Theta) * FMath::Cos(Phi)
+			+ Right		* FMath::Sin(Theta) * FMath::Sin(Phi)
+		);
+	}
 	
 	// 탄약 0이면 자동 재장전
 	if (CurrentAmmo <= 0) StartReload();
