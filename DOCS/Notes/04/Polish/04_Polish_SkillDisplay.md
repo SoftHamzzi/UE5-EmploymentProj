@@ -94,7 +94,7 @@ Duration GE의 *제거*는 예측되지 않는다 — 클라는 서버 제거가
 
 | 클라가 GE를 보고… | 늦게 꺼지면 | 판정 | 예 |
 |---|---|---|---|
-| 표시만 한다 | 아이콘이 RTT 더 떠 있음 | GE 유지 | 최대체력 버프 표시 |
+| 표시만 한다 | 아이콘이 RTT 더 떠 있음 — **플레이어가 본다, 허용 안 함** | GE는 남아도 되나 **표시는 GE를 읽지 않는다** — 메시지/로컬 타이머(§1 방식) | 실드 Active 바(이미 메시지 기반) |
 | 서버가 계산하는 값의 재료 | 클라 값은 판정에 안 들어감 | GE 유지 | 실드 피해 경감(`EPAttributeSet` 서버 계산) |
 | **활성화를 게이트한다** | 클라가 RTT 더 막힘 → 입력 거절 | **로컬** | 쿨다운, `Casting` 잠금 |
 | **이동을 예측한다** | CMC 오예측 → 정정 → 버벅 | **로컬** | `GE_Casting`의 `MoveSpeedMultiplier` |
@@ -104,13 +104,21 @@ Duration GE의 *제거*는 예측되지 않는다 — 클라는 서버 제거가
 표시 + 서버 계산이라 유지 — 단 `Shielded` 태그를 `ActivationBlockedTags`로 쓰는 부분은
 게이트이므로 §5 참고.
 
+**표시 행의 뜻:** "GE 유지"는 서버 계산용으로 남겨도 된다는 것이지, 위젯이 GE·태그의 존재를
+보고 켜고 끄라는 게 아니다. 위젯은 §1처럼 **적용 시점의 메시지(Duration)로 로컬 카운트다운**
+해야 아이콘이 제때 꺼진다. 남는 불일치 하나 — 속성 **숫자**(예: 최대체력 2배)는 서버
+리플리케이션이라 RTT 늦게 돌아온다. 아이콘은 꺼졌는데 숫자는 잠깐 남는 셈. 이걸 없애려면
+Duration GE 대신 "Instant 적용 → `WaitDelay` → `NetworkSyncPoint` → Instant 역적용"의
+**시간제 버프 어빌리티**(캐스트 스킬과 같은 뼈대, 역적용도 예측됨)로 가면 된다 —
+Duration GE를 안 쓰기로 하면 그게 표준 패턴이 된다. 지금 그런 버프는 없어 미룬다.
+
 **태그도 같은 규칙이다 — Duration만이 아니라 "서버가 나중에 지우는 GE" 전부.** Infinite GE를
 서버가 `RemoveActiveGameplayEffect`로 끝내도 클라는 리플리케이션이 올 때까지 태그를
 들고 있다. 기준은 GE 종류가 아니라 **클라가 태그의 종료 시점을 스스로 아는가**다:
 
 > 태그의 수명이 **어빌리티의 수명과 같으면**(캐스팅·재장전·아이템 사용) GE로 부여할
-> 이유가 없다 — 어빌리티가 양쪽에서 각자 시작·종료를 아니까 **loose 태그**로
-> `ActivateAbility`/`EndAbility`에 붙였다 뗀다. GE 태그는 **어빌리티보다 오래 사는 상태**
+> 이유가 없다 — 어빌리티가 양쪽에서 각자 시작·종료를 아니까 **`ActivationOwnedTags`**(엔진이
+> `PreActivate`에서 붙이고 `EndAbility`에서 떼는 loose 태그)로 둔다. GE 태그는 **어빌리티보다 오래 사는 상태**
 > (실드 지속, 디버프)에만 쓰고, 그것도 클라 결정의 재료가 아닐 때만.
 
 프로젝트 태그 전수(2026-09-14 grep):
@@ -118,7 +126,7 @@ Duration GE의 *제거*는 예측되지 않는다 — 클라는 서버 제거가
 | 태그 | 부여 → 제거 | 클라 stale | 소비자 | 판정 |
 |---|---|---|---|---|
 | `Cooldown.Skill.*` | `GE_Cooldown` → 만료 | 예 | `ActivationBlockedTags` | §3-5 제거 |
-| `State.Casting` | `GE_Casting` → 서버만 쿼리 제거 | 예 | `ActivationBlockedTags`, 게이지 | §3-4 loose |
+| `State.Casting` | `GE_Casting` → 서버만 쿼리 제거 | 예 | `ActivationBlockedTags`, 게이지 | §3-4 `ActivationOwnedTags` |
 | `State.Reloading` | `GE_Reloading`(`EPGA_Item_Reload.cpp:48-54`) → **서버만** 핸들 제거(`:65-68`) | **예** | `PrimaryUse`/`Reload` `ActivationBlockedTags`, `EPHUDWidget:32-44` | **`Casting`과 같은 구조** — 재장전 끝나고 ~D 동안 발사 불가 + HUD 늦게 꺼짐. §5 무기로 인계 |
 | `State.Shielded` | `GE_ShieldOn` → 만료 | 예 | `ShieldOn` 게이트, `EPAttributeSet:61`(서버) | 게이트만 문제, §5 |
 | `State.UsingItem` | 부여처 없음(BP 또는 미구현) | ? | `Reload` 게이트 | 부여처 확인 |
@@ -214,20 +222,33 @@ private:
 
 | 하던 일 | 소비자 | 대체 |
 |---|---|---|
-| `TAG_State_Casting` 부여 | `ActivationBlockedTags`(전 스킬), `EPCastGaugeWidget` 켜짐/꺼짐 | **Loose 태그** — `ASC->AddLooseGameplayTag()` / `RemoveLooseGameplayTag()`. 복제 안 되고 양쪽 어빌리티 코드가 각자 붙였다 뗀다. 소비자 코드는 **변경 없음** |
+| `TAG_State_Casting` 부여 | `ActivationBlockedTags`(전 스킬), `EPCastGaugeWidget` 켜짐/꺼짐 | **`ActivationOwnedTags`** — 엔진이 `PreActivate`에서 loose 태그로 붙이고(`GameplayAbility.cpp:983`) `EndAbility`에서 뗀다(`:870`), 양쪽 각자. 소비자 코드는 **변경 없음** |
 | `MoveSpeedMultiplier` 모디파이어 | `EPCharacterMovement::GetMaxSpeed()` | `LocalModifiers.Set(Modifier.MoveSpeed.Casting, GetCastMoveSpeedMultiplier())` (§3-3) |
 | `CastTime` 뒤 자동 만료 | — | 이미 `WaitDelay` 태스크가 그 시점을 안다. `EndAbility`에서 태그 제거 + `Clear` |
 
 ```cpp
-// ActivateAbility (CastTime > 0 분기)
-ASC->AddLooseGameplayTag(TAG_State_Casting);
+// CastTime > 0 인 스킬의 생성자 (지금은 Heal) — 즉시 발동형에 넣으면 한 프레임 깜빡인다
+ActivationOwnedTags.AddTag(EmpGameplayTags::TAG_State_Casting);
+
+// ActivateAbility (CastTime > 0 분기) — 태그는 엔진이 이미 붙였다
 Char->LocalModifiers.Set(TAG_Modifier_MoveSpeed_Casting, GetCastMoveSpeedMultiplier());   // 서브클래스 훅, 기본 1
 BroadcastDurationMessage(TAG_State_Casting, CastTime);
 
 // EndAbility (모든 경로: 완료·피격취소·서버거절) — IsNetAuthority 가드 없음, 양쪽 다
-ASC->RemoveLooseGameplayTag(TAG_State_Casting);
 Char->LocalModifiers.Clear(TAG_Modifier_MoveSpeed_Casting);
+// 태그 제거는 Super::EndAbility가 한다
 ```
+
+**왜 손으로 `AddLooseGameplayTag`하지 않고 `ActivationOwnedTags`인가.** 그게 정확히 이 용도로
+있는 엔진 기능이다 — "어빌리티가 활성인 동안 오너에게 붙는 태그". 붙이고 떼는 코드를
+우리가 안 쓰니 빠뜨릴 수 없고, 서버 거절(`K2_EndAbility`)·피격 취소·정상 종료 어느 경로든
+엔진 `EndAbility`가 뗀다. 기본 설정 `ReplicateActivationOwnedTags = true`
+(`GameplayAbilitiesDeveloperSettings.h:76`, 프로젝트 미변경)면 `CountToOwner`로 복제되어
+**시뮬레이티드 프록시도 `Casting`을 본다** — 손 loose 태그로는 못 얻는 것. 오너 클라는
+자기 로컬 카운트에 서버 카운트가 `SetTagMapCount`로 **덮어써지는** 식이라(`GameplayEffectTypes.cpp:1743`)
+로컬 제거가 먼저 반영되고 서버 제거는 같은 값을 다시 쓸 뿐 — 예측이 깨지지 않는다.
+단 `CastTime < RTT`면 서버의 "추가" 복제가 클라의 로컬 제거 **뒤에** 도착해 한 번 깜빡일
+수 있다(§3-9). Heal 3초엔 해당 없음.
 
 `ConfigureCastingSpec()` 훅은 `GetCastMoveSpeedMultiplier()`로 바뀐다 — Heal만 오버라이드.
 `GE_CastingClass` 필드와 에셋은 제거. `EndAbility`의 `IsNetAuthority()` 가드(현재 캐스팅 GE
@@ -274,7 +295,7 @@ GAS가 예측 GE를 되돌릴 때 쓰는 바로 그 훅이다(`GameplayPredictio
 ```cpp
 bool UEPGA_Skill_Base::CanActivateAbility(Handle, ActorInfo, SourceTags, TargetTags, OptionalRelevantTags) const
 {
-    if (!Super::CanActivateAbility(...)) return false;        // Casting(loose)/Dead/Shielded 태그 차단은 그대로
+    if (!Super::CanActivateAbility(...)) return false;        // Casting(ActivationOwnedTags)/Dead/Shielded 태그 차단은 그대로
     if (UAbilitySystemGlobals::Get().ShouldIgnoreCooldowns()) return true;   // AbilitySystem.IgnoreCooldowns 치트 존중
 
     const float Now  = ActorInfo->OwnerActor->GetWorld()->GetTimeSeconds();
@@ -329,15 +350,15 @@ GAS 표준 흐름이 재검증 왕복을 해준다: 클라 `TryActivateAbility` 
 | `SetCooldownTag(Tag)` | `ActivationBlockedTags` 추가 + 채널 저장 | **제거.** `CooldownChannelTag`를 `ActiveChannelTag`처럼 protected 필드로, 생성자에서 대입 |
 | `TAG_Cooldown_Skill_*` | 차단 태그 겸 방송 채널 | **방송 채널만** |
 | `GE_CooldownClass` / `GE_Cooldown_*` 에셋 | 게이트의 실체 | **제거** |
-| `GE_CastingClass` / `GE_Casting` 에셋 | 잠금 + 이동 배율 | **제거** → loose 태그 + `LocalModifiers`(§3-4) |
+| `GE_CastingClass` / `GE_Casting` 에셋 | 잠금 + 이동 배율 | **제거** → `ActivationOwnedTags` + `LocalModifiers`(§3-4) |
 | `ConfigureCastingSpec(Spec)` 훅 | Heal이 SetByCaller 배율 | `GetCastMoveSpeedMultiplier()` 훅, 기본 1 |
 | `ApplyCooldownGE()` | GE 적용 + 방송, 서브클래스 호출 | **제거.** `CompleteCast()`가 스탬프 + 방송 |
 | 세 스킬 `OnCastComplete()` 마지막 줄 | `ApplyCooldownGE();` | **줄 삭제** |
 | `Cooldown` 필드 | GE SetByCaller 값 | `GetEffectiveCooldown()`의 기준값 |
-| `EndAbility` | 서버만 캐스팅 GE 제거 | 양쪽: loose 태그 제거 + `Clear`. (`Revert()`는 여기가 아니라 예측 키 델리게이트 — §3-5) |
-| `ActivationBlockedTags`의 `Casting`/`Dead`/`Shielded` | 유지 | 유지. `Casting`은 이제 loose 태그가 채운다 |
+| `EndAbility` | 서버만 캐스팅 GE 제거 | 양쪽: `LocalModifiers.Clear` (태그는 `Super`가 뗀다. `Revert()`는 여기가 아니라 예측 키 델리게이트 — §3-5) |
+| `ActivationBlockedTags`의 `Casting`/`Dead`/`Shielded` | 유지 | 유지. `Casting`은 이제 `ActivationOwnedTags`가 채운다 |
 | `EPCharacterMovement::GetMaxSpeed()` | 속성만 | 속성 × `Product(Modifier.MoveSpeed)` |
-| 위젯 | 메시지 구독 + `Casting` 태그 이벤트 | **변경 없음** (loose 태그도 같은 이벤트를 쏜다) |
+| 위젯 | 메시지 구독 + `Casting` 태그 이벤트 | **변경 없음** (loose 태그도 같은 태그 이벤트를 쏜다) |
 | 신규 | — | `FEPLocalTimer`, `FEPLocalModifiers`(`AEPCharacter` 멤버), 속성 `CooldownFlatReduction`/`CooldownPctReduction`, 태그 `Modifier.MoveSpeed.Casting`/`Modifier.CooldownRate`, `ServerCooldownTolerance`, `CompleteCast()`, `GetEffectiveCooldown()` |
 | Rate 변경 시 표시 | — | 배율을 `Set`/`Clear`하는 어빌리티가 **먼저** 각 스킬의 `CooldownTimer.Bank(Now, 옛 Rate)`를 부르고, 그 다음 `BroadcastDurationMessage(채널, GetRemaining/새 Rate)`를 다시 쏜다. 위젯은 새 메시지로 다시 셀 뿐. 스킬 목록 순회는 `ASC->GetActivatableAbilities()`에서 `UEPGA_Skill_Base` 캐스트 |
 
@@ -345,7 +366,8 @@ GAS 표준 흐름이 재검증 왕복을 해준다: 클라 `TryActivateAbility` 
 
 - [ ] `GAS/EPLocalTimer.h` — §3-1 API, UObject 의존 없음
 - [ ] `Core/EPLocalModifiers.h` — `Set/Clear/Product`, `AEPCharacter` 멤버
-- [ ] `EPGA_Skill_Base` — `CooldownTimer`, `CompleteCast()`, `GetEffectiveCooldown()`, `CanActivateAbility` 오버라이드, loose 태그 + 모디파이어 Set/Clear, `OnActivationRejected()` + `NewRejectedDelegate` 바인딩
+- [ ] `EPGA_Skill_Base` — `CooldownTimer`, `CompleteCast()`, `GetEffectiveCooldown()`, `CanActivateAbility` 오버라이드, 모디파이어 Set/Clear, `OnActivationRejected()` + `NewRejectedDelegate` 바인딩
+- [ ] `EPGA_Skill_Heal` 생성자 — `ActivationOwnedTags.AddTag(TAG_State_Casting)`
 - [ ] `EPCharacterMovement::GetMaxSpeed()` 로컬 배율 곱
 - [ ] 속성 2개 추가(`COND_None` 기존 규칙대로), 태그 2계층 등록
 - [ ] `SetCooldownTag`/`ApplyCooldownGE`/`GE_CooldownClass`/`GE_CastingClass`/`ConfigureCastingSpec` 제거, 에셋 참조 정리, Dash/Heal/ShieldOn 컴파일
@@ -357,10 +379,11 @@ GAS 표준 흐름이 재검증 왕복을 해준다: 클라 `TryActivateAbility` 
 | 함정 | 대응 |
 |---|---|
 | 서버가 거절한 활성화(롤백)인데 클라는 이미 찍었다 — 즉시 발동형은 `ActivateAbility` 안에서 바로 `CompleteCast()` | 예측 키 Rejected 델리게이트 → `Revert()`(§3-5). `EndAbility`에 걸면 즉시 발동형에선 **안 불린다**. 캐스트 중 피격 취소는 아직 `Start()` 전이라 무관. 위젯은 쿨다운 방송을 받은 채 남는다 — 리셋 메시지는 **이번엔 안 만든다**, 거절이 `Tolerance`로 드물어진다. 검증에서 빈도 확인 |
-| 롤백인데 loose 태그·모디파이어가 남는다 | 캐스트형은 거절 시점에 아직 활성이라 `K2_EndAbility()` → 우리 `EndAbility`가 지난다. `IsNetAuthority()` 가드를 남기면 클라에서 안 지워진다 — **가드를 빼는 게 이 변경의 일부** |
+| 롤백인데 모디파이어가 남는다 | 캐스트형은 거절 시점에 아직 활성이라 `K2_EndAbility()` → 우리 `EndAbility`가 지난다. `IsNetAuthority()` 가드를 남기면 클라에서 안 지워진다 — **가드를 빼는 게 이 변경의 일부**. 태그는 엔진이 뗀다 |
 | **짧은 쿨다운 + 패킷 로스** — 캐스트 완료 신호와 다음 활성화가 둘 다 reliable RPC라 같은 채널에서 순서 보장. 신호가 유실·재전송되는 사이에 `Cooldown`이 지나면 활성화 RPC가 신호 **뒤에 줄을 서서 같이 도착** → 서버 경과 0 → 거절 | `Cooldown < 재전송 지연(~RTT)`일 때만. 스킬(초 단위)엔 해당 없음. **무기 연사(0.1s대)로 인계** — `Tolerance`로는 못 막고, 어떤 방식이든 같은 조건에서 같은 일이 난다 |
-| **loose 태그는 다른 클라에 안 간다** — `GE_Casting`의 태그는 리플리케이트됐지만 loose 태그는 로컬 전용. 시뮬레이티드 프록시는 `Casting`을 모른다 | 지금 소비자 없음(`TAG_State_Casting` 읽는 곳: `EPGA_Skill_Base`와 태그 정의뿐, 2026-09-14 grep). "상대 캐스팅 중" 애니/HUD가 생기면 별도 코스메틱 복제 채널로 — `AddReplicatedLooseGameplayTag`는 **쓰지 않는다**, 오너에게도 리플리케이트본이 와서 D 지연이 되돌아온다 |
-| loose 태그는 `RemoveLooseGameplayTag`가 카운트 기반 | 같은 태그를 두 어빌리티가 동시에 붙이면 하나 떼도 남는다. 지금은 `Casting`이 `ActivationBlockedTags`라 동시 캐스팅이 불가 — 성립. 나중에 동시 캐스팅을 허용하면 카운트가 맞는지 확인 |
+| `ActivationOwnedTags` 복제가 오너의 로컬 카운트를 **덮어쓴다**(`SetTagMapCount`) | 같은 태그를 다른 소스(다른 어빌리티, 손 loose 태그)가 동시에 붙이면 서버 값으로 덮여 카운트가 틀어진다. `Casting`은 `ActivationBlockedTags`라 동시 캐스팅 불가 — 성립. **같은 태그를 두 경로로 붙이지 말 것** |
+| `CastTime < RTT`면 오너에서 한 번 깜빡인다 — 서버의 "추가" 복제가 클라의 로컬 제거 뒤에 도착해 카운트 1을 다시 쓰고, 서버 제거 복제가 D 뒤에 0으로 되돌린다 | Heal 3초엔 무관. 0.3초 미만 캐스트가 생기면 그 스킬만 `ReplicateActivationOwnedTags`를 끄거나(전역 설정이라 전부 꺼진다) 손 loose 태그(`None`)로 |
+| 즉시 발동형에 `ActivationOwnedTags`를 넣으면 같은 프레임에 붙었다 떨어져 게이지가 한 프레임 깜빡인다 | `CastTime > 0`인 스킬 생성자에만 넣는다(§3-4). 베이스 생성자엔 넣지 않는다 |
 | 클라가 `LocalModifiers`/타이머를 조작 | 서버는 서버 값만 본다. 이동 배율 조작은 CMC 서버 재현에서 정정된다(지금 Sprint와 같은 신뢰 수준) |
 | 어빌리티 인스턴스가 재생성되면 타이머 초기화 | 재부여는 장비 교체 등 명시적 이벤트뿐. 쿨다운 리셋이 맞는지는 **기획 결정** — 아니면 `FEPLocalTimer`를 `AEPCharacter`로 올린다(값 타입이라 옮기기 쉽다) |
 | `Cooldown == 0` | `IsElapsed`가 `Remaining <= 0`이라 항상 통과 |
@@ -397,20 +420,23 @@ GAS 표준 흐름이 재검증 왕복을 해준다: 클라 `TryActivateAbility` 
 - **캐스팅 이동의 서버 쪽 U** — §3-4. 캐스팅 비트를 `FSavedMove` `FLAG_Custom_2`에 싣는다.
   `04_Polish_Movement.md`에서 Sprint/Aim과 같은 패턴으로.
 - **`TAG_State_Shielded` 차단** — 실드 GE 제거도 비예측이라 `ShieldOn` 재발동이 RTT 더
-  막힌다. `Cooldown > ShieldDuration + RTT`인 한 실질 영향 없음. 값이 바뀌면 `Casting`과
-  같은 방식(loose 태그 + `FEPLocalTimer`)으로 — 이미 준비된 패턴이라 비용은 작다.
-- **`bServerRespectsRemoteAbilityCancellation = false` 재검토** — 피격 취소가 클라에서만
-  나고 서버는 캐스트를 완주한다(현재 설정). 서버만 쿨다운을 찍고 클라는 안 찍으면 클라가
-  먼저 준비돼 다음 활성화가 **거절**된다 — GE 때도 같은 불일치가 있었지만 로컬 타이머는
-  이걸 정확히 거절로 드러낸다. 피해는 서버가 주므로 취소 판정도 서버가 하는 게 맞다:
-  클라 취소를 예측만 하고(`bServerRespects... = true`) 서버가 자기 `TAG_Event_Damaged`로
-  취소하거나, 아예 클라 취소를 빼고 서버 취소를 `EndAbility` 리플리케이션으로 받는다.
-  §4-1 거절 빈도에 이 원인이 섞이므로 검증 전에 결정.
+  막힌다. `Cooldown > ShieldDuration + RTT`인 한 실질 영향 없음. Duration GE를 전면 안 쓰기로
+  하면 §3-0의 "시간제 버프 어빌리티"(어빌리티가 `ShieldDuration` 동안 활성, `ActivationOwnedTags`에
+  `Shielded`, Instant 적용/역적용)로 — 이미 준비된 패턴이라 비용은 작다.
+- **피격 취소는 이미 서버 판정이다 — 손댈 것 없음.** `TAG_Event_Damaged`는 서버의
+  `PostGameplayEffectExecute`에서만 발송된다(`EPAttributeSet.cpp:76`, 피해 GE는 예측 안 됨).
+  서버 `WaitGameplayEvent` → `EndAbility(bReplicateEndAbility=true, cancel)` →
+  `ReplicateEndOrCancelAbility` → `ClientCancelAbility` → 클라 종료. 클라의 `WaitGameplayEvent`는
+  울릴 일이 없다. `bServerRespectsRemoteAbilityCancellation`(클라→서버 취소 RPC 수용 여부)은
+  이 경로와 무관. 양쪽 다 쿨다운을 안 찍으므로 로컬 타이머와도 불일치 없음. 클라가 취소를
+  ~D 늦게 보는 건 서버 판정의 본질적 지연이라 수용. (2026-09-14, 앞선 "클라만 취소한다"는
+  추정은 틀렸음 — 정정.)
 - **Heal 캐스팅 CMC 버벅거림** — §4-5에서 같이 본다. 남으면 `Issue/CastMoveSpeedStutter_GECooldownPrediction.md` 갱신.
-- **`State.Reloading` — loose 태그로** (`04_Polish_WeaponFireRate.md` 첫 항목). `GE_Reloading`을
-  없애고 `EPGA_Item_Reload`의 `ActivateAbility`/`EndAbility`에서 양쪽이 각자 붙였다 뗀다 —
-  §3-4 `Casting`과 동일. `IsNetAuthority()` 가드(`:65`)도 같이 제거. `EPHUDWidget`은 태그
-  이벤트를 그대로 받으므로 변경 없음.
+- **`State.Reloading` — `ActivationOwnedTags`로** (`04_Polish_WeaponFireRate.md` 첫 항목).
+  `GE_Reloading`을 없애고 `EPGA_Item_Reload` 생성자에 `ActivationOwnedTags.AddTag(TAG_State_Reloading)`
+  — 재장전 어빌리티가 재장전 내내 활성이라 정확히 맞는다. §3-4 `Casting`과 동일. `IsNetAuthority()`
+  가드(`:65`)와 핸들 제거 코드도 같이 사라진다. `EPHUDWidget`은 태그 이벤트를 그대로 받으므로
+  변경 없음.
 - **무기 연사 쿨다운** — `04_Polish_WeaponFireRate.md`. `FEPLocalTimer`를 그대로 가져다
   쓴다(`UEPGA_Item_PrimaryUse`는 `UGameplayAbility` 직계라 상속으로는 못 받는다 — 값
   타입으로 뺀 이유). **단 위치는 어빌리티가 아니라 무기 인스턴스**(`AEPWeapon` 또는

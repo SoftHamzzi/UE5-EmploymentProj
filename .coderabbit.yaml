@@ -1,0 +1,50 @@
+# CodeRabbit 설정 — https://docs.coderabbit.ai/reference/configuration
+# CLAUDE.md는 knowledge_base.code_guidelines 기본 패턴(**/CLAUDE.md)에 포함돼 자동으로 읽힌다.
+# 여기엔 CLAUDE.md에 없는 것(리뷰 범위·초점·도구)만 둔다.
+
+language: ko-KR
+
+reviews:
+  profile: chill
+  review_status: true
+  request_changes_workflow: false
+  high_level_summary: true
+  poem: false
+  collapse_walkthrough: true
+
+  auto_review:
+    enabled: true
+    drafts: false
+    # 기본 브랜치(main)는 항상 리뷰. 단계 브랜치를 base로 하는 PR(gas-polish → loot 등)도 받는다.
+    base_branches:
+      - "feature-.*"
+
+  path_filters:
+    - "!EmploymentProj/Content/**"
+    - "!EmploymentProj/Saved/**"
+    - "!EmploymentProj/Intermediate/**"
+    - "!EmploymentProj/DerivedDataCache/**"
+    - "!EmploymentProj/Binaries/**"
+    - "!.claude/**"
+
+  path_instructions:
+    - path: "EmploymentProj/Source/**/*.{h,cpp}"
+      instructions: |
+        UE5 C++ 데디케이티드 서버 프로젝트. 관례는 저장소 루트 CLAUDE.md의 Conventions 항목을 따른다.
+        리뷰 초점:
+        - 네트워크 경계: 서버 전용이어야 할 코드에 권한 가드가 빠졌는지, 클라이언트 예측과
+          서버 확정이 어긋날 수 있는 지점(GE 제거·태그 수명·타이머)이 있는지.
+        - UPROPERTY/UFUNCTION 누락으로 GC나 리플렉션이 깨질 수 있는 멤버.
+        - 라이프사이클: 델리게이트/타이머 바인딩의 해제 누락, EndAbility 경로 누락.
+        하지 않을 것: 스타일·네이밍·포맷 제안, 요청 범위 밖 리팩터링 제안, 엔진 매크로에 대한
+        일반 C++ 관점의 경고(예: 초기화되지 않은 GENERATED_BODY 멤버).
+    - path: "DOCS/**/*.md"
+      instructions: |
+        한국어 설계·상태 문서. 지적할 것은 하나뿐이다 — 문서가 인용하는 코드(파일:줄, 함수명,
+        필드명)가 이 PR의 실제 코드와 다른 경우. 문체·맞춤법·마크다운 형식·길이는 지적하지 않는다.
+
+  tools:
+    cppcheck:
+      enabled: false        # UE 리플렉션 매크로에 오탐이 많다
+    markdownlint:
+      enabled: false        # DOCS 문체 노이즈 방지
