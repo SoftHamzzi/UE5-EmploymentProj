@@ -4,10 +4,13 @@
 
 #include "CoreMinimal.h"
 #include "Data/EPItemDefinition.h"
+#include "GameplayTagContainer.h"
 #include "EPWeaponDefinition.generated.h"
 
 class AEPProjectile;
 class UCurveFloat;
+class UEPGA_Item_PrimaryUse;
+class UGameplayAbility;
 
 UCLASS()
 class EMPLOYMENTPROJ_API UEPWeaponDefinition : public UEPItemDefinition
@@ -15,6 +18,10 @@ class EMPLOYMENTPROJ_API UEPWeaponDefinition : public UEPItemDefinition
 	GENERATED_BODY()
 	
 public:
+	// --- GAS ---
+	UPROPERTY(EditDefaultsOnly, Category = "GAS")
+	TArray<TSubclassOf<UGameplayAbility>> WeaponAbilities;
+	
 	// --- 기본 ---
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon")
 	FName WeaponName;
@@ -45,8 +52,8 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Combat")
 	uint8 MaxAmmo = 30;
 	
-	// 부위별 대미지(GAS 이후 태그 기반으로 수정)
-	TMap<FName, float> BoneDamageMultiplierMap;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Combat")
+	TMap<FGameplayTag, float> TagDamageMultiplierMap;
 	
 	// 장전 시간
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Combat")

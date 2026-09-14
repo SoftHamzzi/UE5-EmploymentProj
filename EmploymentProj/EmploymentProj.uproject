@@ -13,7 +13,8 @@
 				"CoreUObject",
 				"UMG",
 				"DeveloperSettings",
-				"PhysicsCore"
+				"PhysicsCore",
+				"GameplayAbilities"
 			]
 		}
 	],
@@ -39,6 +40,10 @@
 		},
 		{
 			"Name": "AnimationWarping",
+			"Enabled": true
+		},
+		{
+			"Name": "GameplayAbilities",
 			"Enabled": true
 		}
 	]

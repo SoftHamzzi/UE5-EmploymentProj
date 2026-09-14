@@ -9,7 +9,8 @@
 class UInputMappingContext;
 class UInputAction;
 class AEPCharacter;
-
+class UEPHUDWidget;
+class UAbilitySystemComponent;
 class UEPCrosshairWidget;
 
 UCLASS()
@@ -27,6 +28,20 @@ public:
 	FORCEINLINE UInputAction* GetADSAction() const { return ADSAction; }
 	FORCEINLINE UInputAction* GetCrouchAction() const { return CrouchAction; }
 	FORCEINLINE UInputAction* GetFireAction() const { return FireAction; }
+	FORCEINLINE UInputAction* GetReloadAction() const { return ReloadAction; }
+	FORCEINLINE UInputAction* GetDashAction() const { return DashAction; }
+	FORCEINLINE UInputAction* GetHealAction() const { return HealAction; }
+	FORCEINLINE UInputAction* GetShieldAction() const { return ShieldAction; }
+	
+	void InitHUD(UAbilitySystemComponent* InASC);
+	
+	// --- Client RPC ---
+	// 킬 피드백 (서버 -> 킬러 클라)
+	UFUNCTION(Client, Reliable)
+	void Client_OnKill(const FString& VictimName);
+	
+	UFUNCTION(Client, Unreliable)
+	void Client_PlayHitConfirmSound();
 	
 protected:
 	// --- Enhanced Input ---
@@ -56,6 +71,18 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Input")
 	TObjectPtr<UInputAction> FireAction;
 	
+	UPROPERTY(EditDefaultsOnly, Category = "Input")
+	TObjectPtr<UInputAction> ReloadAction;
+	
+	UPROPERTY(EditDefaultsOnly, Category = "Input")
+	TObjectPtr<UInputAction> DashAction;
+	
+	UPROPERTY(EditDefaultsOnly, Category = "Input")
+	TObjectPtr<UInputAction> HealAction;
+	
+	UPROPERTY(EditDefaultsOnly, Category = "Input")
+	TObjectPtr<UInputAction> ShieldAction;
+	
 	// --- 오버라이드 ---
 	virtual void BeginPlay() override;
 	
@@ -72,12 +99,12 @@ private:
 	UPROPERTY(EditDefaultsOnly, Category = "HUD")
 	TObjectPtr<USoundBase> HitConfirmSound;
 	
-public:
-	// --- Client RPC ---
-	// 킬 피드백 (서버 -> 킬러 클라)
-	UFUNCTION(Client, Reliable)
-	void Client_OnKill(const FString& VictimName);
+	UPROPERTY(EditDefaultsOnly, Category = "HUD")
+	TObjectPtr<USoundBase> KillConfirmSound;
 	
-	UFUNCTION(Client, Unreliable)
-	void Client_PlayHitConfirmSound();
+	UPROPERTY(EditDefaultsOnly, Category = "HUD")
+	TSubclassOf<UEPHUDWidget> HUDWidgetClass;
+	
+	UPROPERTY()
+	TObjectPtr<UEPHUDWidget> HUDWidget;
 };

@@ -4,17 +4,26 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/PlayerState.h"
+#include "AbilitySystemInterface.h"
 #include "EPPlayerState.generated.h"
 
+class UAbilitySystemComponent;
+class UEPAttributeSet;
+struct FOnAttributeChangeData;
+
 UCLASS()
-class EMPLOYMENTPROJ_API AEPPlayerState : public APlayerState
+class EMPLOYMENTPROJ_API AEPPlayerState : public APlayerState, public IAbilitySystemInterface
 {
 	GENERATED_BODY()
 	
 public:
+	// === 변수 ===
+	// === 함수 ===
 	AEPPlayerState();
 	
-	// --- Getter ---
+	virtual UAbilitySystemComponent* GetAbilitySystemComponent() const override;
+	UEPAttributeSet* GetAttributeSet() const { return AttributeSet; }
+	
 	int32 GetKillCount() const { return KillCount; }
 	
 	// --- 서버 전용 함수
@@ -22,9 +31,7 @@ public:
 	void SetExtracted(bool bExtracted);
 	
 protected:
-	// --- 복제 변수 ---
-	// COND_OwnerOnly: 본인에게만 복제 (타인은 모름)
-	
+	// === 변수 ===
 	// 킬 수 (본인만 앎)
 	UPROPERTY(ReplicatedUsing = OnRep_KillCount)
 	int32 KillCount = 0;
@@ -33,13 +40,25 @@ protected:
 	UPROPERTY(ReplicatedUsing = OnRep_IsExtracted)
 	bool bIsExtracted = false;
 	
-	// --- OnRep 콜백 ---
+	// === 함수 ===
+	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+	FDelegateHandle HealthChangedDelegateHandle;
+	
+	void HealthChanged(const FOnAttributeChangeData& Data);
+	
 	UFUNCTION()
 	void OnRep_KillCount();
 	
 	UFUNCTION()
 	void OnRep_IsExtracted();
 	
-protected:
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+	
+private:
+	UPROPERTY(VisibleAnywhere, Category = "GAS")
+	TObjectPtr<UAbilitySystemComponent> ASC;
+	
+	UPROPERTY()
+	TObjectPtr<UEPAttributeSet> AttributeSet;
 };

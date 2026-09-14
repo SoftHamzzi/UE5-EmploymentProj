@@ -27,6 +27,8 @@ public:
 	UPROPERTY(EditDefaultsOnly, Category = "Movement")
 	float AimSpeed = 200.f;
 	
+	float MoveSpeedMultiplier = 1.f;
+	
 	// 서버 NewMove 완료 델리게이트 — SSR 등이 구독
 	FEPOnServerMoveProcessed OnServerMoveProcessed;
 

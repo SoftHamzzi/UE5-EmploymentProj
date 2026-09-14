@@ -78,24 +78,38 @@
 
 **Hit Validation (서버 권한 검증)**
 - 클라는 "이 시점에 이 방향으로 쐈다"만 전송
-- 서버가 레이캐스트로 판정
 - RPC: `Server_Fire(FVector_NetQuantize Origin, FVector_NetQuantizeNormal Dir, float ClientFireTime)`
+- 서버 독립 검증 3단계: FireRate(LastServerFireTime), 탄약/무기 상태(CanFire), Origin drift(200cm)
+- `EEPBallisticType`으로 히트스캔/투사체 분기 — 데이터로 탄도 방식 결정
 
 **Lag Compensation (서버 리와인드)**
-- 서버에서 각 캐릭터의 과거 위치/회전 캡슐을 링버퍼로 저장 (100ms 간격, 1~2초치)
-- ClientFireTime을 서버 시간으로 환산
-- 해당 시각의 히트박스 복원 -> 레이캐스트 -> 판정 후 원상복구
+- `UEPServerSideRewindComponent`: 본 기반 히트박스 스냅샷을 시간 오름차순 배열로 저장
+- 스냅샷 저장 시점: `CMC::OnMovementUpdated` → `MarkPositionUpdated()` → `TG_PostPhysics`에서 저장 (위치 갱신 보장)
+- `ConfirmHitscan`: ClientFireTime 기준 보간 → 히트박스 복원 → 레이캐스트 → 판정 후 원상복구
 
 **Reconciliation (보정)**
 - 서버에서 확정 이벤트 전송
 - 클라는 결과에 맞게 VFX/사운드 정리
 
 ### 4단계: GAS (스킬 시스템)
-- AttributeSet: HP, Stamina, Shield
+- AttributeSet: HP (Stamina/Shield 어트리뷰트 없음 — 스태미나 폐기, Shield는 State.Shielded 태그 기반 50% 감산)
 - GameplayEffect: 데미지, 힐, 버프
 - GameplayAbility: Dash, Heal, ShieldOn (3개면 충분)
 - 면접에서 보는 것: Ability 발동 흐름, Attribute 변화, Effect 적용/태그 처리, 네트워크 동작 방식
-- 구현 가이드: `DOCS/Notes/04_GAS.md`, `DOCS/Notes/04_Implementation.md`
+- 구현 가이드: `DOCS/Notes/04/04_GAS_DOCS.md` (마스터 스펙), `DOCS/Notes/04/GAS_STATUS.md` (진행 상황)
+
+### 4-1단계: GAS 스킬 + Overwatch형 UI
+- GAS 스킬 3종 구현 후 HUD에 쿨타임/상태를 시각화
+- **UI 참고: 오버워치** (캐릭터 초상화 제외)
+  - 크로스헤어
+  - 체력바 (화면 하단, 숫자 + 바)
+  - 탄약 카운터 (현재/최대)
+  - 스킬 아이콘 + 쿨타임 오버레이
+  - 장전 중 표시
+  - 킬 피드 (우측 상단)
+  - 라운드 타이머
+- GAS Tag 기반으로 UI 연동: `State.Reloading`, `State.UsingItem` 등 태그로 위젯 상태 갱신
+- UMG + C++ (BindWidget) 구조 권장
 
 ### 5단계: Persistence (영속 데이터)
 - 4단계까지 완료 후 진행
@@ -179,18 +193,20 @@
 
 ## 5. 실행 순서 (압축)
 
-1. 싱글에서 매치 흐름 (GameMode/GameState)
-2. 멀티 접속/랜덤 스폰/이동 (기본 Replication)
-3. 캐릭터 애니메이션 (AnimBP, 스테이트 머신, 이동/점프 블렌드)
-4. 사격 RPC + 서버 히트 판정 + 사격 몽타주
-5. HP 복제 + 피격 처리 + 사망 애니메이션
-6. Lag Compensation (히스토리/리와인드)
-7. 자판기 시스템 (서버 판정 + 상태 복제 + Multicast 사운드)
-8. AI 적 (Behavior Tree + 서버 권한 로직)
-9. GAS로 대시/힐/실드
-10. 인벤토리 + 장비 + 판매
-11. Extraction + 퀘스트 수집
-12. UI/HUD (체력바, 탄약, 타이머, 킬 피드, 인벤토리 화면)
-13. 맵 제작 (레벨 디자인, 파밍 포인트, 자판기/탈출 지점 배치, 내비메시)
-14. USaveGame으로 영속 데이터 구조 (스태시, 진행도)
-15. 외부 DB 연동 (REST API + DB, 서버 권한 접근)
+> ✅ 완료 / 🔄 진행 중(불완전) / ⬜ 미착수
+
+1. ✅ 싱글에서 매치 흐름 (GameMode/GameState)
+2. ✅ 멀티 접속/랜덤 스폰/이동 (기본 Replication)
+3. 🔄 캐릭터 애니메이션 (AnimBP, 스테이트 머신, 이동/점프 블렌드) — 손 IK·블렌딩 미완
+4. ✅ 사격 RPC + 서버 히트 판정 + 사격 몽타주
+5. ✅ HP 복제 + 피격 처리 + 사망 애니메이션
+6. ✅ Lag Compensation (히스토리/리와인드)
+7. ⬜ 자판기 시스템 (서버 판정 + 상태 복제 + Multicast 사운드)
+8. ⬜ AI 적 (Behavior Tree + 서버 권한 로직)
+9. ✅ GAS 데미지 파이프라인 + PrimaryUse/Reload/HitZone/Decals
+10. ✅ GAS 스킬 3종 (Dash, Heal, ShieldOn) + Overwatch형 HUD
+11. ⬜ 인벤토리 + 장비 + 판매
+12. ⬜ Extraction + 퀘스트 수집
+13. ⬜ 맵 제작 (레벨 디자인, 파밍 포인트, 자판기/탈출 지점 배치, 내비메시)
+14. ⬜ USaveGame으로 영속 데이터 구조 (스태시, 진행도)
+15. ⬜ 외부 DB 연동 (REST API + DB, 서버 권한 접근)

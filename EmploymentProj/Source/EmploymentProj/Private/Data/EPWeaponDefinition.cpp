@@ -4,6 +4,7 @@
 #include "Data/EPWeaponDefinition.h"
 #include "Combat/EPProjectile.h"
 #include "Curves/CurveFloat.h"
+#include "Abilities/GameplayAbility.h"
 
 FPrimaryAssetId UEPWeaponDefinition::GetPrimaryAssetId() const
 {

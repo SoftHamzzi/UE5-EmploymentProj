@@ -425,6 +425,9 @@ bool UEPServerSideRewindComponent::ConfirmHitscan(
 						*Hit.BoneName.ToString(),
 						Hit.PhysMaterial.IsValid() ? *Hit.PhysMaterial->GetName() : TEXT("None"));
 				}
+			} else if (!HitChar)
+			{
+				OutConfirmedHits.Add(Hit);
 			}
 		}
 	}

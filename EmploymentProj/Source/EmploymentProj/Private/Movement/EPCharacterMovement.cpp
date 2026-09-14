@@ -33,9 +33,10 @@ void UEPCharacterMovement::OnMovementUpdated(
 }
 
 float UEPCharacterMovement::GetMaxSpeed() const {
-	if (bWantsToSprint && IsMovingOnGround()) return SprintSpeed;
-	if (bWantsToAim) return AimSpeed;
-	return Super::GetMaxSpeed();
+	float Base = Super::GetMaxSpeed();
+	if (bWantsToSprint && IsMovingOnGround()) Base = SprintSpeed;
+	else if (bWantsToAim) Base = AimSpeed;
+	return Base * MoveSpeedMultiplier;
 }
 
 void UEPCharacterMovement::UpdateFromCompressedFlags(uint8 Flags)

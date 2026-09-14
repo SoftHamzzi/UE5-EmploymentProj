@@ -3,10 +3,11 @@
 
 #include "Combat/EPWeapon.h"
 
-#include "TimerManager.h"
+#include "AbilitySystemComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Core/EPCharacter.h"
 #include "Engine/World.h"
+#include "GAS/EPAttributeSet.h"
 #include "Net/UnrealNetwork.h"
 
 // Sets default values
@@ -25,12 +26,7 @@ AEPWeapon::AEPWeapon()
 void AEPWeapon::BeginPlay()
 {
 	Super::BeginPlay();
-	
-	if (HasAuthority() && WeaponDef)
-	{
-		MaxAmmo = WeaponDef->MaxAmmo;
-		CurrentAmmo = MaxAmmo;
-	}
+	BuildSpreadCDFTable();
 }
 
 void AEPWeapon::Tick(float DeltaTime)
@@ -47,28 +43,21 @@ void AEPWeapon::Tick(float DeltaTime)
 		);
 	}
 	
-	float FireInterval = 1.f / WeaponDef->FireRate;
-	if (WeaponState == EEPWeaponState::Firing &&
-		GetWorld()->GetTimeSeconds() - LastFireTime > FireInterval * 2.f)
-	{
-		WeaponState = EEPWeaponState::Idle;
-		ConsecutiveShots = 0;
-	}
 }
 
 bool AEPWeapon::CanFire() const
 {
-	if (WeaponState != EEPWeaponState::Idle &&
-
-	WeaponState != EEPWeaponState::Firing) return false;
-	if (CurrentAmmo <= 0) return false;
 	if (!WeaponDef) return false;
-	
-	// 연사 속도 체크
-	float FireInterval = 1.f / WeaponDef->FireRate;
-	float CurrentTime = GetWorld()->GetTimeSeconds();
-	if (CurrentTime - LastFireTime < FireInterval) return false;
-	
+	if (AEPCharacter* EPOwner = Cast<AEPCharacter>(GetOwner()))
+	{
+		if (UAbilitySystemComponent* ASC = EPOwner->GetAbilitySystemComponent())
+		{
+			if (const UEPAttributeSet* AS = Cast<const UEPAttributeSet>(ASC->GetAttributeSet(UEPAttributeSet::StaticClass())))
+			{
+				if (AS->GetAmmo() <= 0.f) return false;
+			}
+		}
+	}
 	return true;
 }
 
@@ -82,7 +71,6 @@ void AEPWeapon::Fire(const FVector& AimDir, float ClientFireTime, TArray<FVector
 	if (!HasAuthority()) return;
 	if (!WeaponDef) return;
 	
-	CurrentAmmo = FMath::Max(0, CurrentAmmo - 1);
 	LastFireTime = GetWorld()->GetTimeSeconds();
 	
 	// 퍼짐 누적
@@ -92,8 +80,6 @@ void AEPWeapon::Fire(const FVector& AimDir, float ClientFireTime, TArray<FVector
 	);
 	ConsecutiveShots++;
 	
-	WeaponState = EEPWeaponState::Firing;
-	
 	const int32 Count = FMath::Max(1, WeaponDef->PelletCount);
 	OutPellets.Reserve(Count);
 	const float HalfAngle = FMath::DegreesToRadians(CalculateSpread() * 0.5f);
@@ -101,14 +87,14 @@ void AEPWeapon::Fire(const FVector& AimDir, float ClientFireTime, TArray<FVector
 	FVector Up, Right;
 	AimDir.FindBestAxisVectors(Up, Right);
 	
+	const float SectorSize = TWO_PI / Count;
+	
 	for (int32 i=0; i<Count; i++)
 	{
-		const float R = WeaponDef->SpreadDistributionCurve
-			? WeaponDef->SpreadDistributionCurve->GetFloatValue(FMath::FRand())
-			: FMath::FRand();
-		
+		const float R = SampleSpread();
 		const float Theta = R * HalfAngle;
-		const float Phi = FMath::FRand() * TWO_PI;
+		
+		const float Phi = (i * SectorSize) + FMath::FRand() * SectorSize;
 		OutPellets.Add(
 			AimDir	* FMath::Cos(Theta)
 			+ Up		* FMath::Sin(Theta) * FMath::Cos(Phi)
@@ -116,8 +102,6 @@ void AEPWeapon::Fire(const FVector& AimDir, float ClientFireTime, TArray<FVector
 		);
 	}
 	
-	// 탄약 0이면 자동 재장전
-	if (CurrentAmmo <= 0) StartReload();
 }
 
 FVector AEPWeapon::ApplySpread(const FVector& Direction) const
@@ -142,41 +126,60 @@ float AEPWeapon::CalculateSpread() const
 	return FMath::Clamp(Spread, 0.f, WeaponDef->MaxSpread);
 }
 
-void AEPWeapon::StartReload()
-{
-	if (!HasAuthority()) return;
-	if (WeaponState == EEPWeaponState::Reloading) return;
-	
-	if (CurrentAmmo >= MaxAmmo) return;
-	
-	WeaponState = EEPWeaponState::Reloading;
-	
-	GetWorldTimerManager().SetTimer(
-		ReloadTimerHandle,
-		this, &AEPWeapon::FinishReload,
-		WeaponDef->ReloadTime,
-		false
-	);
-}
-
-void AEPWeapon::FinishReload()
-{
-	if (!HasAuthority()) return;
-	
-	CurrentAmmo = MaxAmmo;
-	WeaponState = EEPWeaponState::Idle;
-	ConsecutiveShots = 0;
-	CurrentSpread = 0.f;
-}
-
-void AEPWeapon::OnRep_CurrentAmmo() const
-{
-	UE_LOG(LogTemp, Warning, TEXT("Remaining Ammo: %d"), CurrentAmmo);
-}
-
 void AEPWeapon::GetLifetimeReplicatedProps(TArray<class FLifetimeProperty>& OutLifetimeProps) const {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+}
+
+void AEPWeapon::BuildSpreadCDFTable()
+{
+	SpreadCDFTable.SetNumUninitialized(CDFTableSize);
 	
-	DOREPLIFETIME_CONDITION(AEPWeapon, CurrentAmmo, COND_OwnerOnly);
+	if (!WeaponDef || !WeaponDef->SpreadDistributionCurve)
+	{
+		for (int32 i=0; i<CDFTableSize; i++)
+			SpreadCDFTable[i] = static_cast<float>(i+1) / CDFTableSize;
+		return;
+	}
 	
+	double Cumulative = 0.0;
+	TArray<double> RawCDF;
+	RawCDF.SetNumUninitialized(CDFTableSize);
+	
+	for (int32 i=0; i<CDFTableSize; i++)
+	{
+		const float XMid = (i + 0.5f) /CDFTableSize;
+		const float PDFVal = FMath::Max(0.f, WeaponDef->SpreadDistributionCurve->GetFloatValue(XMid));
+		Cumulative += PDFVal;
+		RawCDF[i] = Cumulative;
+	}
+	
+	if (Cumulative > KINDA_SMALL_NUMBER)
+	{
+		for (int32 i=0; i<CDFTableSize; i++)
+			SpreadCDFTable[i] = static_cast<float>(RawCDF[i] / Cumulative);
+	} else
+	{
+		for (int32 i=0; i<CDFTableSize; i++)
+			SpreadCDFTable[i] = static_cast<float>(i+1) / CDFTableSize;
+	}
+}
+
+float AEPWeapon::SampleSpread() const
+{
+	if (SpreadCDFTable.IsEmpty())
+		return FMath::FRand();
+	
+	const float U = FMath::FRand();
+	
+	int32 Lo = 0, Hi = CDFTableSize - 1;
+	while (Lo < Hi)
+	{
+		const int32 Mid = (Lo + Hi) / 2;
+		if (SpreadCDFTable[Mid] < U)
+			Lo = Mid + 1;
+		else
+			Hi = Mid;
+	}
+	
+	return static_cast<float>(Lo) / CDFTableSize;
 }

@@ -26,6 +26,13 @@
 #include "GameFramework/GameStateBase.h"
 #include "GameFramework/PlayerState.h"
 
+// GAS
+#include "AbilitySystemComponent.h"
+#include "Core/EPPlayerState.h"
+#include "GAS/EPAttributeSet.h"
+#include "Abilities/GameplayAbility.h"
+#include "GAS/EPNativeGameplayTags.h"
+
 AEPCharacter::AEPCharacter(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer.SetDefaultSubobjectClass<UEPCharacterMovement>(
 		ACharacter::CharacterMovementComponentName))
@@ -70,6 +77,11 @@ AEPCharacter::AEPCharacter(const FObjectInitializer& ObjectInitializer)
 	
 }
 
+UAbilitySystemComponent* AEPCharacter::GetAbilitySystemComponent() const
+{
+	return ASC;
+}
+
 void AEPCharacter::BeginPlay()
 {
 	Super::BeginPlay();
@@ -93,6 +105,48 @@ void AEPCharacter::Tick(float DeltaSeconds)
 	Super::Tick(DeltaSeconds);
 
 	TickAutoStrafeInputTest(DeltaSeconds);
+}
+
+void AEPCharacter::OnRep_Controller()
+{
+	Super::OnRep_Controller();
+	InitASC();
+}
+
+void AEPCharacter::PossessedBy(AController* NewController)
+{
+	Super::PossessedBy(NewController);
+	
+	if (AEPPlayerState* PS = GetPlayerState<AEPPlayerState>())
+	{
+		if (UEPAttributeSet* AS = PS->GetAttributeSet())
+		{
+			AS->InitHealth(100.f);
+			AS->InitMaxHealth(100.f);
+			AS->InitMoveSpeedMultiplier(1.f);
+		}
+		
+		ASC = PS->GetAbilitySystemComponent();
+		InitASC();
+		
+		ASC->SetTagMapCount(EmpGameplayTags::TAG_State_Dead, 0);
+		
+		// 기본 Ability 부여
+		for (const TSubclassOf<UGameplayAbility>& AbilityClass : DefaultAbilities)
+			if (AbilityClass)
+				ASC->GiveAbility(FGameplayAbilitySpec(AbilityClass, 1));
+	}
+}
+
+void AEPCharacter::OnRep_PlayerState()
+{
+	Super::OnRep_PlayerState();
+	
+	if (AEPPlayerState* PS = GetPlayerState<AEPPlayerState>())
+	{
+		ASC = PS->GetAbilitySystemComponent();
+		InitASC();
+	}
 }
 
 // Enhanced Input 바인딩
@@ -166,6 +220,42 @@ void AEPCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCompone
 		ETriggerEvent::Started, this,
 		&AEPCharacter::Input_Fire
 	);
+	
+	EnhancedInput->BindAction(
+		PC->GetReloadAction(),
+		ETriggerEvent::Started, this,
+		&AEPCharacter::Input_Reload
+	);
+	
+	if (PC->GetDashAction())
+	{
+		EnhancedInput->BindAction(
+			PC->GetDashAction(),
+			ETriggerEvent::Triggered,
+			this,
+			&AEPCharacter::Input_Dash
+		);
+	}
+	
+	if (PC->GetHealAction())
+	{
+		EnhancedInput->BindAction(
+			PC->GetHealAction(),
+			ETriggerEvent::Triggered,
+			this,
+			&AEPCharacter::Input_Heal
+		);
+	}
+	
+	if (PC->GetShieldAction())
+	{
+		EnhancedInput->BindAction(
+			PC->GetShieldAction(),
+			ETriggerEvent::Triggered,
+			this,
+			&AEPCharacter::Input_Shield
+		);
+	}
 
 	PlayerInputComponent->BindKey(EKeys::T, IE_Pressed, this, &AEPCharacter::Input_ToggleAutoStrafeTest);
 }
@@ -177,51 +267,16 @@ UEPCombatComponent* AEPCharacter::GetCombatComponent() const
 	return CombatComponent;
 }
 
+bool AEPCharacter::IsDead() const
+{
+	if (ASC)
+		return ASC->HasMatchingGameplayTag(EmpGameplayTags::TAG_State_Dead);
+	return false;
+}
+
 UEPServerSideRewindComponent* AEPCharacter::GetServerSideRewindComponent() const
 {
 	return RewindComponent;
-}
-
-float AEPCharacter::TakeDamage(
-	float DamageAmount, struct FDamageEvent const& DamageEvent,
-	class AController* EventInstigator, AActor* DamageCause)
-{
-	if (!HasAuthority()) return 0.f;
-
-	HP = FMath::Clamp(HP - DamageAmount, 0.f, static_cast<float>(MaxHP));
-
-	Multicast_PlayHitReact();
-	Multicast_PlayPainSound();
-
-	if (AEPPlayerController* InstigatorPC = Cast<AEPPlayerController>(EventInstigator))
-		InstigatorPC->Client_PlayHitConfirmSound();
-
-	if (HP <= 0.f) Die(EventInstigator);
-
-	ForceNetUpdate();
-	return DamageAmount;
-}
-
-void AEPCharacter::Die(AController* Killer)
-{
-	if (!HasAuthority()) return;
-	
-	AController* VictimController = GetController();
-	
-	// 무기 처리                                                                                                                                                                                                                                                                                                  
-	if (CombatComponent && CombatComponent->GetEquippedWeapon())
-	{
-		CombatComponent->GetEquippedWeapon()->SetActorHiddenInGame(true);
-		CombatComponent->GetEquippedWeapon()->SetActorEnableCollision(false);
-	}
-	
-	if (AEPGameMode* GM = GetWorld()->GetAuthGameMode<AEPGameMode>())
-		GM->OnPlayerKilled(Killer, GetController());
-	
-	Multicast_Die();
-	
-	if (VictimController)
-		VictimController->UnPossess();
 }
 
 // --- 입력 핸들러 ---
@@ -334,26 +389,11 @@ void AEPCharacter::Input_Fire(const FInputActionValue& Value)
 {
 	if (!CombatComponent) return;
 	
-	const AGameStateBase* GS = GetWorld()->GetGameState<AGameStateBase>();
-	const float ClientFireTime = GS ? GS->GetServerWorldTimeSeconds()
-									: GetWorld()->GetTimeSeconds();
-	
-	#if !(UE_BUILD_SHIPPING || UE_BUILD_TEST)
-    	for (TActorIterator<AEPCharacter> It(GetWorld()); It; ++It)
-    	{
-    		AEPCharacter* Other = *It;
-    		if (Other == this) continue;
-    		UE_LOG(LogTemp, Log, TEXT("[CLIENT_POS] FireTime=%.3f Actor=%s Pos=%s"),
-    			ClientFireTime, *Other->GetName(), *Other->GetActorLocation().ToString());
-    	}
-    #endif
-	
-	CombatComponent->RequestFire(
-		FirstPersonCamera->GetComponentLocation(),
-		FirstPersonCamera->GetForwardVector(),
-		ClientFireTime
-	);
-	
+	if (ASC)
+	{
+		ASC->TryActivateAbilitiesByTag(
+			FGameplayTagContainer(EmpGameplayTags::TAG_Ability_Item_PrimaryUse));
+	}
 }
 
 void AEPCharacter::Input_ToggleAutoStrafeTest()
@@ -365,6 +405,34 @@ void AEPCharacter::Input_ToggleAutoStrafeTest()
 	AutoStrafeDirectionSign = 1.f;
 
 	UE_LOG(LogTemp, Log, TEXT("[AutoStrafeTest] %s"), bEnableAutoStrafeInputTest ? TEXT("ON") : TEXT("OFF"));
+}
+
+void AEPCharacter::Input_Reload(const FInputActionValue& Value)
+{
+	if (ASC)
+	{
+		bool bResult = ASC->TryActivateAbilitiesByTag(                                                                                                                                                                                                                                                            
+			  FGameplayTagContainer(EmpGameplayTags::TAG_Ability_Item_Reload));                                                                                                                                                                                                                         
+		UE_LOG(LogTemp, Warning, TEXT("TryActivateReload: %d"), bResult);
+	}
+}
+
+void AEPCharacter::Input_Dash(const FInputActionValue& Value)
+{
+	if (ASC)
+		ASC->TryActivateAbilitiesByTag(FGameplayTagContainer(EmpGameplayTags::TAG_Ability_Skill_Dash));
+}
+
+void AEPCharacter::Input_Heal(const FInputActionValue& Value)
+{
+	if (ASC)
+		ASC->TryActivateAbilitiesByTag(FGameplayTagContainer(EmpGameplayTags::TAG_Ability_Skill_Heal));
+}
+
+void AEPCharacter::Input_Shield(const FInputActionValue& Value)
+{
+	if (ASC)
+		ASC->TryActivateAbilitiesByTag(FGameplayTagContainer(EmpGameplayTags::TAG_Ability_Skill_Shield));
 }
 
 void AEPCharacter::TickAutoStrafeInputTest(float DeltaSeconds)
@@ -382,11 +450,6 @@ void AEPCharacter::TickAutoStrafeInputTest(float DeltaSeconds)
 	}
 
 	AddMovementInput(GetActorRightVector(), AutoStrafeDirectionSign * AutoStrafeInputScale);
-}
-
-void AEPCharacter::OnRep_HP()
-{
-	UE_LOG(LogTemp, Warning, TEXT("Current HP: %d"), HP);
 }
 
 void AEPCharacter::Multicast_Die_Implementation()
@@ -423,5 +486,34 @@ void AEPCharacter::GetLifetimeReplicatedProps(TArray<class FLifetimeProperty>& O
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 	
-	DOREPLIFETIME_CONDITION(AEPCharacter, HP, COND_OwnerOnly);
+	// DOREPLIFETIME_CONDITION(AEPCharacter, HP, COND_OwnerOnly);
 }
+
+void AEPCharacter::InitASC()
+{
+	AEPPlayerState* PS = GetPlayerState<AEPPlayerState>();
+	if (!PS || !ASC) return;
+	
+	ASC->InitAbilityActorInfo(PS, this);
+	
+	if (MoveSpeedMultiplierHandle.IsValid())
+		ASC->GetGameplayAttributeValueChangeDelegate(UEPAttributeSet::GetMoveSpeedMultiplierAttribute())
+			.Remove(MoveSpeedMultiplierHandle);
+	
+	MoveSpeedMultiplierHandle = ASC->GetGameplayAttributeValueChangeDelegate(UEPAttributeSet::GetMoveSpeedMultiplierAttribute())
+		.AddUObject(this, &AEPCharacter::OnMoveSpeedMultiplierChanged);
+	
+	if (UEPCharacterMovement* CMC = Cast<UEPCharacterMovement>(GetCharacterMovement()))
+		CMC->MoveSpeedMultiplier = ASC->GetNumericAttribute(UEPAttributeSet::GetMoveSpeedMultiplierAttribute());
+	
+	if (IsLocallyControlled())
+		if (AEPPlayerController* PC = GetController<AEPPlayerController>())
+			PC->InitHUD(ASC);
+}
+
+void AEPCharacter::OnMoveSpeedMultiplierChanged(const FOnAttributeChangeData& Data)
+{
+	if (UEPCharacterMovement* CMC = Cast<UEPCharacterMovement>(GetCharacterMovement()))
+		CMC->MoveSpeedMultiplier = Data.NewValue;
+}
+

@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "GameplayAbilitySpecHandle.h"
 #include "Components/ActorComponent.h"
 #include "EPCombatComponent.generated.h"
 
@@ -12,6 +13,9 @@ class AEPCharacter;
 class AEPWeapon;
 class UEPPhysicalMaterial;
 class AEPProjectile;
+class UGameplayEffect;
+class UMaterialInterface;
+class UEPWeaponDefinition;
 
 UCLASS( ClassGroup=(Custom), meta=(BlueprintSpawnableComponent) )
 class EMPLOYMENTPROJ_API UEPCombatComponent : public UActorComponent
@@ -19,10 +23,10 @@ class EMPLOYMENTPROJ_API UEPCombatComponent : public UActorComponent
 	GENERATED_BODY()
 
 public:
-	
-	UEPCombatComponent();
+	// === 변수 ===
 	
 	// === 함수 ===
+	UEPCombatComponent();
 	// --- Getter/Setter ---
 	void EquipWeapon(AEPWeapon* NewWeapon);
 	void UnequipWeapon();
@@ -30,15 +34,30 @@ public:
 	AEPCharacter* GetOwnerCharacter() const;
 	AEPWeapon* GetEquippedWeapon() const;
 	
-	// Request 이관 함수
-	void RequestFire(const FVector& Origin, const FVector& Direction, float ClientFireTime);
+	void HandleServerFire(const FVector& Origin, const FVector& Direction, float ClientFireTime);
+	
+	static void ApplyGEDamage(
+		AActor* Target,
+		AActor* Instigator,
+		TSubclassOf<UGameplayEffect> GEClass,
+		float FinalDamage);
+	
+	UFUNCTION()
+	void PlayLocalMuzzleEffect(const FVector& MuzzleLocation);
+	
+	UFUNCTION()
+	void PlayLocalImpactEffect(const FVector& ImpactPoint, const FVector& ImpactNormal);
+
+	void SpawnLocalCosmeticProjectile(const FVector& MuzzleLocation, const FVector& Direction);
 	
 	// Called every frame
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 
 protected:
 	// === 변수 ===
-	float LocalLastFireTime = 0.f;
+	
+	UPROPERTY(EditDefaultsOnly, Category = "GAS")
+	TSubclassOf<UGameplayEffect> GE_DamageClass;
 	
 	UPROPERTY(ReplicatedUsing = OnRep_EquippedWeapon, BlueprintReadOnly, Category = "Combat")
 	TObjectPtr<AEPWeapon> EquippedWeapon;
@@ -60,37 +79,26 @@ protected:
 	
 	virtual void GetLifetimeReplicatedProps(TArray<class FLifetimeProperty>& OutLifetimeProps) const override;
 	
-	// --- 선언 ---
-	UFUNCTION()
-	void PlayLocalMuzzleEffect(const FVector& MuzzleLocation);
-
-	UFUNCTION()
-	void PlayLocalImpactEffect(const FVector& ImpactPoint, const FVector& ImpactNormal);
-
-	void SpawnLocalCosmeticProjectile(const FVector& MuzzleLocation, const FVector& Direction);
-	
 	// --- 동기화 ---
 	UFUNCTION()
 	void OnRep_EquippedWeapon();
 	
 	// --- RPC ---
-	UFUNCTION(Server, Reliable)
-	void Server_Fire(const FVector_NetQuantize& Origin, const FVector_NetQuantizeNormal& Direction, float ClientFireTime);
-	UFUNCTION(Server, Reliable)
-	void Server_Reload();
 	
 	UFUNCTION(NetMulticast, Unreliable)
 	void Multicast_PlayMuzzleEffect(const FVector_NetQuantize& MuzzleLocation);
 	UFUNCTION(NetMulticast, Unreliable)
-	void Multicast_PlayImpactEffect(const FVector_NetQuantize& ImpactPoint, const FVector_NetQuantize& ImpactNormal);
+	void Multicast_PlayImpactEffect(const TArray<FVector_NetQuantize>& ImpactPoints, const TArray<FVector_NetQuantize>& ImpactNormals);
 	UFUNCTION(NetMulticast, Unreliable)
 	void Multicast_SpawnCosmeticProjectile(
 		const FVector_NetQuantize& MuzzleLocation,
 		const FVector_NetQuantizeNormal& Direction);
 
 private:
-	float LastServerFireTime = -999.f;
+	// === 변수 ===
+	TArray<FGameplayAbilitySpecHandle> GrantedWeaponAbilityHandles;
 	
+	// === 함수 ===
 	void HandleHitscanFire(
 		AEPCharacter*	Owner,
 		const FVector&	Origin,
@@ -104,6 +112,5 @@ private:
 		const FVector& Direction
 	);
 	
-	float GetBoneMultiplier(const FName& BoneName) const;
-	static float GetMaterialMultiplier(const UPhysicalMaterial* PM);
+	static float GetTagDamageMultiplier(const UEPPhysicalMaterial* PM, const UEPWeaponDefinition* WeaponDef);
 };
