@@ -75,9 +75,9 @@ GE는 서버 확정본이 도착하면 교체되고, 그 확정본의 만료는 
 GE 하나만 골라 오너에게 숨기는 방법은 없다(`EGameplayEffectReplicationMode`는
 ASC 단위, 오너는 항상 전체 정보를 받는다). 핑을 추정해 Duration을 깎는 방식은
 버렸다 — 서버 판정에 추정치가 들어가면 과소/과대 어느 쪽이든 불공정 또는
-익스플로잇이다(`SkillCooldown_GECooldownPrediction.md`). **결론: 클라가 예측 결정의
-재료로 쓰는 Duration GE만 GE 밖으로 뺀다** — 쿨다운과 `GE_Casting`. 기준은 §3-0, 힐/실드
-GE는 그대로 둔다.
+익스플로잇이다(`SkillCooldown_GECooldownPrediction.md`). **결론: 내가 시작한 시간 상태는
+GE로 표현하지 않는다**(§3-0 한 줄 규칙). 이번 구현 대상은 쿨다운과 `GE_Casting`, 실드는 §5.
+힐(Instant)은 그대로.
 
 ---
 
@@ -85,43 +85,84 @@ GE는 그대로 둔다.
 
 핑 추정을 아예 안 쓴다. 클라와 서버가 **각자 자기 값끼리만** 비교한다.
 
-### 3-0. 원칙 — 무엇을 GE에서 빼는가
+### 3-0. 원칙 — 한 줄
 
-Duration GE의 *제거*는 예측되지 않는다 — 클라는 서버 제거가 리플리케이트될 때까지
-(~RTT) 그 GE를 계속 본다. 그래서 GE 전부를 버리는 게 아니라 **하나만 묻는다:**
+> **내가 시작한 시간 상태는 어빌리티가 들고, 남이 나에게 건 상태는 GE가 든다.**
 
-> 그 GE의 존재·크기로 **클라가 예측 결정을 내리는가?**
+| | 누가 시작 | 무엇으로 | 태그 | 숫자 | 배율 |
+|---|---|---|---|---|---|
+| 캐스팅·쿨다운·자기 버프(실드, 체력 2배, 가속) | **나** | 어빌리티가 그 시간만큼 살아 있음 + `FEPLocalTimer` | `ActivationOwnedTags` | Instant `+Δ`/`−Δ` | `FEPLocalModifiers` |
+| 적이 건 슬로우·독·화상 | **남(서버)** | Duration GE 그대로 | GE 부여 태그 | GE 모디파이어 | GE 모디파이어 |
 
-| 클라가 GE를 보고… | 늦게 꺼지면 | 판정 | 예 |
-|---|---|---|---|
-| 표시만 한다 | 아이콘이 RTT 더 떠 있음 — **플레이어가 본다, 허용 안 함** | GE는 남아도 되나 **표시는 GE를 읽지 않는다** — 메시지/로컬 타이머(§1 방식) | 실드 Active 바(이미 메시지 기반) |
-| 서버가 계산하는 값의 재료 | 클라 값은 판정에 안 들어감 | GE 유지 | 실드 피해 경감(`EPAttributeSet` 서버 계산) |
-| **활성화를 게이트한다** | 클라가 RTT 더 막힘 → 입력 거절 | **로컬** | 쿨다운, `Casting` 잠금 |
-| **이동을 예측한다** | CMC 오예측 → 정정 → 버벅 | **로컬** | `GE_Casting`의 `MoveSpeedMultiplier` |
-| **다른 로컬 타이머의 속도를 바꾼다** | 클라 타이머가 RTT 더 빨리 돎 → 서버 거절 | **로컬** | 쿨다운 가속 버프 |
+**Duration GE는 "남이 나에게" 쪽에만 남는다.** 내가 시작하는 것에는 안 쓴다 — 어떤 GE가
+어느 쪽인지 표를 보고 판단할 일이 없어진다. 누가 시작했느냐만 본다.
 
-지금 걸리는 것: **쿨다운 GE**(게이트), **`GE_Casting`**(게이트 + 이동). `GE_ShieldOn`은
-표시 + 서버 계산이라 유지 — 단 `Shielded` 태그를 `ActivationBlockedTags`로 쓰는 부분은
-게이트이므로 §5 참고.
+**왜 이 선인가 (근거, 접어 둠).** GAS는 GE *적용*은 예측하지만 *제거*는 예측하지 않는다
+(`GameplayPrediction.h`, README §4.5.15.3). 클라는 서버 제거가 리플리케이트될 때까지(~RTT)
+그 GE를 계속 본다. 그래서 GE로 표현한 시간 상태는 아래 어느 용도든 RTT만큼 늦게 꺼진다:
 
-**표시 행의 뜻:** "GE 유지"는 서버 계산용으로 남겨도 된다는 것이지, 위젯이 GE·태그의 존재를
-보고 켜고 끄라는 게 아니다. 위젯은 §1처럼 **적용 시점의 메시지(Duration)로 로컬 카운트다운**
-해야 아이콘이 제때 꺼진다. 남는 불일치 하나 — 속성 **숫자**(예: 최대체력 2배)는 서버
-리플리케이션이라 RTT 늦게 돌아온다. 아이콘은 꺼졌는데 숫자는 잠깐 남는 셈. 이걸 없애려면
-Duration GE 대신 "Instant 적용 → `WaitDelay` → `NetworkSyncPoint` → Instant 역적용"의
-**시간제 버프 어빌리티**(캐스트 스킬과 같은 뼈대, 역적용도 예측됨)로 가면 된다 —
-Duration GE를 안 쓰기로 하면 그게 표준 패턴이 된다. 지금 그런 버프는 없어 미룬다.
+| 클라가 GE를 보고… | 늦게 꺼지면 |
+|---|---|
+| 표시 | 아이콘이 RTT 더 떠 있음 — 플레이어가 본다 |
+| 활성화 게이트 | 클라가 RTT 더 막힘 → 입력 거절 |
+| 이동 예측 | CMC 오예측 → 정정 → 버벅 |
+| 다른 타이머의 속도 | 클라 타이머가 RTT 더 빨리 돎 → 서버 거절 |
+| 서버가 계산하는 값의 재료 | 클라 값은 판정에 안 들어감 — 유일하게 무해 |
 
-**태그도 같은 규칙이다 — Duration만이 아니라 "서버가 나중에 지우는 GE" 전부.** Infinite GE를
-서버가 `RemoveActiveGameplayEffect`로 끝내도 클라는 리플리케이션이 올 때까지 태그를
-들고 있다. 기준은 GE 종류가 아니라 **클라가 태그의 종료 시점을 스스로 아는가**다:
+"내가 시작한" 상태는 클라가 시작·종료 시점을 스스로 아는 것이라 로컬로 들 수 있고, 들면
+위 문제가 전부 사라진다. "남이 건" 상태는 클라가 시작 자체를 서버에게 들어야 하는 것이라
+(피격과 같은 종류) 어차피 늦게 알고, 로컬로 들어 봐야 얻는 게 없다 — 그래서 GE 그대로.
 
-> 태그의 수명이 **어빌리티의 수명과 같으면**(캐스팅·재장전·아이템 사용) GE로 부여할
-> 이유가 없다 — 어빌리티가 양쪽에서 각자 시작·종료를 아니까 **`ActivationOwnedTags`**(엔진이
-> `PreActivate`에서 붙이고 `EndAbility`에서 떼는 loose 태그)로 둔다. GE 태그는 **어빌리티보다 오래 사는 상태**
-> (실드 지속, 디버프)에만 쓰고, 그것도 클라 결정의 재료가 아닐 때만.
+**대가:**
+- 자기 버프는 반드시 어빌리티다. 데이터만 다른 버프("속성 X를 N초간 +Δ")는 제네릭
+  `UEPGA_Skill_TimedBuff` 하나(Instant GE + `Delta` + 지속시간 + 태그, 전부 BP 편집)로 끝나
+  **BP 자식 하나 + 값 입력**이지 C++ 서브클래스가 아니다. 서브클래스는 고유 로직이 있을 때만.
+- 그래도 "Duration GE 에셋 하나 만들어 아무 데서나 `ApplyGameplayEffectToSelf`"는 못 한다 —
+  에셋이 둘(Instant GE + BP 어빌리티)이 되고, 부여(grant)된 어빌리티를 발동하는 경로여야 한다.
+  지금 기획에서 걸리는 경우는 없다: 아이템 사용은 이미 어빌리티, 구역 버프는 "남이 건" 쪽.
+- 표준이 아니라 이 문서가 필요하다.
 
-프로젝트 태그 전수(2026-09-14 grep):
+**지금 걸리는 것:** 쿨다운 GE, `GE_Casting` — 이번 구현. `GE_ShieldOn` — 같은 규칙에 걸리지만
+§5로 미룸(훅이 생기면 서브클래스 하나).
+
+**자기 버프의 숫자 — 시간제 버프 어빌리티 (예정 패턴, 이번 구현이 자리를 남긴다).**
+"체력 2배" 같은 속성 변경을 Duration GE 모디파이어로 주면 적용은 예측돼도 **제거가 예측되지
+않아** RTT까지 2배로 남는다(속성이라서가 아니라 같은 뿌리). 위 규칙대로 Duration GE를
+**Instant 두 개 + 로컬 타이머**로 쪼갠다. 제거가 아니라 *역적용*이라 예측이 된다:
+
+```
+ActivateAbility : OnCastStarted()  → Instant GE "+Δ" 예측 적용
+WaitDelay(Dur)  → NetworkSyncPoint(OnlyServerWait)          … 캐스트 스킬과 같은 뼈대
+OnSynced        : OnCastComplete() → Instant GE "−Δ" 예측 적용 (새 예측 창 안)
+EndAbility
+```
+
+캐스트 스킬과 **뼈대가 같다** — "시작에 뭔가 걸고, N초 뒤 되돌린다". 다른 건 시작 훅이
+있느냐, 게이지 채널이 무엇이냐뿐이다. 그래서 이번 구현에서 다음 두 자리를 열어 둔다
+(사용자 명시, 2026-09-17):
+- **`OnCastStarted()`** virtual 훅 — `ActivateAbility`의 `CastTime > 0` 분기에서 태그·배율 직후
+  호출, 기본 빈 함수. 캐스트 스킬은 안 쓰고, 버프는 여기서 적용한다.
+- **`CastChannelTag`** 필드 — 지금 `BroadcastDurationMessage(TAG_State_Casting, CastTime)`에
+  박혀 있는 채널을 필드로. 기본 `State.Casting`, 버프는 자기 Active 채널(예: `State.Shielded`)로
+  바꿔 게이지 대신 슬롯의 Active 바를 돌린다.
+
+첫 소비자는 **`ShieldOn`**이다 — `ShieldDuration` 동안 `Shielded` 태그(`ActivationOwnedTags`)
++ 서버 경감 계산. 지금은 `GE_ShieldOn`(Duration)이라 §5에 두고, 이 훅이 생기면 옮긴다.
+주의: 역적용은 곱이 아니라 **덧셈**으로(`Δ`를 시작 시 기억) — 사이에 다른 Instant GE가
+기준값을 바꿔도 어긋나지 않는다. 쿨다운을 시작에 찍을지 끝에 찍을지는 그때 결정
+(`FEPLocalTimer.Start` 호출 위치만 다르다).
+
+**태그 — Duration만이 아니라 "서버가 나중에 지우는 GE" 전부 같다.** Infinite GE를 서버가
+`RemoveActiveGameplayEffect`로 끝내도 클라는 리플리케이션이 올 때까지 태그를 들고 있다.
+위 한 줄 규칙을 태그에 적용하면:
+
+> **내가 시작한** 상태의 태그는 **`ActivationOwnedTags`**(엔진이 `PreActivate`에서 붙이고
+> `EndAbility`에서 떼는 loose 태그, 양쪽 각자) — 캐스팅·재장전·아이템 사용·자기 버프.
+> 어빌리티보다 오래 살아야 하면 어빌리티를 그만큼 살려 둔다. GE 부여 태그는 **남이 건**
+> 상태(디버프)에만.
+
+**프로젝트의 상태 태그 전부 — 규칙 적용 결과** (2026-09-14 grep, `TAG_State_*`·`TAG_Cooldown_*`).
+열: 누가 붙이고 떼나 / 클라에서 늦게 꺼지나 / 누가 읽나(게이트면 실제 문제) / 이 문서의 처리.
 
 | 태그 | 부여 → 제거 | 클라 stale | 소비자 | 판정 |
 |---|---|---|---|---|
@@ -182,7 +223,7 @@ float UEPGA_Skill_Base::GetEffectiveCooldown() const   // 시전 시점에 한 �
 
 **왜 Flat/Pct는 속성이고 Rate는 로컬인가.** Flat/Pct는 장비·영구 성장처럼 **타이밍이
 안 중요한 값**이다 — Instant GE로 바뀌고, 클라가 잠깐 옛 값을 봐도 `Tolerance`(§3-6)가
-흡수한다. Rate는 본질이 **시간제 버프**("10초간 2배")라 §3-0의 마지막 줄에 걸린다 —
+흡수한다. Rate는 본질이 **내가 시작한 시간제 버프**("10초간 2배")라 §3-0 규칙에 걸린다 —
 Duration GE로 주면 클라 타이머가 RTT만큼 더 빨리 돌아 서버가 거절한다. 그래서
 로컬 저장소에서 온다. **Flat/Pct를 시간제로 주고 싶어지면 그것도 로컬 저장소로 옮긴다** —
 규칙은 값의 종류가 아니라 "시간제인가"다.
@@ -232,7 +273,8 @@ ActivationOwnedTags.AddTag(EmpGameplayTags::TAG_State_Casting);
 
 // ActivateAbility (CastTime > 0 분기) — 태그는 엔진이 이미 붙였다
 Char->LocalModifiers.Set(TAG_Modifier_MoveSpeed_Casting, GetCastMoveSpeedMultiplier());   // 서브클래스 훅, 기본 1
-BroadcastDurationMessage(TAG_State_Casting, CastTime);
+OnCastStarted();                                          // 시간제 버프용 훅, 기본 빈 함수 (§3-0)
+BroadcastDurationMessage(CastChannelTag, CastTime);       // 필드, 기본 State.Casting (§3-0)
 
 // EndAbility (모든 경로: 완료·피격취소·서버거절) — IsNetAuthority 가드 없음, 양쪽 다
 Char->LocalModifiers.Clear(TAG_Modifier_MoveSpeed_Casting);
@@ -359,7 +401,7 @@ GAS 표준 흐름이 재검증 왕복을 해준다: 클라 `TryActivateAbility` 
 | `ActivationBlockedTags`의 `Casting`/`Dead`/`Shielded` | 유지 | 유지. `Casting`은 이제 `ActivationOwnedTags`가 채운다 |
 | `EPCharacterMovement::GetMaxSpeed()` | 속성만 | 속성 × `Product(Modifier.MoveSpeed)` |
 | 위젯 | 메시지 구독 + `Casting` 태그 이벤트 | **변경 없음** (loose 태그도 같은 태그 이벤트를 쏜다) |
-| 신규 | — | `FEPLocalTimer`, `FEPLocalModifiers`(`AEPCharacter` 멤버), 속성 `CooldownFlatReduction`/`CooldownPctReduction`, 태그 `Modifier.MoveSpeed.Casting`/`Modifier.CooldownRate`, `ServerCooldownTolerance`, `CompleteCast()`, `GetEffectiveCooldown()` |
+| 신규 | — | `FEPLocalTimer`, `FEPLocalModifiers`(`AEPCharacter` 멤버), 속성 `CooldownFlatReduction`/`CooldownPctReduction`, 태그 `Modifier.MoveSpeed.Casting`/`Modifier.CooldownRate`, `ServerCooldownTolerance`, `CompleteCast()`, `GetEffectiveCooldown()`, **`OnCastStarted()` 훅 + `CastChannelTag` 필드**(시간제 버프 자리, §3-0) |
 | Rate 변경 시 표시 | — | 배율을 `Set`/`Clear`하는 어빌리티가 **먼저** 각 스킬의 `CooldownTimer.Bank(Now, 옛 Rate)`를 부르고, 그 다음 `BroadcastDurationMessage(채널, GetRemaining/새 Rate)`를 다시 쏜다. 위젯은 새 메시지로 다시 셀 뿐. 스킬 목록 순회는 `ASC->GetActivatableAbilities()`에서 `UEPGA_Skill_Base` 캐스트 |
 
 ### 3-8. 완료 조건
@@ -368,6 +410,7 @@ GAS 표준 흐름이 재검증 왕복을 해준다: 클라 `TryActivateAbility` 
 - [ ] `Core/EPLocalModifiers.h` — `Set/Clear/Product`, `AEPCharacter` 멤버
 - [ ] `EPGA_Skill_Base` — `CooldownTimer`, `CompleteCast()`, `GetEffectiveCooldown()`, `CanActivateAbility` 오버라이드, 모디파이어 Set/Clear, `OnActivationRejected()` + `NewRejectedDelegate` 바인딩
 - [ ] `EPGA_Skill_Heal` 생성자 — `ActivationOwnedTags.AddTag(TAG_State_Casting)`
+- [ ] `OnCastStarted()` 빈 virtual + `CastChannelTag` 필드(기본 `State.Casting`) — 시간제 버프 자리
 - [ ] `EPCharacterMovement::GetMaxSpeed()` 로컬 배율 곱
 - [ ] 속성 2개 추가(`COND_None` 기존 규칙대로), 태그 2계층 등록
 - [ ] `SetCooldownTag`/`ApplyCooldownGE`/`GE_CooldownClass`/`GE_CastingClass`/`ConfigureCastingSpec` 제거, 에셋 참조 정리, Dash/Heal/ShieldOn 컴파일
@@ -389,7 +432,7 @@ GAS 표준 흐름이 재검증 왕복을 해준다: 클라 `TryActivateAbility` 
 | `Cooldown == 0` | `IsElapsed`가 `Remaining <= 0`이라 항상 통과 |
 | 리슨 서버 호스트 | 클라 인스턴스 == 서버 인스턴스, `IsNetAuthority()` 참이라 `Tolerance` 적용. 데디 서버가 목표라 무시 |
 | `Rate == 0` (쿨다운 정지 버프) | `GetRemaining`이 안 줄어든다 — 의도한 동작. 음수 Rate는 `Product`에서 0으로 클램프 |
-| 속성 `CooldownFlatReduction`이 Duration GE로 바뀐다 | §3-0 위반. 시간제 감소는 `LocalModifiers`로 — 카테고리 하나 추가(`Modifier.CooldownFlat`)하고 `GetEffectiveCooldown`이 거기서도 읽게 한다 |
+| 속성 `CooldownFlatReduction`을 내가 시작한 Duration GE로 바꾼다 | §3-0 위반. 시간제 감소는 `LocalModifiers`로 — 카테고리 하나 추가(`Modifier.CooldownFlat`)하고 `GetEffectiveCooldown`이 거기서도 읽게 한다 |
 
 ---
 
@@ -420,9 +463,11 @@ GAS 표준 흐름이 재검증 왕복을 해준다: 클라 `TryActivateAbility` 
 - **캐스팅 이동의 서버 쪽 U** — §3-4. 캐스팅 비트를 `FSavedMove` `FLAG_Custom_2`에 싣는다.
   `04_Polish_Movement.md`에서 Sprint/Aim과 같은 패턴으로.
 - **`TAG_State_Shielded` 차단** — 실드 GE 제거도 비예측이라 `ShieldOn` 재발동이 RTT 더
-  막힌다. `Cooldown > ShieldDuration + RTT`인 한 실질 영향 없음. Duration GE를 전면 안 쓰기로
-  하면 §3-0의 "시간제 버프 어빌리티"(어빌리티가 `ShieldDuration` 동안 활성, `ActivationOwnedTags`에
-  `Shielded`, Instant 적용/역적용)로 — 이미 준비된 패턴이라 비용은 작다.
+  막힌다. `Cooldown > ShieldDuration + RTT`인 한 실질 영향 없음. **§3-0 시간제 버프 어빌리티의
+  첫 소비자** — `CastTime = ShieldDuration`, `ActivationOwnedTags`에 `Shielded`, `CastChannelTag =
+  State.Shielded`, `GetCastMoveSpeedMultiplier() = 1`, `bInterruptibleOnDamage = false`. 실드는
+  속성 변경이 없어 `OnCastStarted`/`OnCastComplete`가 비고 태그만 남는다. `GE_ShieldOn` 제거.
+  이번 구현에서 훅 두 개가 생기면 바로 할 수 있다 — 이번 범위엔 안 넣는다.
 - **피격 취소는 이미 서버 판정이다 — 손댈 것 없음.** `TAG_Event_Damaged`는 서버의
   `PostGameplayEffectExecute`에서만 발송된다(`EPAttributeSet.cpp:76`, 피해 GE는 예측 안 됨).
   서버 `WaitGameplayEvent` → `EndAbility(bReplicateEndAbility=true, cancel)` →

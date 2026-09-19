@@ -35,4 +35,7 @@ public:
 
 	UPROPERTY(Config, EditAnywhere, Category="Debug|SSR")
 	bool bEnableSSRDebugLog = false;
+	
+	UPROPERTY(Config, EditAnywhere, Category="GAS|Cooldown", meta=(ClampMin="0.0", ClampMax="0.5"))
+	float ServerCooldownToleranceSeconds = 0.1f;
 };

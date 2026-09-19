@@ -3,12 +3,18 @@
 #include "GAS/EPGA_Skill_Base.h"
 
 #include "AbilitySystemComponent.h"
+#include "AbilitySystemGlobals.h"
 #include "Abilities/Tasks/AbilityTask_WaitDelay.h"
 #include "Abilities/Tasks/AbilityTask_WaitGameplayEvent.h"
 #include "GameFramework/GameplayMessageSubsystem.h"
 #include "Abilities/Tasks/AbilityTask_NetworkSyncPoint.h"
+#include "Combat/EPCombatDeveloperSettings.h"
+#include "Core/EPCharacter.h"
+#include "Engine/World.h"
+#include "GAS/EPAttributeSet.h"
 #include "GAS/EPDurationMessage.h"
 #include "GAS/EPNativeGameplayTags.h"
+#include "GameplayPrediction.h"
 
 UEPGA_Skill_Base::UEPGA_Skill_Base()
 {
@@ -18,11 +24,40 @@ UEPGA_Skill_Base::UEPGA_Skill_Base()
 	
 	ActivationBlockedTags.AddTag(EmpGameplayTags::TAG_State_Casting);
 	ActivationBlockedTags.AddTag(EmpGameplayTags::TAG_State_Dead);
+	
+	CastChannelTag = EmpGameplayTags::TAG_State_Casting;
+}
+
+bool UEPGA_Skill_Base::CanActivateAbility(const FGameplayAbilitySpecHandle Handle,
+	const FGameplayAbilityActorInfo* ActorInfo, const FGameplayTagContainer* SourceTags,
+	const FGameplayTagContainer* TargetTags, FGameplayTagContainer* OptionalRelevantTags) const
+{
+	if (!Super::CanActivateAbility(Handle, ActorInfo, SourceTags, TargetTags, OptionalRelevantTags))
+		return false;
+	
+	if (UAbilitySystemGlobals::Get().ShouldIgnoreCooldowns()) return true;
+	
+	const AEPCharacter* Char = ActorInfo ? Cast<AEPCharacter>(ActorInfo->AvatarActor.Get()) : nullptr;
+	const UWorld* World = Char ? Char->GetWorld() : nullptr;
+	if (!Char || !World) return false;
+	
+	const float Now = World->GetTimeSeconds();
+	const float Rate = Char->GetLocalModifiers().Product(EmpGameplayTags::TAG_Modifier_CooldownRate);
+	const float Tolerance = ActorInfo->IsNetAuthority()
+		? GetDefault<UEPCombatDeveloperSettings>()->ServerCooldownToleranceSeconds
+		: 0.f;
+	
+	if (CooldownTimer.IsElapsed(Now, Rate, Tolerance)) return true;
+	
+	const FGameplayTag& FailTag = UAbilitySystemGlobals::Get().ActivateFailCooldownTag;
+	if (OptionalRelevantTags && FailTag.IsValid()) OptionalRelevantTags->AddTag(FailTag);
+	
+	return false;
 }
 
 void UEPGA_Skill_Base::ActivateAbility(const FGameplayAbilitySpecHandle Handle,
-	const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo,
-	const FGameplayEventData* TriggerEventData)
+                                       const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo,
+                                       const FGameplayEventData* TriggerEventData)
 {
 	if (!CommitAbility(Handle, ActorInfo, ActivationInfo))
 	{
@@ -32,20 +67,15 @@ void UEPGA_Skill_Base::ActivateAbility(const FGameplayAbilitySpecHandle Handle,
 	
 	if (CastTime <= 0.f)
 	{
-		OnCastComplete();
-		EndAbility(Handle, ActorInfo, ActivationInfo, true, false);
+		CompleteCast();
 		return;
 	}
 	
-	if (GE_CastingClass)
-	{
-		FGameplayEffectSpecHandle Spec = MakeOutgoingGameplayEffectSpec(GE_CastingClass);
-		Spec.Data->SetSetByCallerMagnitude(EmpGameplayTags::TAG_Data_Duration, CastTime);
-		ConfigureCastingSpec(Spec);
-		ApplyGameplayEffectSpecToOwner(Handle, ActorInfo, ActivationInfo, Spec);
-	}
+	if (AEPCharacter* Char = GetEPCharacter())
+		Char->GetLocalModifiers().Set(EmpGameplayTags::TAG_Modifier_MoveSpeed_Casting, GetCastMoveSpeedMultiplier());
 	
-	BroadcastDurationMessage(EmpGameplayTags::TAG_State_Casting, CastTime);
+	OnCastStarted();
+	BroadcastDurationMessage(CastChannelTag, CastTime);
 	
 	UAbilityTask_WaitDelay* WaitDelay = UAbilityTask_WaitDelay::WaitDelay(this, CastTime);
 	WaitDelay->OnFinish.AddDynamic(this, &UEPGA_Skill_Base::OnCastTimerComplete);
@@ -63,34 +93,49 @@ void UEPGA_Skill_Base::ActivateAbility(const FGameplayAbilitySpecHandle Handle,
 void UEPGA_Skill_Base::EndAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo,
 	const FGameplayAbilityActivationInfo activationInfo, bool bReplicateEndAbility, bool bWasCancelled)
 {
-	if (ActorInfo->IsNetAuthority())
-	{
-		if (UAbilitySystemComponent* ASC = GetAbilitySystemComponentFromActorInfo())
-		{
-			const FGameplayEffectQuery Query = FGameplayEffectQuery::MakeQuery_MatchAnyOwningTags(
-				FGameplayTagContainer(EmpGameplayTags::TAG_State_Casting));
-			ASC->RemoveActiveEffects(Query);
-		}
-	}
+	if (AEPCharacter* Char = ActorInfo ? Cast<AEPCharacter>(ActorInfo->AvatarActor.Get()) : nullptr)
+		Char->GetLocalModifiers().Clear(EmpGameplayTags::TAG_Modifier_MoveSpeed_Casting);
 	
 	Super::EndAbility(Handle, ActorInfo, activationInfo, bReplicateEndAbility, bWasCancelled);
 }
 
-void UEPGA_Skill_Base::SetCooldownTag(FGameplayTag Tag)
+float UEPGA_Skill_Base::GetEffectiveCooldown() const
 {
-	ActivationBlockedTags.AddTag(Tag);
-	CooldownChannelTag = Tag;
+	float Flat = 0.f, Pct = 0.f;
+	if (const UAbilitySystemComponent* ASC = GetAbilitySystemComponentFromActorInfo())
+	{
+		if (const UEPAttributeSet* AS = Cast<const UEPAttributeSet>(ASC->GetAttributeSet(UEPAttributeSet::StaticClass())))
+		{
+			Flat = AS->GetCooldownFlatReduction();
+			Pct = AS->GetCooldownPctReduction();
+		}
+	}
+	
+	return FMath::Max(0.f, (Cooldown - Flat) * (1.f - FMath::Clamp(Pct, 0.f, 1.f)));
 }
 
-void UEPGA_Skill_Base::ApplyCooldownGE()
+void UEPGA_Skill_Base::CompleteCast()
 {
-	if (!GE_CooldownClass) return;
+	OnCastComplete();
 	
-	FGameplayEffectSpecHandle CDSpec = MakeOutgoingGameplayEffectSpec(GE_CooldownClass);
-	CDSpec.Data->SetSetByCallerMagnitude(EmpGameplayTags::TAG_Data_Cooldown, Cooldown);
-	ApplyGameplayEffectSpecToOwner(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, CDSpec);
+	const float Duration = GetEffectiveCooldown();
+	const float Now = GetWorld()->GetTimeSeconds();
+	CooldownTimer.Start(Now, Duration);
 	
-	BroadcastDurationMessage(CooldownChannelTag, Cooldown);
+	if (IsPredictingClient())
+	{
+		FPredictionKey Key = CurrentActivationInfo.GetActivationPredictionKey();
+		Key.NewRejectedDelegate()
+			.BindUObject(this, &UEPGA_Skill_Base::OnActivationRejected, CooldownTimer.GetGeneration());
+	}
+	
+	BroadcastDurationMessage(CooldownChannelTag, Duration);
+	EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, false);
+}
+
+void UEPGA_Skill_Base::OnActivationRejected(uint32 StartedGeneration)
+{
+	CooldownTimer.Revert(StartedGeneration);
 }
 
 void UEPGA_Skill_Base::BroadcastActiveDuration(float Duration)
@@ -116,22 +161,20 @@ void UEPGA_Skill_Base::OnCastTimerComplete()
 		UAbilityTask_NetworkSyncPoint::WaitNetSync(this, EAbilityTaskNetSyncType::OnlyServerWait);
 	Sync->OnSync.AddDynamic(this, &UEPGA_Skill_Base::OnCastSynced);
 	Sync->ReadyForActivation();
-	// FScopedPredictionWindow ScopedPrediction(
-	// 	GetAbilitySystemComponentFromActorInfo(),
-	// 	CurrentActivationInfo.GetActivationPredictionKey());
-	//
-	// OnCastComplete();
-	// EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, false);
 }
 
 void UEPGA_Skill_Base::OnCastSynced()
 {
-	OnCastComplete();
-	EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, false);
+	CompleteCast();
 }
 
 void UEPGA_Skill_Base::OnDamageDuringCast(FGameplayEventData Payload)
 {
 	OnCastInterrupted();
 	EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, true);
+}
+
+AEPCharacter* UEPGA_Skill_Base::GetEPCharacter() const
+{
+	return CurrentActorInfo ? Cast<AEPCharacter>(CurrentActorInfo->AvatarActor.Get()) : nullptr;
 }

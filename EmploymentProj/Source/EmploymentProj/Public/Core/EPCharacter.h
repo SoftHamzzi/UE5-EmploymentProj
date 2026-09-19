@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Character.h"
 #include "AbilitySystemInterface.h"
+#include "Core/EPLocalModifiers.h"
 #include "EPCharacter.generated.h"
 
 // --- 카메라 ---
@@ -48,6 +49,8 @@ public:
 	UEPInventoryComponent* GetInventoryComponent() const;
 	FORCEINLINE USkeletalMeshComponent* GetFaceMesh() const { return FaceMesh; }
 	FORCEINLINE USkeletalMeshComponent* GetOutfitMesh() const { return OutfitMesh; }
+	FEPLocalModifiers& GetLocalModifiers() { return LocalModifiers; }
+	const FEPLocalModifiers& GetLocalModifiers() const { return LocalModifiers; }
 	bool IsDead() const;
 	UEPServerSideRewindComponent* GetServerSideRewindComponent() const;
 
@@ -157,6 +160,8 @@ private:
 	TObjectPtr<UAbilitySystemComponent> ASC;
 	
 	FDelegateHandle MoveSpeedMultiplierHandle;
+	
+	FEPLocalModifiers LocalModifiers;
 	
 	// --- 테스트: 로컬 입력 기반 자동 좌우 이동 ---
 	// T 키로 토글. 클라이언트 입력 -> 서버 검증 경로를 그대로 사용한다.

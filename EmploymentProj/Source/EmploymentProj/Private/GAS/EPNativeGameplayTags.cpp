@@ -49,4 +49,9 @@ namespace EmpGameplayTags
 	UE_DEFINE_GAMEPLAY_TAG(TAG_HitZone_Head,               "HitZone.Head")
 	UE_DEFINE_GAMEPLAY_TAG(TAG_HitZone_Chest,              "HitZone.Chest")
 	UE_DEFINE_GAMEPLAY_TAG(TAG_HitZone_Limbs,               "HitZone.Limbs")
+	
+	// Modifier
+	UE_DEFINE_GAMEPLAY_TAG(TAG_Modifier_MoveSpeed,          "Modifier.MoveSpeed")
+	UE_DEFINE_GAMEPLAY_TAG(TAG_Modifier_MoveSpeed_Casting,  "Modifier.MoveSpeed.Casting")
+	UE_DEFINE_GAMEPLAY_TAG(TAG_Modifier_CooldownRate,       "Modifier.CooldownRate")
 }

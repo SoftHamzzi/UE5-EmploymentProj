@@ -22,6 +22,10 @@ void UEPAttributeSet::PreAttributeChange(const FGameplayAttribute& Attribute, fl
 		NewValue = FMath::Max(NewValue, 1.f);
 	if (Attribute == GetMoveSpeedMultiplierAttribute())
 		NewValue = FMath::Clamp(NewValue, 0.05f, 3.f);
+	if (Attribute == GetCooldownFlatReductionAttribute())
+		NewValue = FMath::Max(NewValue, 0.f);
+	if (Attribute == GetCooldownPctReductionAttribute())
+		NewValue = FMath::Clamp(NewValue, 0.f, 1.f);
 }
 
 void UEPAttributeSet::PostGameplayEffectExecute(const FGameplayEffectModCallbackData& Data)
@@ -100,6 +104,8 @@ void UEPAttributeSet::GetLifetimeReplicatedProps(TArray<class FLifetimeProperty>
 	DOREPLIFETIME_CONDITION_NOTIFY(UEPAttributeSet, Ammo, COND_OwnerOnly, REPNOTIFY_Always);
 	DOREPLIFETIME_CONDITION_NOTIFY(UEPAttributeSet, MaxAmmo, COND_OwnerOnly, REPNOTIFY_Always);
 	DOREPLIFETIME_CONDITION_NOTIFY(UEPAttributeSet, MoveSpeedMultiplier, COND_OwnerOnly, REPNOTIFY_Always);
+	DOREPLIFETIME_CONDITION_NOTIFY(UEPAttributeSet, CooldownFlatReduction, COND_OwnerOnly, REPNOTIFY_Always);
+	DOREPLIFETIME_CONDITION_NOTIFY(UEPAttributeSet, CooldownPctReduction, COND_OwnerOnly, REPNOTIFY_Always);
 }
 
 void UEPAttributeSet::OnRep_Health(const FGameplayAttributeData& OldValue)
@@ -125,4 +131,14 @@ void UEPAttributeSet::OnRep_MaxAmmo(const FGameplayAttributeData& OldValue)
 void UEPAttributeSet::OnRep_MoveSpeedMultiplier(const FGameplayAttributeData& OldValue)
 {
 	GAMEPLAYATTRIBUTE_REPNOTIFY(UEPAttributeSet, MoveSpeedMultiplier, OldValue);
+}
+
+void UEPAttributeSet::OnRep_CooldownFlatReduction(const FGameplayAttributeData& OldValue)
+{
+	GAMEPLAYATTRIBUTE_REPNOTIFY(UEPAttributeSet, CooldownFlatReduction, OldValue);
+}
+
+void UEPAttributeSet::OnRep_CooldownPctReduction(const FGameplayAttributeData& OldValue)
+{
+	GAMEPLAYATTRIBUTE_REPNOTIFY(UEPAttributeSet, CooldownPctReduction, OldValue);
 }

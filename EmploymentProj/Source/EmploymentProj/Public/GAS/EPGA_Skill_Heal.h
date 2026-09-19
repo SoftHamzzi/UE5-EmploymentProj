@@ -31,5 +31,5 @@ protected:
 
 	// === 함수 ===
 	virtual void OnCastComplete() override;
-	virtual void ConfigureCastingSpec(FGameplayEffectSpecHandle& SpecHandle) override;
+	virtual float GetCastMoveSpeedMultiplier() const { return HealMoveSpeedMultiplier; }
 };

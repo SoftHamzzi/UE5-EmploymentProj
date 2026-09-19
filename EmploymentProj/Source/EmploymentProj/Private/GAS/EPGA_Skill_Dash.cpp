@@ -13,7 +13,7 @@ UEPGA_Skill_Dash::UEPGA_Skill_Dash()
 	Tags.AddTag(EmpGameplayTags::TAG_Ability_Skill_Dash);
 	SetAssetTags(Tags);
 	
-	SetCooldownTag(EmpGameplayTags::TAG_Cooldown_Skill_Dash);
+	CooldownChannelTag = EmpGameplayTags::TAG_Cooldown_Skill_Dash;
 }
 
 void UEPGA_Skill_Dash::OnCastComplete()
@@ -30,6 +30,4 @@ void UEPGA_Skill_Dash::OnCastComplete()
 		LaunchVel.Z = DashZBoost;
 		Char->LaunchCharacter(LaunchVel, true, true);
 	}
-	
-	ApplyCooldownGE();
 }

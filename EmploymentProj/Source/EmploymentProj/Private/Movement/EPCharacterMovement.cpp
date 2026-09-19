@@ -4,9 +4,11 @@
 
 #include "AbilitySystemComponent.h"
 #include "AbilitySystemGlobals.h"
+#include "Core/EPCharacter.h"
 #include "GameFramework/Character.h"
 #include "GameFramework/GameStateBase.h"
 #include "GAS/EPAttributeSet.h"
+#include "GAS/EPNativeGameplayTags.h"
 
 UEPCharacterMovement::UEPCharacterMovement()
 {
@@ -52,6 +54,9 @@ float UEPCharacterMovement::GetMaxSpeed() const {
 	float Multiplier = 1.f;
 	if (const UAbilitySystemComponent* ASC = UAbilitySystemGlobals::GetAbilitySystemComponentFromActor(GetOwner()))
 		Multiplier = ASC->GetNumericAttribute(UEPAttributeSet::GetMoveSpeedMultiplierAttribute());
+	
+	if (const AEPCharacter* EPChar = Cast<AEPCharacter>(GetOwner()))
+		Multiplier *= EPChar->GetLocalModifiers().Product(EmpGameplayTags::TAG_Modifier_MoveSpeed);
 	
 	return Base * Multiplier;
 }

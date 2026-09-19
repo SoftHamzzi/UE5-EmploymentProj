@@ -45,6 +45,15 @@ public:
 	FGameplayAttributeData MoveSpeedMultiplier;
 	ATTRIBUTE_ACCESSORS(UEPAttributeSet, MoveSpeedMultiplier);
 	
+	// --- Cooldown ---
+	UPROPERTY(BlueprintReadOnly, Category = "Attribute|Cooldown", ReplicatedUsing = OnRep_CooldownFlatReduction)
+	FGameplayAttributeData CooldownFlatReduction;
+	ATTRIBUTE_ACCESSORS(UEPAttributeSet, CooldownFlatReduction);
+	
+	UPROPERTY(BlueprintReadOnly, Category = "Attribute|Cooldown", ReplicatedUsing = OnRep_CooldownPctReduction)
+	FGameplayAttributeData CooldownPctReduction;
+	ATTRIBUTE_ACCESSORS(UEPAttributeSet, CooldownPctReduction);
+	
 	// === 함수 ===
 	virtual void PreAttributeChange(const FGameplayAttribute& Attribute, float& NewValue) override;
 	virtual void PostGameplayEffectExecute(const FGameplayEffectModCallbackData& Data) override;
@@ -68,5 +77,11 @@ protected:
 	
 	UFUNCTION()
 	void OnRep_MoveSpeedMultiplier(const FGameplayAttributeData& OldValue);
+	
+	UFUNCTION()
+	void OnRep_CooldownFlatReduction(const FGameplayAttributeData& OldValue);
+	
+	UFUNCTION()
+	void OnRep_CooldownPctReduction(const FGameplayAttributeData& OldValue);
 	
 };
