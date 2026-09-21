@@ -4,6 +4,7 @@
 #include "Combat/EPWeapon.h"
 
 #include "AbilitySystemComponent.h"
+#include "Combat/EPCombatDeveloperSettings.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Core/EPCharacter.h"
 #include "Engine/World.h"
@@ -27,6 +28,12 @@ void AEPWeapon::BeginPlay()
 {
 	Super::BeginPlay();
 	BuildSpreadCDFTable();
+	
+	if (HasAuthority())
+	{
+		const UEPCombatDeveloperSettings* Settings = GetDefault<UEPCombatDeveloperSettings>();
+		FireLimiter.Reset(GetWorld()->GetTimeSeconds(), Settings->FireRateBurstAllowance);
+	}
 }
 
 void AEPWeapon::Tick(float DeltaTime)
@@ -96,13 +103,6 @@ void AEPWeapon::Fire(const FVector& AimDir, TArray<FVector>& OutPellets)
 	
 }
 
-FVector AEPWeapon::ApplySpread(const FVector& Direction) const
-{
-	float FinalSpread = CalculateSpread();
-	float HalfAngle = FMath::DegreesToRadians(FinalSpread * 0.5f);
-	return FMath::VRandCone(Direction, HalfAngle);
-}
-
 void AEPWeapon::UpdateSpread(float DeltaTime)
 {
 	if (CurrentSpread > 0.f)
@@ -117,7 +117,6 @@ void AEPWeapon::UpdateSpread(float DeltaTime)
 float AEPWeapon::CalculateSpread() const
 {
 	float Spread = WeaponDef->BaseSpread + CurrentSpread;
-	UE_LOG(LogTemp, Log, TEXT("%.3f"), Spread);
 	
 	if (AEPCharacter* EPOwner = Cast<AEPCharacter>(GetOwner()))
 	{

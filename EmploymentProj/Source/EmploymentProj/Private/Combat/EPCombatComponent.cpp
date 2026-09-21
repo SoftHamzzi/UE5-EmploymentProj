@@ -24,8 +24,8 @@
 #include "AbilitySystemComponent.h"
 #include "GameplayEffect.h"
 #include "GAS/EPAttributeSet.h"
-#include "GAS/EPGA_Item_PrimaryUse.h"
 #include "GameplayTagContainer.h"
+#include "Camera/CameraComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Engine/World.h"
 #include "GAS/EPNativeGameplayTags.h"
@@ -56,15 +56,21 @@ AEPWeapon* UEPCombatComponent::GetEquippedWeapon() const
 	return EquippedWeapon;
 }
 
-void UEPCombatComponent::HandleServerFire(const FVector& Origin, const FVector& Direction)
+void UEPCombatComponent::HandleServerFire(const FVector& Direction, const float ClientMoveTimeStamp)
 {
 	// 연사 속도, 탄약 검증
 	if (!EquippedWeapon || !EquippedWeapon->WeaponDef) return;
 	
 	AEPCharacter* Owner = GetOwnerCharacter();
-	if (!Owner) return;
+	if (!Owner || !Owner->GetCameraComponent()) return;
 	
-	constexpr float MaxOriginDrift = 200.f;                                                                                                                                       
+	FVector Origin;
+	const UEPServerSideRewindComponent* SSR = Owner->GetServerSideRewindComponent();
+	const bool bHistoryHit = SSR && SSR->GetShotOriginAt(ClientMoveTimeStamp, Origin);
+	if (!bHistoryHit)
+		Origin = Owner->GetCameraComponent()->GetComponentLocation();
+	
+	constexpr float MaxOriginDrift = 200.f;                                                                                                                                    
 	if (FVector::DistSquared(Origin, Owner->GetActorLocation()) > FMath::Square(MaxOriginDrift))                                                                                  
 	{                                                                                                                                                                             
 		UE_LOG(LogTemp, Warning, TEXT("[HandleServerFire] Origin drift rejected: %.1f"),                                                                                          
@@ -162,16 +168,6 @@ void UEPCombatComponent::OnRep_EquippedWeapon()
 	{
 		Owner->GetMesh()->LinkAnimClassLayers(EquippedWeapon->WeaponDef->WeaponAnimLayer);
 	}
-}
-
-void UEPCombatComponent::Server_ConfirmFire_Implementation(FVector_NetQuantize Origin,
-	FVector_NetQuantizeNormal Direction, FGameplayAbilitySpecHandle AbilityHandle)
-{
-	AEPCharacter* Char = GetOwnerCharacter();                                                                                                                                 
-	UAbilitySystemComponent* ASC = Char ? Char->GetAbilitySystemComponent() : nullptr;                                                                                        
-	FGameplayAbilitySpec* Spec = ASC ? ASC->FindAbilitySpecFromHandle(AbilityHandle) : nullptr;                                                                               
-	if (UEPGA_Item_PrimaryUse* Ability = Spec ? Cast<UEPGA_Item_PrimaryUse>(Spec->GetPrimaryInstance()) : nullptr)                                                            
-		Ability->ServerConfirmOneShot(Origin, Direction);
 }
 
 // 서버 전용

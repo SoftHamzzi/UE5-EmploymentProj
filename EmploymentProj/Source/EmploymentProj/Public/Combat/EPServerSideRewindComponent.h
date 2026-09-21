@@ -28,7 +28,8 @@ public:
 		TArray<FHitResult>& OutConfirmedHits);
 
 	FEPHitboxSnapshot GetSnapshotAtTime(float TargetTime) const;
-
+	
+	bool GetShotOriginAt(float ClientTimeStamp, FVector& OutOrigin) const;
 
 protected:
 	virtual void BeginPlay() override;
@@ -42,7 +43,7 @@ protected:
 	TArray<FEPHitboxSnapshot> HitboxHistory;
 
 	void SaveHitboxSnapshot(float Time, const FVector& Location);
-	void OnServerMoveProcessed(float Time, FVector Location);
+	void OnServerMoveProcessed(float ServerTime, FVector Location, float ClientTimeStamp, bool bNewMove);
 
 	// CMC OnMovementUpdated(TickDispatch)에서 받은 값을 임시 보관.
 	// PostPhysics Tick에서 본 Transform이 갱신된 뒤 실제 스냅샷으로 커밋.
@@ -62,5 +63,14 @@ private:
 		const AEPCharacter* Shooter,
 		const AEPCharacter* Target,
 		float ServerNow) const;
+
+	struct FEPShotOriginEntry
+	{
+		float TimeStamp = -1.f;
+		FVector Origin = FVector::ZeroVector;
+	};
+	TArray<FEPShotOriginEntry> ShotOriginHistory;
+	int32 ShotOriginNext = 0;
 	
+	void RecordShotOrigin(float ClientTimeStamp, const FVector& Origin);
 };

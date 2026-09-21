@@ -5,6 +5,8 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
 #include "Data/EPWeaponDefinition.h"
+#include "GAS/EPLocalTimer.h"
+#include "Combat/EPRateLimiter.h"
 #include "EPWeapon.generated.h"
 
 UCLASS()
@@ -31,8 +33,10 @@ public:
 	// --- 인터페이스 ---
     bool CanFire() const;
     void Fire(const FVector& AimDir, TArray<FVector>& OutPellets);
-    FVector ApplySpread(const FVector& Direction) const;
     
+	FEPLocalTimer& GetFireTimer() { return FireTimer; }
+	FEPRateLimiter& GetFireLimiter() { return FireLimiter; }
+	float GetBaseFireRate() const { return (WeaponDef && WeaponDef->FireRate > 0.f) ? WeaponDef->FireRate : 5.f; }
     float GetDamage() const;
     FORCEINLINE float GetRecoilPitch() const { return WeaponDef->RecoilPitch; }
     FORCEINLINE float GetRecoilYaw() const { return WeaponDef->RecoilYaw; }
@@ -55,6 +59,9 @@ protected:
 private:
 	static constexpr int32 CDFTableSize = 256;
 	TArray<float> SpreadCDFTable;
+	
+	FEPLocalTimer FireTimer;
+	FEPRateLimiter FireLimiter;
 	
 	void BuildSpreadCDFTable();
 	

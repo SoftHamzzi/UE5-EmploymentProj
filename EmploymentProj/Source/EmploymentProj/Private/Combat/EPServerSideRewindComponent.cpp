@@ -2,6 +2,7 @@
 
 #include "Combat/EPServerSideRewindComponent.h"
 
+#include "Camera/CameraComponent.h"
 #include "Combat/EPCombatDeveloperSettings.h"
 #include "Combat/EPWeapon.h"
 #include "Components/CapsuleComponent.h"
@@ -133,6 +134,9 @@ void UEPServerSideRewindComponent::BeginPlay()
 	{
 		CMC->OnServerMoveProcessed.AddUObject(this, &UEPServerSideRewindComponent::OnServerMoveProcessed);
 	}
+	
+	ShotOriginHistory.SetNum(FMath::Max(16, CombatSettings->ShotOriginHistoryCount));
+	ShotOriginNext = 0;
 }
 
 void UEPServerSideRewindComponent::TickComponent(
@@ -155,13 +159,18 @@ void UEPServerSideRewindComponent::TickComponent(
 	}
 }
 
-void UEPServerSideRewindComponent::OnServerMoveProcessed(float Time, FVector Location)
+void UEPServerSideRewindComponent::OnServerMoveProcessed(float Time, FVector Location, float ClientTimeStamp, bool bNewMove)
 {
-	// TickDispatch 시점 — 본 Transform이 아직 갱신되지 않았으므로 값만 보관.
-	// 실제 스냅샷 저장은 PostPhysics Tick(본 갱신 완료 후)에서 수행.
-	bHasPendingSnapshot = true;
-	PendingSnapshotTime = Time;
-	PendingSnapshotLocation = Location;
+	if (const AEPCharacter* OwnerChar = Cast<AEPCharacter>(GetOwner()))
+		if (const UCameraComponent* Cam = OwnerChar->GetCameraComponent())
+			RecordShotOrigin(ClientTimeStamp, Cam->GetComponentLocation());
+	
+	if (bNewMove)
+	{
+		bHasPendingSnapshot = true;
+		PendingSnapshotTime = Time;
+		PendingSnapshotLocation = Location;
+	}
 }
 
 void UEPServerSideRewindComponent::SaveHitboxSnapshot(float Time, const FVector& Location)
@@ -258,6 +267,24 @@ FEPHitboxSnapshot UEPServerSideRewindComponent::GetSnapshotAtTime(float TargetTi
 	return Result;
 }
 
+bool UEPServerSideRewindComponent::GetShotOriginAt(float ClientTimeStamp, FVector& OutOrigin) const
+{
+	if (ClientTimeStamp < 0.f || ShotOriginHistory.IsEmpty()) return false;
+	
+	const int32 Num = ShotOriginHistory.Num();
+	for (int32 i = 1; i<=Num; i++)
+	{
+		const FEPShotOriginEntry& Entry = ShotOriginHistory[(ShotOriginNext - i + Num) % Num];
+		if (Entry.TimeStamp < 0.f) break;
+		if (FMath::IsNearlyEqual(Entry.TimeStamp, ClientTimeStamp, KINDA_SMALL_NUMBER))
+		{
+			OutOrigin = Entry.Origin;
+			return true;
+		}
+	}
+	return false;
+}
+
 TArray<AEPCharacter*> UEPServerSideRewindComponent::GetHitscanCandidates(
 	AEPCharacter* Shooter,
 	AEPWeapon* EquippedWeapon,
@@ -324,6 +351,13 @@ float UEPServerSideRewindComponent::ComputeRewindTime(const AEPCharacter* Shoote
 
 	const float TotalDelay = FMath::Clamp(PredictionDelay, 0.f, CombatSettings->MaxRewindSeconds);
 	return ServerNow - TotalDelay;
+}
+
+void UEPServerSideRewindComponent::RecordShotOrigin(float ClientTimeStamp, const FVector& Origin)
+{
+	if (ShotOriginHistory.IsEmpty()) return;
+	ShotOriginHistory[ShotOriginNext] = { ClientTimeStamp, Origin };
+	ShotOriginNext = (ShotOriginNext + 1) % ShotOriginHistory.Num();
 }
 
 bool UEPServerSideRewindComponent::ConfirmHitscan(

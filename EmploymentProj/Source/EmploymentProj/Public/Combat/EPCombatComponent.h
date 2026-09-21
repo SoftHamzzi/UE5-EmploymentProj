@@ -34,10 +34,7 @@ public:
 	AEPCharacter* GetOwnerCharacter() const;
 	AEPWeapon* GetEquippedWeapon() const;
 	
-	void HandleServerFire(const FVector& Origin, const FVector& Direction);
-	
-	UFUNCTION(Server, Reliable)
-	void Server_ConfirmFire(FVector_NetQuantize Origin, FVector_NetQuantizeNormal Direction, FGameplayAbilitySpecHandle AbilityHandle);
+	void HandleServerFire(const FVector& Direction, float ClientMoveTimeStamp);
 	
 	static void ApplyGEDamage(
 		AActor* Target,

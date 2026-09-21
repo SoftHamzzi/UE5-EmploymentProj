@@ -9,7 +9,9 @@
 #include "Combat/EPWeapon.h"
 #include "Core/EPCharacter.h"
 #include "Engine/World.h"
-#include "GameFramework/GameStateBase.h"
+#include "AbilitySystemComponent.h"
+#include "GameFramework/CharacterMovementComponent.h"
+#include "GAS/EPTargetData_Fire.h"
 #include "GAS/EPNativeGameplayTags.h"
 
 UEPGA_Item_PrimaryUse::UEPGA_Item_PrimaryUse()
@@ -27,9 +29,16 @@ UEPGA_Item_PrimaryUse::UEPGA_Item_PrimaryUse()
 	ActivationBlockedTags.AddTag(EmpGameplayTags::TAG_State_Reloading);
 }
 
+bool UEPGA_Item_PrimaryUse::CanActivateAbility(const FGameplayAbilitySpecHandle Handle,
+	const FGameplayAbilityActorInfo* ActorInfo, const FGameplayTagContainer* SourceTags,
+	const FGameplayTagContainer* TargetTags, FGameplayTagContainer* OptionalRelevantTags) const
+{
+	return Super::CanActivateAbility(Handle, ActorInfo, SourceTags, TargetTags, OptionalRelevantTags);
+}
+
 void UEPGA_Item_PrimaryUse::ActivateAbility(const FGameplayAbilitySpecHandle Handle,
-	const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo,
-	const FGameplayEventData* TriggerEventData)
+                                            const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo,
+                                            const FGameplayEventData* TriggerEventData)
 {
 	Super::ActivateAbility(Handle, ActorInfo, ActivationInfo, TriggerEventData);
 	
@@ -45,7 +54,7 @@ void UEPGA_Item_PrimaryUse::ActivateAbility(const FGameplayAbilitySpecHandle Han
 	
 	if (Weapon->WeaponDef->FireMode == EEPFireMode::Auto)
 	{
-		const float Interval = GetFireInterval(Weapon);
+		const float Interval = 1 / Weapon->GetBaseFireRate();
 		GetWorld()->GetTimerManager().SetTimer(FireTimerHandle, this, &UEPGA_Item_PrimaryUse::FireOnce, Interval, true);
 	}
 	else
@@ -65,8 +74,20 @@ void UEPGA_Item_PrimaryUse::EndAbility(const FGameplayAbilitySpecHandle Handle,
 	Super::EndAbility(Handle, ActorInfo, ActivationInfo, bReplicateEndAbility, bWasCancelled);
 }
 
+void UEPGA_Item_PrimaryUse::InputPressed(const FGameplayAbilitySpecHandle Handle,
+	const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo)
+{
+	Super::InputPressed(Handle, ActorInfo, ActivationInfo);
+}
+
+void UEPGA_Item_PrimaryUse::InputReleased(const FGameplayAbilitySpecHandle Handle,
+	const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo)
+{
+	Super::InputReleased(Handle, ActorInfo, ActivationInfo);
+}
+
 void UEPGA_Item_PrimaryUse::ApplyCooldown(const FGameplayAbilitySpecHandle Handle,
-	const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo) const
+                                          const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo) const
 {
 	UGameplayEffect* CooldownGE = GetCooldownGameplayEffect();
 	if (!CooldownGE) return;
@@ -130,7 +151,76 @@ void UEPGA_Item_PrimaryUse::FireOnce()
 	}
 }
 
-float UEPGA_Item_PrimaryUse::GetFireInterval(const AEPWeapon* Weapon)
+void UEPGA_Item_PrimaryUse::ArmNextShot()
 {
-	return Weapon ? (1.f / Weapon->WeaponDef->FireRate) : 0.2f;
+}
+
+void UEPGA_Item_PrimaryUse::OnFireTimerTick()
+{
+}
+
+void UEPGA_Item_PrimaryUse::SendFireTargetData(const FVector& Direction, float ClientMoveTimeStamp)
+{
+}
+
+void UEPGA_Item_PrimaryUse::OnTargetDataReady(const FGameplayAbilityTargetDataHandle& Data, FGameplayTag ApplicationTag)
+{
+}
+
+bool UEPGA_Item_PrimaryUse::ServerConfirmOneShot(const FVector& Direction, float ClientMoveTimeStamp)
+{
+	AEPCharacter* Char = GetCharacter();
+	UEPCombatComponent* Combat = Char->GetCombatComponent();
+	AEPWeapon* Weapon = GetWeapon();
+	if (!Char || !Combat || !Weapon) return false;
+	
+	const float RefillPerSecond = Weapon->GetBaseFireRate() * GetFireRateMultiplier();
+	if (!Weapon->GetFireLimiter().TryTake(GetWorld()->GetTimeSeconds(), RefillPerSecond))
+		return true;
+	
+	if (!CommitAbilityCost(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo))
+		return false;
+	
+	Combat->HandleServerFire(Direction, ClientMoveTimeStamp);
+	
+	return true;
+}
+
+AEPCharacter* UEPGA_Item_PrimaryUse::GetCharacter() const
+{
+	return CurrentActorInfo ? Cast<AEPCharacter>(CurrentActorInfo->AvatarActor.Get()) : nullptr;
+}
+
+AEPWeapon* UEPGA_Item_PrimaryUse::GetWeapon() const
+{
+	AEPCharacter* Char = GetCharacter();
+	if (!Char) return nullptr;
+	
+	UEPCombatComponent* Combat = Char->GetCombatComponent();
+	if (!Combat) return nullptr;
+	
+	AEPWeapon* Weapon = Combat->GetEquippedWeapon();
+	if (!Weapon) return nullptr;
+	
+	return Weapon;
+}
+
+float UEPGA_Item_PrimaryUse::GetFireRateMultiplier() const
+{
+	AEPCharacter* Char = GetCharacter();
+	if (!Char) return 1.0f;
+	
+	return Char->GetLocalModifiers().Product(EmpGameplayTags::TAG_Modifier_FireRate);
+}
+
+float UEPGA_Item_PrimaryUse::GetClientMoveTimeStamp() const
+{
+	if (!CurrentActorInfo || CurrentActorInfo->IsNetAuthority()) return -1.f;
+	AEPCharacter* Char = GetCharacter();
+	return Char->GetCharacterMovement()->GetPredictionData_Client_Character()->CurrentTimeStamp;
+}
+
+bool UEPGA_Item_PrimaryUse::IsAutoFire(const AEPWeapon* Weapon)
+{
+	return Weapon && Weapon->WeaponDef && Weapon->WeaponDef->FireMode == EEPFireMode::Auto;
 }

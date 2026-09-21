@@ -16,6 +16,12 @@ class EMPLOYMENTPROJ_API UEPGA_Item_PrimaryUse : public UGameplayAbility
 public:
 	UEPGA_Item_PrimaryUse();
 	
+	virtual bool CanActivateAbility(const FGameplayAbilitySpecHandle Handle,
+		const FGameplayAbilityActorInfo* ActorInfo,
+		const FGameplayTagContainer* SourceTags = nullptr,
+		const FGameplayTagContainer* TargetTags = nullptr,
+		FGameplayTagContainer* OptionalRelevantTags = nullptr) const override;
+	
 	virtual void ActivateAbility(
 		const FGameplayAbilitySpecHandle Handle,
 		const FGameplayAbilityActorInfo* ActorInfo,
@@ -29,21 +35,40 @@ public:
 		bool bReplicateEndAbility,
 		bool bWasCancelled) override;
 	
+	virtual void InputPressed(
+		const FGameplayAbilitySpecHandle Handle,
+		const FGameplayAbilityActorInfo* ActorInfo,
+		const FGameplayAbilityActivationInfo ActivationInfo) override;
+	
+	virtual void InputReleased(const FGameplayAbilitySpecHandle Handle,
+		const FGameplayAbilityActorInfo* ActorInfo,
+		const FGameplayAbilityActivationInfo ActivationInfo) override;
+	
 	virtual void ApplyCooldown(
 		const FGameplayAbilitySpecHandle Handle,
 		const FGameplayAbilityActorInfo* ActorInfo,
 		const FGameplayAbilityActivationInfo ActivationInfo) const override;
-	
-	bool ServerConfirmOneShot(const FVector& Origin, const FVector& Direction);
 	
 protected:
 	
 private:
 	// === 변수 ===
 	FTimerHandle FireTimerHandle;
+	bool bPendingShot = false;
+	FDelegateHandle TargetDataDelegateHandle;
 	
 	// === 함수 ===
 	void FireOnce();
+	void ArmNextShot();
+	void OnFireTimerTick();
+	void SendFireTargetData(const FVector& Direction, float ClientMoveTimeStamp);
 	
-	static float GetFireInterval(const AEPWeapon* Weapon);
+	void OnTargetDataReady(const FGameplayAbilityTargetDataHandle& Data, FGameplayTag ApplicationTag);
+	bool ServerConfirmOneShot(const FVector& Direction, float ClientMoveTimeStamp);
+	
+	AEPCharacter* GetCharacter() const;
+	AEPWeapon* GetWeapon() const;
+	float GetFireRateMultiplier() const;
+	float GetClientMoveTimeStamp() const;
+	static bool IsAutoFire(const AEPWeapon* Weapon);
 };

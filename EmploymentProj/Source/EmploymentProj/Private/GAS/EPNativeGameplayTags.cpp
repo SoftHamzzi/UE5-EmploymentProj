@@ -54,4 +54,5 @@ namespace EmpGameplayTags
 	UE_DEFINE_GAMEPLAY_TAG(TAG_Modifier_MoveSpeed,          "Modifier.MoveSpeed")
 	UE_DEFINE_GAMEPLAY_TAG(TAG_Modifier_MoveSpeed_Casting,  "Modifier.MoveSpeed.Casting")
 	UE_DEFINE_GAMEPLAY_TAG(TAG_Modifier_CooldownRate,       "Modifier.CooldownRate")
+	UE_DEFINE_GAMEPLAY_TAG(TAG_Modifier_FireRate,       "Modifier.FireRate")
 }

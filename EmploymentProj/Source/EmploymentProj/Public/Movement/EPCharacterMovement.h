@@ -7,7 +7,8 @@
 #include "EPCharacterMovement.generated.h"
 
 // 서버가 NewMove 처리를 완료할 때 발행 — 구독자가 이동 시각과 위치를 수신
-DECLARE_MULTICAST_DELEGATE_TwoParams(FEPOnServerMoveProcessed, float /*Time*/, FVector /*Location*/);
+DECLARE_MULTICAST_DELEGATE_FourParams(FEPOnServerMoveProcessed,
+	float /*ServerTime*/, FVector /*Location*/, float /*ClientTimeStamp*/, bool /*bNewMove*/);
 
 UCLASS()
 class EMPLOYMENTPROJ_API UEPCharacterMovement : public UCharacterMovementComponent

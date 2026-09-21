@@ -18,6 +18,12 @@ public:
 	UPROPERTY(Config, EditAnywhere, Category="LagComp")
 	float PredictionFudgeSeconds = 0.02f;
 	
+	UPROPERTY(Config, EditAnywhere, Category="GAS|FireRate", meta=(ClampMin="1", ClampMax="4"))
+	float FireRateBurstAllowance = 2.f;
+	
+	UPROPERTY(Config, EditAnywhere, Category="LagComp", meta=(ClampMin="16", ClampMax="256"))
+	int32 ShotOriginHistoryCount = 64;
+	
 	UPROPERTY(Config, EditAnywhere, Category="Trace")
 	float BroadPhasePaddingCm = 50.f;
 	
