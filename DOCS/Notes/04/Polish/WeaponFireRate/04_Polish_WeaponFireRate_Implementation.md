@@ -5,6 +5,7 @@
 > 목표: **현재 코드에서 바로 따라 구현 가능한 순서** 제공. 코드는 사용자가 직접 작성한다
 > 문서 우선순위: 구현 시 충돌하면 이 문서 → STATUS → 설계 문서 순
 > 2026-09-21: UT식 원점 동기(타임스탬프) 반영 — Step 2·4·6·8·15 변경
+> 2026-09-22: 탄약 예측 반영 — Step 9 `FireOnce`·`SendFireTargetData`, §15 15번, 함정표
 
 ---
 
@@ -203,8 +204,9 @@ UE_DEFINE_GAMEPLAY_TAG(TAG_Modifier_FireRate, "Modifier.FireRate")
 
 public:
 	// --- 발사 간격 (복제 X) ---
-	FEPLocalTimer&  GetFireTimer()   { return FireTimer; }
-	FEPRateLimiter& GetFireLimiter() { return FireLimiter; }
+	FEPLocalTimer&       GetFireTimer()       { return FireTimer; }
+	const FEPLocalTimer& GetFireTimer() const { return FireTimer; }   // CanActivateAbility(const)의 IsElapsed 읽기용
+	FEPRateLimiter&      GetFireLimiter()     { return FireLimiter; } // 서버 TryTake(쓰기)뿐 → const 버전 불필요
 	/** 배율 적용 전 발사 속도(발/초). PrimaryUse의 static GetFireInterval을 대체 */
 	float GetBaseFireRate() const { return (WeaponDef && WeaponDef->FireRate > 0.f) ? WeaponDef->FireRate : 5.f; }
 
@@ -641,13 +643,24 @@ void UEPGA_Item_PrimaryUse::FireOnce()
 		return;
 	}
 
-	// 원격 클라 — 코스메틱은 클라 값으로, 확정은 TargetData로
+	// 원격 클라 — 탄약 예측 + 코스메틱 + TargetData, 셋이 같은 예측 키 아래.
+	// 첫 발은 활성화 윈도우 안(활성화 키 유효) → 새 키를 만들지 않는다: 배치 RPC가 활성화 키만 싣고, CatchUpTo는 정확히 그 키만 잡는다.
+	// 타이머 발은 윈도우 밖 → 새 키.
+	UAbilitySystemComponent* ASC = GetAbilitySystemComponentFromActorInfo();
+	FScopedPredictionWindow ScopedPrediction(ASC, /*bCanGenerateNewKey*/ !ASC->ScopedPredictionKey.IsValidForMorePrediction());
+
+	if (!CommitAbilityCost(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo))   // GE_ConsumeAmmo 예측 적용 → HUD 즉시 −1
+	{
+		EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, true);
+		return;
+	}
+
 	const FVector CamLoc = Char->GetCameraComponent()->GetComponentLocation();
-	Combat->PlayLocalMuzzleEffect(CamLoc);
+	Combat->PlayLocalMuzzleEffect(CamLoc);                                               // 코스메틱은 클라 값으로
 	if (Weapon->WeaponDef->BallisticType == EEPBallisticType::ProjectileFast)
 		Combat->SpawnLocalCosmeticProjectile(CamLoc, Direction);
 
-	SendFireTargetData(Direction, ClientMoveTimeStamp);
+	SendFireTargetData(Direction, ClientMoveTimeStamp);                                  // 윈도우 안에서 — ScopedPredictionKey를 싣는다
 }
 
 void UEPGA_Item_PrimaryUse::ArmNextShot()
@@ -685,9 +698,10 @@ void UEPGA_Item_PrimaryUse::SendFireTargetData(const FVector& Direction, float C
 	Data->ClientMoveTimeStamp = ClientMoveTimeStamp;
 	const FGameplayAbilityTargetDataHandle Handle(Data);
 
-	// CurrentPredictionKey는 무효 키 — 발마다 예측하는 GE가 없고, 유효 키를 넘기면 서버가 발마다 키를 다시 복제한다
+	// CurrentPredictionKey = 이 발의 예측 키 (FireOnce의 윈도우). 서버가 같은 키로 윈도우를 열어 CommitAbilityCost → ack → 클라 예측 GE 제거.
+	// 거절(버킷·탄약)이면 차감 없이 ack만 → 예측 GE 제거 = 탄약 복구
 	ASC->CallServerSetReplicatedTargetData(CurrentSpecHandle, CurrentActivationInfo.GetActivationPredictionKey(),
-		Handle, FGameplayTag(), FPredictionKey());
+		Handle, FGameplayTag(), ASC->ScopedPredictionKey);
 }
 
 // ---------------------------------------------------------------- 서버
@@ -958,6 +972,7 @@ UE_LOG(LogTemp, Log, TEXT("[Fire] SV shot ts=%.4f hit=%d origin=%s dir=%s"), Cli
 | 12 | 탄약 소진 — `Auto`로 탄창 비우기 | 클라·서버 인스턴스 둘 다 종료 (`showdebug abilitysystem`에서 활성 0). 재장전 후 다시 발사됨 |
 | 13 | 타임스탬프 리셋 — 임시로 `MinTimeBetweenTimeStampResets`를 10초로 (`EPCharacterMovement` 생성자) 하고 30초 연사 | 리셋 직후 1~2발 `hit=0`, 이후 다시 `hit=1`. 거부·오발 없음 |
 | 14 | (Step 14 뒤) 배칭 — 서버 콘솔 `AbilitySystem.ServerRPCBatching.Log 1` | `Single` 클릭당 `::ServerAbilityRPCBatch_Implementation` 1회 + `ServerEndAbility` 1회. `Auto` N발에 배치 1 + TD N−1 + End 1 |
+| 15 | 탄약 예측 — `PktLag 200`, `Auto` 사격하며 HUD 잔탄 | 클릭 즉시 −1 (전엔 RTT 뒤). −2로 튀지 않음. 4번 조작 시뮬에서 거절된 발은 잔탄이 다시 +1. `showdebug abilitysystem`에 `GE_ConsumeAmmo`가 잠깐 보였다 사라짐. **Step 14 뒤에 다시** — 배칭 첫 발도 즉시 −1이고 남는 GE 없음 |
 
 ---
 
@@ -972,6 +987,7 @@ UE_LOG(LogTemp, Log, TEXT("[Fire] SV shot ts=%.4f hit=%d origin=%s dir=%s"), Cli
 | SSR 컴포넌트가 없는 캐릭터 | `GetServerSideRewindComponent()`가 null → 폴백(현재 위치). 지금 `HandleHitscanFire:313`도 같은 전제 |
 | 히스토리 크기가 RTT보다 짧다 | 144fps·RTT 300ms면 43개 — 64로 충분. 로그 `hit=0`이 잦으면 `ShotOriginHistoryCount` 상향 |
 | 호스트 `GetPredictionData_Client_Character()` | 호스트는 클라 예측 데이터가 없다 — `GetClientMoveTimeStamp()`가 `IsNetAuthority()`로 먼저 -1 반환 |
+| `CanActivateAbility`(const)에서 `GetFireTimer()` 호출 시 "const 한정자가 없습니다" | `const AEPWeapon*`로는 non-const 접근자를 못 부른다. Step 5-1 `const FEPLocalTimer& GetFireTimer() const` 오버로드 |
 | `CanActivateAbility`는 `const`라 `CurrentActorInfo`가 없다 | 매개변수 `ActorInfo`로 캐릭터·무기를 찾는다 (Step 9 코드). `GetWeapon()` 헬퍼는 활성화 뒤에만 |
 | `FireOnce`가 탄약 소진으로 `EndAbility`한 뒤 `ArmNextShot`이 타이머를 다시 건다 | `ArmNextShot` 첫 줄 `IsActive()` 가드 |
 | 서버가 `EndAbility`를 두 번 받는다 (`ServerEndAbility` + 자기 탄약 소진) | `IsEndAbilityValid` 가드 — 두 번째는 no-op |
@@ -979,7 +995,10 @@ UE_LOG(LogTemp, Log, TEXT("[Fire] SV shot ts=%.4f hit=%d origin=%s dir=%s"), Cli
 | `InputPressed`가 안 불린다 | `AbilitySpecInputPressed`는 **스펙이 활성일 때만** 인스턴스에 전달(`ASC_Abilities.cpp:2879`). `Input_Fire`의 `IsActive()` 분기 확인 |
 | 배치 RPC가 빈 TargetData로 델리게이트를 부른다 | `OnTargetDataReady`의 `IsValid(0)` 검사. 첫 발이 `CanFire` 실패면 빈 배치가 온다 |
 | 서버 로그 "overriding pending replicated target data" | 직전 발을 `Consume`하지 않았다는 뜻. `OnTargetDataReady` 첫 줄에서 소비 |
-| `CallServerSetReplicatedTargetData`의 `CurrentPredictionKey`에 활성화 키를 넘김 | 서버가 발마다 그 키를 다시 복제한다(`FScopedPredictionWindow` 소멸자). 무효 키 `FPredictionKey()`로 — 발마다 예측하는 GE가 없다 |
+| 첫 발에서 새 예측 키를 만든다 (`FScopedPredictionWindow(ASC)` 무조건) | 활성화 윈도우 안에서 만든 종속 키는 배치 RPC가 안 싣고(`ASC_Abilities.cpp:4131` 활성화 키만), `CatchUpTo`는 정확히 그 키만 잡아(`GameplayPrediction.cpp:321`) 예측 GE가 남는다 → HUD −1 고정. `bCanGenerateNewKey = !ScopedPredictionKey.IsValidForMorePrediction()` |
+| `CommitAbilityCost`를 윈도우 **밖**에서 부른다 | `GetPredictionKeyForNewAction()`이 무효 → 예측 안 됨. `FScopedPredictionWindow` 선언 **뒤에** 부른다 |
+| 서버 `ServerConfirmOneShot`에서 `CommitAbilityCost`가 클라 키를 안 쓴다 | 서버는 `ServerSetReplicatedTargetData_Implementation`이 연 윈도우 안에 있어 `GetPredictionKeyForNewAction()`이 클라 키 — 자동. 호스트 경로(윈도우 없음)는 권위라 예측 자체가 없다 |
+| 잔탄 HUD가 한 프레임 −2로 튄다 | 예측 GE 제거(키 ack)와 서버 base 복제의 적용 순서. 같은 업데이트에 오면 프레임 안에서 해소. 지속되면 `GE_ConsumeAmmo`가 Instant인지, 스택 설정이 없는지 확인 |
 | 클라에서 `FScopedPredictionWindow(ASC, Key)` 2-인자 생성자 | 클라(`IsNetSimulating`)에선 **아무것도 안 한다**(`GameplayPrediction.cpp:378`). 불필요 |
 | 남이 건 발사 속도 버프 **종료** 직후 한두 발 거절 | 클라가 D 늦게 알아 초과분 `(빠른 rps − 느린 rps) × D`. 2배·20rps·50ms = 1발, `MaxTokens=2` 안. 넘으면 `FireRateBurstAllowance` 상향이 아니라 배율 상한을 검토 |
 | 배율 변경이 진행 중 간격에 안 먹는다 | 의도 — 다음 발부터 (STATUS §2 09-20). 최대 한 간격 한 번 |

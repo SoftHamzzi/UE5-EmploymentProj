@@ -35,6 +35,7 @@ public:
     void Fire(const FVector& AimDir, TArray<FVector>& OutPellets);
     
 	FEPLocalTimer& GetFireTimer() { return FireTimer; }
+	const FEPLocalTimer& GetFireTimer() const { return FireTimer; }
 	FEPRateLimiter& GetFireLimiter() { return FireLimiter; }
 	float GetBaseFireRate() const { return (WeaponDef && WeaponDef->FireRate > 0.f) ? WeaponDef->FireRate : 5.f; }
     float GetDamage() const;

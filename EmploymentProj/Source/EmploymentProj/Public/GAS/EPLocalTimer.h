@@ -4,7 +4,7 @@
 
 struct FEPLocalTimer
 {
-	void Start(float Now, float Duration)
+	void Start(double Now, float Duration)
 	{
 		PrevRemaining = Remaining;
 		PrevLastUpdate = LastUpdate;
@@ -16,19 +16,19 @@ struct FEPLocalTimer
 		++Generation;
 	}
 	
-	void Bank(float Now, float RateSoFar)
+	void Bank(double Now, float RateSoFar)
 	{
 		if (!bStarted) return;
 		Remaining = GetRemaining(Now, RateSoFar);
 		LastUpdate = Now;
 	}
 	
-	float GetRemaining(float Now, float Rate) const {
+	float GetRemaining(double Now, float Rate) const {
 		if (!bStarted) return 0.f;
-		return FMath::Max(0.f, Remaining - (Now - LastUpdate) * FMath::Max(0.f, Rate));
+		return FMath::Max(0.f, Remaining - static_cast<float>(Now - LastUpdate) * FMath::Max(0.f, Rate));
 	}
 	
-	bool IsElapsed(float Now, float Rate, float Tolerance) const
+	bool IsElapsed(double Now, float Rate, float Tolerance) const
 	{
 		return GetRemaining(Now, Rate) <= Tolerance;
 	}
@@ -45,11 +45,11 @@ struct FEPLocalTimer
 	
 private:
 	float Remaining = 0.f;
-	float LastUpdate = 0.f;
+	double LastUpdate = 0.0;
 	bool bStarted = false;
 	
 	float PrevRemaining = 0.f;
-	float PrevLastUpdate = 0.f;
+	double PrevLastUpdate = 0.0;
 	bool bPrevStarted = false;
 	
 	uint32 Generation = 0;

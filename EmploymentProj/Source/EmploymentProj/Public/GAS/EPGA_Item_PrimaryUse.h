@@ -6,6 +6,7 @@
 #include "Abilities/GameplayAbility.h"
 #include "EPGA_Item_PrimaryUse.generated.h"
 
+class AEPCharacter;
 class AEPWeapon;
 
 UCLASS()
@@ -43,11 +44,6 @@ public:
 	virtual void InputReleased(const FGameplayAbilitySpecHandle Handle,
 		const FGameplayAbilityActorInfo* ActorInfo,
 		const FGameplayAbilityActivationInfo ActivationInfo) override;
-	
-	virtual void ApplyCooldown(
-		const FGameplayAbilitySpecHandle Handle,
-		const FGameplayAbilityActorInfo* ActorInfo,
-		const FGameplayAbilityActivationInfo ActivationInfo) const override;
 	
 protected:
 	

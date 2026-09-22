@@ -70,14 +70,6 @@ void UEPCombatComponent::HandleServerFire(const FVector& Direction, const float 
 	if (!bHistoryHit)
 		Origin = Owner->GetCameraComponent()->GetComponentLocation();
 	
-	constexpr float MaxOriginDrift = 200.f;                                                                                                                                    
-	if (FVector::DistSquared(Origin, Owner->GetActorLocation()) > FMath::Square(MaxOriginDrift))                                                                                  
-	{                                                                                                                                                                             
-		UE_LOG(LogTemp, Warning, TEXT("[HandleServerFire] Origin drift rejected: %.1f"),                                                                                          
-			FVector::Dist(Origin, Owner->GetActorLocation()));                                                                                                                    
-		return;                                                                                                                                                                   
-	}
-	
 	// --- 탄도 분기 ---
 	switch (EquippedWeapon->WeaponDef->BallisticType)
 	{

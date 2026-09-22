@@ -70,9 +70,6 @@ BP 서브클래스에서 완전 일치 실패로 항상 `nullptr`이었다(실�
   자리만 바뀌고 `ServerConfirmOneShot` 구조는 그대로.
 - **`FireMode::Burst`** — "N발 고정 연사 후 종료" 분기(발사 카운터)가 아직 없다. §4의 타이머는
   `Burst`에도 그대로 쓰이므로 카운터만 추가하면 된다.
-- **클라 탄약 예측** — `ServerConfirmOneShot`이 `CommitAbilityCost`를 서버에서만 부르므로
-  HUD 잔탄이 RTT 늦게 준다. 탄약은 "내가 시작한 시간 상태"가 아니라 즉시 값이므로
-  §4와 무관 — Instant GE 예측으로 따로 풀 수 있지만 지금은 안 한다.
 - **`Auto`의 서버 쪽 U** — 서버는 클라 첫 발보다 U 늦게 시작하고 U 늦게 끝난다. 발사
   판정 자체는 SSR이 되감으니 무관. 이동처럼 정정이 생기는 것도 없다.
 
@@ -300,11 +297,29 @@ template<> struct TStructOpsTypeTraits<FEPTargetData_Fire> : TStructOpsTypeTrait
         Combat->PlayLocalMuzzleEffect(CamLoc);                          // 코스메틱은 클라 값으로
         if (ProjectileFast) Combat->SpawnLocalCosmeticProjectile(CamLoc, Direction);
 
-        FGameplayAbilityTargetDataHandle Data(new FEPTargetData_Fire{ Direction });
+        // 탄약 예측 — 첫 발은 활성화 윈도우 안이라 활성화 키 재사용(배치 RPC가 활성화 키만 싣는다), 타이머 발은 새 키
+        FScopedPredictionWindow ScopedPrediction(ASC, /*bCanGenerateNewKey*/ !ASC->ScopedPredictionKey.IsValidForMorePrediction());
+        if (!CommitAbilityCost(...)) { EndAbility(..., true, true); return; }   // GE_ConsumeAmmo를 예측 적용 → HUD 즉시 −1
+
+        FGameplayAbilityTargetDataHandle Data(new FEPTargetData_Fire{ Direction, ClientMoveTimeStamp });
         ASC->CallServerSetReplicatedTargetData(CurrentSpecHandle, CurrentActivationInfo.GetActivationPredictionKey(),
-                                               Data, FGameplayTag(), FPredictionKey());   // 무효 키 — 발마다 예측 GE 없음, 키 재복제 방지
+                                               Data, FGameplayTag(), ASC->ScopedPredictionKey);   // 이 발의 예측 키 — 서버가 같은 키로 차감·ack
     }
 ```
+
+**탄약 예측 (2026-09-22 추가).** 원격 클라가 발마다 예측 키 아래에서 `CommitAbilityCost`를 부르면
+`GE_ConsumeAmmo`(Instant)가 클라에선 **무한 지속 GE로 예측 적용**된다(`AbilitySystemComponent.cpp:988`) —
+HUD는 속성 변화 델리게이트를 보므로 즉시 −1. 그 키를 TargetData의 `CurrentPredictionKey`로 실으면 서버
+`ServerSetReplicatedTargetData_Implementation`이 그 키로 윈도우를 열고, 델리게이트 → `ServerConfirmOneShot` →
+`CommitAbilityCost`가 같은 키로 진짜 차감, 윈도우 소멸자가 키를 ack → 클라의 예측 GE 제거
+(`GameplayEffect.cpp:4449`), 서버 복제값이 남는다. **버킷 거절·서버 탄약 부족이면 차감 없이 ack만** →
+예측 GE 제거 = 탄약이 돌아온다. 롤백 코드가 따로 없다.
+키 규칙 하나 — `CatchUpTo`는 **정확히 그 키만** 잡는다(`GameplayPrediction.cpp:321-335`). 배치 RPC는
+`CurrentPredictionKey`에 활성화 키를 싣기 때문에(`ASC_Abilities.cpp:4131`), 첫 발에서 종속 키를 새로 만들면
+그 키는 영영 ack되지 않아 예측 GE가 남는다. 그래서 활성화 윈도우 안(첫 발)이면 그 키를 그대로 쓰고,
+타이머 발(윈도우 밖)만 새 키를 만든다 — 위 `bCanGenerateNewKey` 조건이 그것이다.
+Lyra는 탄약을 예측하지 않는다(`ULyraAbilityCost_ItemTagStack::ApplyCost`가 권위에서만). 우리는 HUD 지연이
+체감된 문제라 한다.
 - `ArmNextShot` / `OnFireTimerTick` / `InputPressed`:
 ```cpp
 void ArmNextShot()
@@ -454,6 +469,7 @@ TargetData 전송으로 바꾸면 `Single` 클릭 하나가 Reliable RPC 3개(`S
   버프 종료 직후 한두 발이 거절된다 — 자기 버프(`Modifier.FireRate`)는 양쪽이 같은 어빌리티로
   동시에 끄므로 해당 없음.
 - `Single` 클릭당 Reliable RPC 2개(§4-5). 대역폭상 무시 가능 — STATUS §2 09-20.
+- 탄약 예측의 한 프레임 흔들림 가능성 — 서버 복제값(속성)과 키 ack(`ReplicatedPredictionKeyMap`)는 같은 PlayerState 채널로 같은 업데이트에 오지만, 적용 순서에 따라 한 프레임 안에 값이 두 번 바뀔 수 있다(예측 GE 제거 → 복제 base 적용). HUD 델리게이트가 두 번 불려도 마지막 값이 맞다. §6-12에서 확인.
 
 ### 4-8. 범위 밖 — RPC 플러딩 방어 (구현서 대상 아님)
 
@@ -535,6 +551,7 @@ ActivationOwnedTags.AddTag(EmpGameplayTags::TAG_State_Reloading);   // 재장전
 | 9 | 단발 예약 — `Single` 간격 안 더블클릭 | 정확히 `Interval` 간격으로 2발. 3연타는 2발(한 칸만 예약) |
 | 10 | 발사 속도 배율 — 임시로 `Modifier.FireRate.Test = 2` `Set` | `Auto` 간격 절반, 서버 거부 0. `Clear` 후 원래대로. 배율 변경이 진행 중 간격엔 반영 안 됨(다음 발부터) |
 | 11 | 배칭 전후 RPC 수 — `ShouldDoServerAbilityRPCBatch` false/true, `log LogAbilitySystem verbose` | `Single` 클릭당 3 → 2, `Auto` N발 N+2 → N+1 |
+| 12 | 탄약 예측 — `PktLag 200`에서 `Auto` 사격, HUD 잔탄 | 클릭 즉시 −1 (전엔 RTT 뒤). 흔들림(−2 → −1) 없음. 조작 시뮬(4번 방식)로 거절된 발은 잔탄이 다시 +1 |
 
 검증용 임시 로그는 `ServerConfirmOneShot`의 `TryTake` 실패 분기 하나면 된다.
 

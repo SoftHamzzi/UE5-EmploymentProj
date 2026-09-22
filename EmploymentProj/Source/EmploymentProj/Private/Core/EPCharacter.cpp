@@ -35,6 +35,16 @@
 #include "GAS/EPNativeGameplayTags.h"
 #include "Interaction/EPInteractionComponent.h"
 
+namespace
+{
+	FGameplayAbilitySpec* FindSpecByAssetTag(UAbilitySystemComponent* ASC, const FGameplayTag& Tag)
+	{
+		TArray<FGameplayAbilitySpec*> Specs;
+		ASC->GetActivatableGameplayAbilitySpecsByAllMatchingTags(FGameplayTagContainer(Tag), Specs, false);
+		return Specs.Num() > 0 ? Specs[0] : nullptr;
+	}
+}
+
 AEPCharacter::AEPCharacter(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer.SetDefaultSubobjectClass<UEPCharacterMovement>(
 		ACharacter::CharacterMovementComponentName))
@@ -432,22 +442,27 @@ void AEPCharacter::Input_UnCrouch(const FInputActionValue& Value)
 
 void AEPCharacter::Input_Fire(const FInputActionValue& Value)
 {
-	if (!CombatComponent) return;
+	if (!CombatComponent || !ASC) return;
 	
-	if (ASC)
+	FGameplayAbilitySpec* Spec = FindSpecByAssetTag(ASC, EmpGameplayTags::TAG_Ability_Item_PrimaryUse);
+	if (!Spec) return;
+	
+	if (Spec->IsActive())
 	{
-		ASC->TryActivateAbilitiesByTag(
-			FGameplayTagContainer(EmpGameplayTags::TAG_Ability_Item_PrimaryUse));
+		ASC->AbilitySpecInputPressed(*Spec);
+		return;
 	}
+	
+	FScopedServerAbilityRPCBatcher Batcher(ASC, Spec->Handle);
+	ASC->TryActivateAbility(Spec->Handle);
 }
 
 void AEPCharacter::Input_StopFire(const FInputActionValue& Value)
 {
-	if (ASC)
-	{
-		FGameplayTagContainer UseTags(EmpGameplayTags::TAG_Ability_Item_PrimaryUse);
-		ASC->CancelAbilities(&UseTags);
-	}
+	if (!ASC) return;
+	
+	if (FGameplayAbilitySpec* Spec = FindSpecByAssetTag(ASC, EmpGameplayTags::TAG_Ability_Item_PrimaryUse))
+		ASC->AbilitySpecInputReleased(*Spec);
 }
 
 void AEPCharacter::Input_ToggleAutoStrafeTest()

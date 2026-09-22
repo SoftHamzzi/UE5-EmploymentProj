@@ -3,7 +3,7 @@
 > 이 파일이 **결정의 진실의 원천**이다. 설계 문서 `../04_Polish_WeaponFireRate.md`는 이 파일과
 > 어긋나면 이 파일이 맞다. 결정이 뒤집힐 때마다 §2에 줄을 추가하고 §1을 고친다 — 지우지 않는다.
 
-**최종 갱신:** 2026-09-21
+**최종 갱신:** 2026-09-22
 **구현 상태:** 전부 **미구현.** 설계만 확정. 스킬 쪽(`../SkillDisplay/`) 구현·PIE 검증 뒤 착수.
 
 ---
@@ -30,7 +30,7 @@
 | 배칭 전제 1 | `UEPAbilitySystemComponent : UAbilitySystemComponent` — `ShouldDoServerAbilityRPCBatch() override { return true; }` (기본 false, `ASC.h:1305`). `EPPlayerState`가 이 클래스로 생성 | 신규 |
 | 배칭 전제 2 | `EPCharacter::Input_Fire`(`:433-442`, 한 곳)의 `TryActivateAbilitiesByTag`를 **핸들 기반**으로 바꾸고(스펙은 에셋 태그로 찾는다 — `FindAbilitySpecFromClass`는 BP 서브클래스에서 `nullptr`) `FScopedServerAbilityRPCBatcher Batcher(ASC, Handle)` 스코프 안에서 `TryActivateAbility(Handle)` — GASShooter `BatchRPCTryActivateAbility` 패턴. 첫 발의 TargetData 호출은 `ActivateAbility` 안에서 동기적이라 같은 스코프에 들어간다; End는 아니다 | `EPCharacter.cpp` |
 | 롤백 | **안 함** — 거절돼도 잃는 건 총구 이펙트뿐. 스킬의 `NewRejectedDelegate` 훅 안 씀 | |
-| 탄약 예측 | 안 함 (범위 밖, 후속 후보) | |
+| **탄약 예측** | **한다** (사용자 결정 2026-09-22). 원격 클라 `FireOnce`가 발마다 예측 키 아래에서 `CommitAbilityCost` → `GE_ConsumeAmmo`(Instant)가 클라에선 **무한 지속 GE로 예측 적용**(`ASC.cpp:988`) → HUD 즉시 −1. 그 키를 TargetData의 `CurrentPredictionKey`로 실어 보내고, 서버는 그 키 윈도우 안에서 `CommitAbilityCost`(진짜 차감) → 윈도우 소멸자가 키를 ack → 클라 예측 GE 제거(`GameplayEffect.cpp:4449`), 서버 복제값이 남는다. **버킷 거절·서버 탄약 부족이면 차감 없이 ack만** → 예측 GE 제거 = 탄약 복구. 키 규칙: **첫 발은 활성화 키 재사용**(활성화 윈도우 안 — 배치 RPC가 활성화 키만 싣기 때문, `ASC_Abilities.cpp:4131`), **타이머 발은 새 키**(`FScopedPredictionWindow(ASC, !ScopedPredictionKey.IsValidForMorePrediction())`). 호스트는 예측 없음(권위) | `FireOnce`, `SendFireTargetData` |
 | RPC 플러딩 방어 | 범위 밖. `HasTokenAvailable(Now)` 피크 / `bRPCDoSDetection=true` 후속 | 설계 문서 §4-8 |
 
 ### 왜 이 조합인가 — 한 줄씩
@@ -68,6 +68,7 @@
 | 09-19 | **어빌리티 배칭 채택** + **정정:** "배칭은 우리 구조에 무의미"는 커스텀 Unreliable RPC 전제였음. TargetData 전송에선 `Single` 3→1이라 유효. `CallServerSetReplicatedTargetData`가 배치 중이면 RPC 대신 `ExistingBatchData->TargetData`에 담는다 | `AbilitySystemComponent_Abilities.cpp:4095-4174`, `CallServerSetReplicatedTargetData` 배치 분기 |
 | 09-20 | **정정:** 배칭 "`Single` 3→1"과 "예약 슬롯(`Interval`까지 생존)"이 양립 불가 — End가 타이머 틱에서 일어나 배치 밖. 선택지: 예약을 어빌리티에(2 RPC, `Auto`/`Single` 한 수명 경로) vs 무기에(1 RPC, 부품 하나 더). **어빌리티에, 2 RPC** — RPC 1개 차이는 대역폭상 무시 가능으로 이미 결론, 코드가 적다. 부수: `Single`도 `bReplicateEndAbility=true`(서버 인스턴스는 클라가 끝낸다) | `EPGA_Item_PrimaryUse.cpp:52`, `AbilitySystemComponent_Abilities.cpp:2879 AbilitySpecInputPressed` |
 | 09-20 | 배율 변경은 **다음 발부터** — `Bank`+재예약 안 함. 진행 중 간격 한 번(≤ Interval) 늦는 건 체감 불가, 서버 버킷은 `TryTake` 시점 배율이라 종료 시 초과 1발은 `MaxTokens` 안 | 설계 문서 §4-7 대가 |
+| 09-22 | **탄약 예측 채택** (사용자 결정). GAS 표준 경로 — 예측 Instant GE = 무한 GE + 키 catch-up 시 제거. `CatchUpTo`는 **정확히 그 키만**(`GameplayPrediction.cpp:321-335`, ≤ 아님) → 종속 키를 만들면 배치 RPC가 활성화 키만 ack해 첫 발 예측 GE가 남는다 → 첫 발은 활성화 키 재사용. `SendFireTargetData`의 무효 키(09-20)는 이 결정으로 뒤집힘 — 이제 유효 키를 싣는다. HUD는 속성 변화 델리게이트(`EPHUDWidget.cpp:26`)라 변경 없음. Lyra는 탄약을 예측하지 않는다(`ULyraAbilityCost_ItemTagStack::ApplyCost`가 권위에서만) — 우리가 더 나간다 | `AbilitySystemComponent.cpp:988, :1036`, `GameplayEffect.cpp:4449-4450`, `GameplayPrediction.cpp:321, :595`, `ASC_Abilities.cpp:4131` |
 | 09-21 | **UT식 원점 동기 채택** (사용자 결정 — "안 B의 원점 ±1프레임은 추가 오차다"). 페이로드에 `ClientMoveTimeStamp` 추가, 서버가 무브마다 카메라 위치를 타임스탬프로 기록, `HandleServerFire`가 조회. 히스토리 위치: 처음 CMC → **SSR 컴포넌트로 이동**(같은 날) — UT처럼 "과거 위치"의 주인을 하나로; CMC는 델리게이트 인자만 늘어난다. 저장 시점은 둘 다 `OnMovementUpdated` 동기라 정확도 차이 없음. 미스 시 현재 위치 폴백. 세이브드 무브에 발사 비트를 싣는 것(Source식)은 여전히 안 한다 — 무브는 그대로, 키만 페이로드에 | `CharacterMovementComponent.cpp:9900`(`CurrentClientTimeStamp` 설정) → `:9924 MoveAutonomous` → `OnMovementUpdated`; 클라 `:8743 UpdateTimeStampAndDeltaTime`, `:12548 SetMoveFor TimeStamp`; `UTCharacter.cpp:365-397` |
 | 09-20 | 발사 속도 버프는 **무기 스탯이 아니라 캐릭터 `LocalModifiers`** — `WeaponDef` 공유 DataAsset, 버프는 플레이어 소속(무기 교체를 따라감). 무기 고유 영구 보정(부착물 등)은 문서에 없어 층을 만들지 않는다 | CLAUDE.md §2 |
 
@@ -84,6 +85,9 @@
 - GASShooter/Lyra는 `FHitResult` 통째(히트당 50~80B, 샷건 ~500B README:2472)를 보내고 서버가 검증 없이 믿는다. 엔진 `bHitReplaced`/`ReplaceHitWith` 훅은 Lyra가 안 쓴다.
 - 클라 `FNetworkPredictionData_Client_Character::CurrentTimeStamp`는 CMC 틱(`ReplicateMoveToServer`)에서 `+= DeltaTime` 후 그 프레임 무브의 `TimeStamp`가 된다(`:8743`, `:12548`). 발사는 CMC 틱 **전**(`TickPlayerInput`)이므로 발사 순간의 값 = 직전 프레임 무브의 타임스탬프 = 그때 위치를 만든 무브. 4분마다 리셋(`MinTimeBetweenTimeStampResets`, `:803`).
 - 서버 `ServerMove_PerformMovement`: `ServerData->CurrentClientTimeStamp = ClientTimeStamp`(`:9900`) → `MoveAutonomous`(`:9924`) → `PerformMovement` → `OnMovementUpdated`. 그 안에서 `GetCurrentNetworkMoveData()->TimeStamp`가 방금 적용한 무브의 타임스탬프. 번들(`ServerMoveDual`)은 Old/New 각각 이 경로를 탄다 — 히스토리는 `NetworkMoveType` 전부 기록해야 한다(SSR 훅은 `NewMove`만).
+- 예측 Instant GE: 클라에서 `bTreatAsInfiniteDuration`(`AbilitySystemComponent.cpp:988`) → 무한 GE로 적용, `NewCaughtUpDelegate`로 키 ack 시 제거(`GameplayEffect.cpp:4449`), `NewRejectedDelegate`로 거절 시 제거(`:4450`). `CatchUpTo(Key)`는 정확히 일치하는 키의 델리게이트만 실행(`GameplayPrediction.cpp:321-335`). 서버 `FScopedPredictionWindow` 소멸자가 유효 키를 `ReplicatedPredictionKeyMap`으로 ack.
+- 배치 RPC 서버 처리: `ServerSetReplicatedTargetData_Implementation(..., CurrentPredictionKey = BatchInfo.PredictionKey)` — 배치는 **활성화 키**만 싣는다(`ASC_Abilities.cpp:4131`).
+- `GetPredictionKeyForNewAction()` = `ScopedPredictionKey`가 로컬 클라 키면 그것, 아니면 무효(`ASC.h:270`). `CommitAbilityCost` → `ApplyCost` → 이 키로 GE 적용(`GameplayAbility.cpp:2060`).
 - `FRPCDoSDetection`: 기본 꺼짐, `[GameNetDriver RPCDoSDetection] bRPCDoSDetection=true`로 켬. `BaseEngine.ini:1865`.
 
 ---
@@ -94,7 +98,7 @@
 - [x] 구현서 `04_Polish_WeaponFireRate_Implementation.md` 작성 (2026-09-20). Step 1~12 TargetData 전송 → PIE → Step 13 배칭(독립). 구현 시 충돌하면 구현서 → 이 STATUS → 설계 문서 순
 - [ ] `UEPAbilitySystemComponent` 신설은 PlayerState 생성 코드가 바뀌는 횡단 변경 — GAS_STATUS·PROJECT_CONTEXT 갱신 대상
 - [ ] 스킬 PIE 검증 완료 후 착수
-- [ ] 후속 후보(순서 없음): 탄약 예측 / `FireIndex` 재전송 큐(유실 저항) / `HasTokenAvailable` 피크 / `bRPCDoSDetection` / `FireMode::Burst` 카운터 / `CalculateSpread` 디버그 로그·`ApplySpread` 죽은 코드 제거 / `Issue/FireRate_GECooldownPrediction.md` "Ability Batching" 오기 정정 / `DOCS/Mine/LagCompensationFix.md`·포트폴리오의 "클라가 원점·방향을 보낸다" 서술 갱신
+- [ ] 후속 후보(순서 없음): `FireIndex` 재전송 큐(유실 저항) / `HasTokenAvailable` 피크 / `bRPCDoSDetection` / `FireMode::Burst` 카운터 / `CalculateSpread` 디버그 로그·`ApplySpread` 죽은 코드 제거 / `Issue/FireRate_GECooldownPrediction.md` "Ability Batching" 오기 정정 / `DOCS/Mine/LagCompensationFix.md`·포트폴리오의 "클라가 원점·방향을 보낸다" 서술 갱신
 
 ---
 

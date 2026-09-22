@@ -9,7 +9,7 @@ struct FEPRateLimiter
 	void Reset(double Now, float InMaxTokens)
 	{
 		MaxTokens = FMath::Max(1.f, InMaxTokens);
-		Tokens = InMaxTokens;
+		Tokens = MaxTokens;
 		LastUpdate = Now;
 	}
 	
@@ -26,5 +26,5 @@ struct FEPRateLimiter
 private:
 	float Tokens = 0.f;
 	float MaxTokens = 1.f;
-	double LastUpdate = 0.f;
+	double LastUpdate = 0.0;
 };

@@ -52,7 +52,7 @@
 
 ### 2-2. 서버 쪽
 
-**`ServerConfirmOneShot(Direction, ClientMoveTimeStamp)`** — 유일한 발사 확정 지점. 반환값의 뜻을 먼저 정하라: **`false` = 탄약 소진(어빌리티 종료), `true` = 그 외 전부** (버킷 거절 포함 — 한 발 버리는 것이지 사격 종료가 아니다).
+**`ServerConfirmOneShot(Direction, ClientMoveTimeStamp)`** — 유일한 발사 확정 지점. 서버에선 `ServerSetReplicatedTargetData_Implementation`이 클라 키로 연 윈도우 **안에서** 불리므로, 여기의 `CommitAbilityCost`가 자동으로 그 키를 쓴다 — 코드에 키가 안 보여도 맞다. 거절 경로(버킷·탄약)는 차감 없이 끝나지만 윈도우 소멸자가 키를 ack하므로 클라의 예측 −1이 저절로 돌아온다. 반환값의 뜻을 먼저 정하라: **`false` = 탄약 소진(어빌리티 종료), `true` = 그 외 전부** (버킷 거절 포함 — 한 발 버리는 것이지 사격 종료가 아니다).
 순서:
 1. 캐릭터·무기·컴뱃 컴포넌트 확보. 없으면 `false`
 2. 버킷: `Weapon->GetFireLimiter().TryTake(지금, 유효 발사 속도)`. 유효 발사 속도 = `GetBaseFireRate() × GetFireRateMultiplier()`. 거절이면 **`true`** 반환
@@ -70,16 +70,20 @@
 
 **`SendFireTargetData(Direction, ClientMoveTimeStamp)`** — 원격 클라 전용.
 1. `new FEPTargetData_Fire()` 로 만들고 필드 둘 채운다. `FGameplayAbilityTargetDataHandle`에 넘기면 핸들이 소유권을 가진다(`TSharedPtr`) — 직접 delete 금지
-2. `ASC->CallServerSetReplicatedTargetData(CurrentSpecHandle, 활성화 예측 키, 핸들, FGameplayTag(), FPredictionKey())`
-마지막 인자를 **무효 키**로 두는 이유: 발마다 예측하는 GE가 없고, 유효 키를 넘기면 서버가 발마다 그 키를 다시 복제한다. 클라에서 `FScopedPredictionWindow(ASC, Key)`를 여는 건 아무것도 안 한다(`GameplayPrediction.cpp:378`) — 쓰지 않는다.
+2. `ASC->CallServerSetReplicatedTargetData(CurrentSpecHandle, 활성화 예측 키, 핸들, FGameplayTag(), ASC->ScopedPredictionKey)`
+마지막 인자가 **이 발의 예측 키**다 — `FireOnce`가 연 윈도우의 키. 서버가 같은 키로 윈도우를 열어 탄약을 차감하고 ack하면 클라의 예측 GE가 제거된다. 반드시 `FireOnce`의 윈도우 **안에서** 불려야 한다(2026-09-22 탄약 예측).
 
 **`FireOnce()`** — 로컬 컨트롤에서만 불린다는 전제.
 1. 캐릭터·무기·컴뱃 확보 + `Weapon->CanFire()`. 하나라도 실패면 `EndAbility(..., true, true)` — 탄약 소진은 서버 인스턴스도 끝내야 하니 **복제한다**
 2. `Weapon->GetFireTimer().Start(지금, 1 / GetBaseFireRate())`
 3. 방향 = `Char->GetControlRotation().Vector()`, 타임스탬프 = `GetClientMoveTimeStamp()`
 4. `IsNetAuthority()`(호스트)면 `ServerConfirmOneShot` 직접. `false`면 `EndAbility(..., true, true)`. 여기서 return
-5. 원격 클라: 코스메틱 — `PlayLocalMuzzleEffect(카메라 위치)`, `ProjectileFast`면 `SpawnLocalCosmeticProjectile(카메라 위치, 방향)` — 그다음 `SendFireTargetData`
+5. 원격 클라 — **탄약 예측 (2026-09-22):** `FScopedPredictionWindow`를 연다. 단, 새 키를 만들지는 **조건부**로 — `bCanGenerateNewKey = !ASC->ScopedPredictionKey.IsValidForMorePrediction()`. 첫 발은 `ActivateAbility` 안이라 활성화 키가 이미 유효하고, 그 키를 그대로 써야 배치 RPC(활성화 키만 싣는다)와 맞는다. 타이머 발은 윈도우 밖이라 새 키가 생긴다
+6. 윈도우 안에서 `CommitAbilityCost(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo)` — 실패면 `EndAbility(..., true, true)` return. 성공하면 `GE_ConsumeAmmo`가 예측 적용돼 HUD가 즉시 −1
+7. 코스메틱 — `PlayLocalMuzzleEffect(카메라 위치)`, `ProjectileFast`면 `SpawnLocalCosmeticProjectile(카메라 위치, 방향)`
+8. `SendFireTargetData` — **아직 윈도우 안**이어야 `ASC->ScopedPredictionKey`가 이 발의 키다
 코스메틱이 클라 카메라 위치인 이유: 플레이어가 보는 건 클라 값. 서버 원점은 판정용 (설계 §4-2).
+왜 윈도우가 함수 끝까지 열려 있어야 하나: 지역 변수라 스코프를 나가면 키가 복원된다. `CommitAbilityCost`와 `SendFireTargetData` 둘 다 그 안에서.
 
 **`ArmNextShot()`** — 다음 발 예약. 반복 타이머가 아니라 **매번 한 번짜리**.
 1. `IsActive()` 아니면 return — `FireOnce`가 방금 탄약 소진으로 끝냈을 수 있다
@@ -128,7 +132,8 @@
 5. `EndAbility`가 두 번 불려도 안전한 이유는?
 6. 호스트는 `SendFireTargetData`를 안 타는데 어디서 갈라지나?
 7. `ArmNextShot`이 `IsActive()`를 먼저 보는 이유는?
-8. 클라가 `FScopedPredictionWindow`를 안 여는 이유는?
+8. 첫 발에서 새 예측 키를 만들면 안 되는 이유는? (배칭·`CatchUpTo`)
+9. 버킷이 거절한 발의 클라 잔탄이 어떻게 돌아오나? 롤백 코드가 없는데.
 
 하나라도 막히면 그 함수의 계약(§2)을 다시 읽고, 그래도 안 되면 그 번호로 묻는다.
 

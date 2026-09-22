@@ -25,7 +25,7 @@ UEPGA_Item_Reload::UEPGA_Item_Reload()
 	ActivationBlockedTags.AddTag(EmpGameplayTags::TAG_State_Reloading);
 	ActivationBlockedTags.AddTag(EmpGameplayTags::TAG_State_UsingItem);
 	
-	
+	ActivationOwnedTags.AddTag(EmpGameplayTags::TAG_State_Reloading);
 }
 
 void UEPGA_Item_Reload::ActivateAbility(const FGameplayAbilitySpecHandle Handle,
@@ -45,30 +45,9 @@ void UEPGA_Item_Reload::ActivateAbility(const FGameplayAbilitySpecHandle Handle,
 	
 	const float ReloadTime = Weapon->WeaponDef->ReloadTime;
 	
-	if (GE_ReloadingClass)
-	{
-		FGameplayEffectSpecHandle SpecHandle =
-			MakeOutgoingGameplayEffectSpec(GE_ReloadingClass, GetAbilityLevel());
-		SpecHandle.Data->SetSetByCallerMagnitude(EmpGameplayTags::TAG_Data_ReloadDuration, ReloadTime);
-		ReloadingEffectHandle =
-			ApplyGameplayEffectSpecToOwner(Handle, ActorInfo, ActivationInfo, SpecHandle);
-	}
-	
 	UAbilityTask_WaitDelay* WaitTask = UAbilityTask_WaitDelay::WaitDelay(this, ReloadTime);
 	WaitTask->OnFinish.AddDynamic(this, &UEPGA_Item_Reload::OnReloadComplete_Task);
 	WaitTask->ReadyForActivation();
-}
-
-void UEPGA_Item_Reload::EndAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo,
-	const FGameplayAbilityActivationInfo ActivationInfo, bool bReplicateEndAbility, bool bWasCancelled)
-{
-	if (ActorInfo->IsNetAuthority() && ReloadingEffectHandle.IsValid())
-	{
-		ActorInfo->AbilitySystemComponent->RemoveActiveGameplayEffect(ReloadingEffectHandle);
-		ReloadingEffectHandle.Invalidate();
-	}
-	
-	Super::EndAbility(Handle, ActorInfo, ActivationInfo, bReplicateEndAbility, bWasCancelled);
 }
 
 void UEPGA_Item_Reload::OnReloadComplete_Task()
