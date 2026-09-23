@@ -31,6 +31,18 @@
   `StartWorldTime` 재계산까지 얹혀 실질 차단이 `1/FireRate + RTT`. 원인 규명 완료,
   코드 미적용. `Polish/04_Polish_WeaponFireRate.md` §4
 - [ ] `FireMode::Burst` 미구현. `Polish/04_Polish_WeaponFireRate.md` §3
+- [ ] **스킬 `EndAbility`가 가드 앞에서 부수 효과를 낸다** — `EPGA_Skill_Base.cpp:96-97`의
+  `LocalModifiers.Clear(Modifier.MoveSpeed.Casting)`이 `Super`(=`IsEndAbilityValid` 가드,
+  `GameplayAbility.cpp:804`)보다 **앞**에 있다. `InstancedPerActor`라 인스턴스가 하나이므로,
+  늦게 도착한 `EndAbility`(서버는 자기 `CompleteCast` + 클라 `ServerEndAbility`로 두 번 받는다)가
+  그 사이 시작된 새 캐스팅의 모디파이어를 지운다. 수정: 함수 첫 줄에 `IsEndAbilityValid` 가드.
+  한 줄 — 총기 작업 마무리할 때 같이. (2026-09-24 확인)
+- [ ] **Dash 방향이 클라·서버에서 갈린다** — `EPGA_Skill_Dash.cpp:25`가 `CMC->GetCurrentAcceleration()`을
+  양쪽에서 각자 읽는다. 클라는 발동 순간의 가속도, 서버는 마지막으로 처리한 `ServerMove`의 가속도라
+  RTT 동안 방향을 틀면 서로 다른 방향으로 대시하고 CMC 보정으로 끌려온다. 총기의 원점·방향 문제와
+  같은 구조 — 해법도 같다(발동 시점 방향을 TargetData로 실어 보낸다,
+  `Polish/WeaponFireRate/04_Polish_WeaponFireRate_Implementation.md` Step 2·9 참고).
+  방향 전환 중 대시할 때만 드러나므로 v1 범위 밖일 수 있다. (2026-09-24 확인)
 
 ---
 
