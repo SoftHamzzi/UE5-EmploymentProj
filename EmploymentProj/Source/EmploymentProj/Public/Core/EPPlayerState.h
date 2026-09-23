@@ -7,7 +7,7 @@
 #include "AbilitySystemInterface.h"
 #include "EPPlayerState.generated.h"
 
-class UAbilitySystemComponent;
+class UEPAbilitySystemComponent;
 class UEPAttributeSet;
 struct FOnAttributeChangeData;
 
@@ -57,7 +57,7 @@ protected:
 	
 private:
 	UPROPERTY(VisibleAnywhere, Category = "GAS")
-	TObjectPtr<UAbilitySystemComponent> ASC;
+	TObjectPtr<UEPAbilitySystemComponent> ASC;
 	
 	UPROPERTY()
 	TObjectPtr<UEPAttributeSet> AttributeSet;

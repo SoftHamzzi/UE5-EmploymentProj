@@ -67,7 +67,7 @@ BP 서브클래스에서 완전 일치 실패로 항상 `nullptr`이었다(실�
 
 - **`Entry.State.Charges` 이관** — 탄약을 `Ammo` 속성 대신 인벤토리 아이템 인스턴스에.
   `05_Loot_05_Equipment.md`에 설계돼 있고 Step 03·04 완성 전제. 이관 시 `CommitAbilityCost`
-  자리만 바뀌고 `ServerConfirmOneShot` 구조는 그대로.
+  자리만 바뀌고 `OnTargetDataReady` 구조는 그대로.
 - **`FireMode::Burst`** — "N발 고정 연사 후 종료" 분기(발사 카운터)가 아직 없다. §4의 타이머는
   `Burst`에도 그대로 쓰이므로 카운터만 추가하면 된다.
 - **`Auto`의 서버 쪽 U** — 서버는 클라 첫 발보다 U 늦게 시작하고 U 늦게 끝난다. 발사
@@ -110,8 +110,8 @@ Single → 즉시 EndAbility
         │   아니면 배치{ TryActivateAbility }   │──배치 1─▶│ ActivateAbility — 발사 안 함, 대기      │
         │ ActivateAbility → FireOnce            │  (활성화  │   TargetData 델리게이트 바인딩          │
         │   FireTimer.Start(Now, Interval)      │  +TD)    │                                        │
-        │   PlayLocalMuzzleEffect               │          │ OnTargetDataReady(Direction)            │
-        │   TargetData{Direction,TimeStamp} 전송│          │   → ServerConfirmOneShot(Direction, TS) │
+        │   PlayLocalMuzzleEffect               │          │ OnTargetDataReady(Direction, TS)        │
+        │   TargetData{Direction,TimeStamp} 전송│          │   (클라·호스트도 같은 함수로 들어온다)  │
         │   SetTimer(GetRemaining(Now,Rate), 1회)│          │       FireLimiter.TryTake ? 발사 : 버림 │
  틱 →   │   Auto 또는 bPendingShot → FireOnce ──│──TD 1──▶ │       원점 = 히스토리[TimeStamp] 카메라  │
         │   아니면 EndAbility(복제) ────────────│──End 1─▶ │       방향 = 페이로드 그대로            │
@@ -276,48 +276,65 @@ template<> struct TStructOpsTypeTraits<FEPTargetData_Fire> : TStructOpsTypeTrait
   직후 클릭이 유일한 경로):
 ```cpp
     if (!Super::CanActivateAbility(...)) return false;               // Dead/Reloading 태그
-    if (!ActorInfo->IsLocallyControlled()) return true;               // 서버 인스턴스: 속도는 ServerConfirmOneShot의 버킷이 본다
+    if (!ActorInfo->IsLocallyControlled()) return true;               // 서버 인스턴스: 속도는 OnTargetDataReady의 버킷이 본다
     const float Rate = Char->GetLocalModifiers().Product(EmpGameplayTags::TAG_Modifier_FireRate);
     return Weapon->GetFireTimer().IsElapsed(Now, Rate, 0.01f / Weapon->GetBaseFireRate());   // 여유 1%
 ```
-- `FireOnce` (로컬 컨트롤에서만 불린다):
+- `FireOnce` (로컬 컨트롤에서만 불린다. **역할 분기 없음** — 2026-09-23):
 ```cpp
-    if (!Weapon->CanFire()) { EndAbility(..., true, true); return; }
+    if (!Weapon->CanFire()) { EndAbility(..., true, false); return; }
     Weapon->GetFireTimer().Start(Now, 1.f / Weapon->GetBaseFireRate());
-    const FVector Direction = Char->GetControlRotation().Vector();
 
-    if (CurrentActorInfo->IsNetAuthority())
-    {
-        if (!ServerConfirmOneShot(Direction))                           // 호스트 — 왕복 없이
-            EndAbility(..., true, true);
-    }
-    else
-    {
-        const FVector CamLoc = Char->GetCameraComponent()->GetComponentLocation();
-        Combat->PlayLocalMuzzleEffect(CamLoc);                          // 코스메틱은 클라 값으로
-        if (ProjectileFast) Combat->SpawnLocalCosmeticProjectile(CamLoc, Direction);
-
-        // 탄약 예측 — 첫 발은 활성화 윈도우 안이라 활성화 키 재사용(배치 RPC가 활성화 키만 싣는다), 타이머 발은 새 키
-        FScopedPredictionWindow ScopedPrediction(ASC, /*bCanGenerateNewKey*/ !ASC->ScopedPredictionKey.IsValidForMorePrediction());
-        if (!CommitAbilityCost(...)) { EndAbility(..., true, true); return; }   // GE_ConsumeAmmo를 예측 적용 → HUD 즉시 −1
-
-        FGameplayAbilityTargetDataHandle Data(new FEPTargetData_Fire{ Direction, ClientMoveTimeStamp });
-        ASC->CallServerSetReplicatedTargetData(CurrentSpecHandle, CurrentActivationInfo.GetActivationPredictionKey(),
-                                               Data, FGameplayTag(), ASC->ScopedPredictionKey);   // 이 발의 예측 키 — 서버가 같은 키로 차감·ack
-    }
+    FEPTargetData_Fire* Data  = new FEPTargetData_Fire();
+    Data->Direction           = Char->GetControlRotation().Vector();
+    Data->ClientMoveTimeStamp = GetClientMoveTimeStamp();          // 호스트는 -1
+    OnTargetDataReady(FGameplayAbilityTargetDataHandle(Data), FGameplayTag());   // 호스트도 원격 클라도 여기로
 ```
+- `OnTargetDataReady` — **발 하나가 처리되는 유일한 지점.** 오너 클라·호스트는 위에서 직접,
+  서버 인스턴스는 델리게이트로 들어온다. 역할은 두 불리언으로만 갈린다:
+```cpp
+    const bool bLocallyControlled = CurrentActorInfo->IsLocallyControlled();
+    const bool bAuthority         = CurrentActorInfo->IsNetAuthority();
+
+    if (!bLocallyControlled) ASC->ConsumeClientReplicatedTargetData(CurrentSpecHandle, ActivationKey);
+    const FEPTargetData_Fire* Fire = Data.IsValid(0) ? static_cast<const FEPTargetData_Fire*>(Data.Get(0)) : nullptr;
+    if (!Fire) return;                                              // 배치 RPC는 빈 TargetData로도 부른다
+
+    FScopedPredictionWindow ScopedPrediction(ASC, !ASC->ScopedPredictionKey.IsValidForMorePrediction());  // 서버·호스트에선 no-op
+
+    if (bAuthority && !Weapon->GetFireLimiter().TryTake(Now, Weapon->GetBaseFireRate() * GetFireRateMultiplier()))
+        return;                                                     // 버킷은 차감보다 먼저. 이 발만 버림
+    if (!CommitAbilityCost(...)) { EndAbility(..., true, false); return; }   // 역할 조건 밖 — 한 번만
+
+    if (bLocallyControlled && !bAuthority)
+        ASC->CallServerSetReplicatedTargetData(CurrentSpecHandle, ActivationKey, Data, FGameplayTag(), ASC->ScopedPredictionKey);
+    if (bLocallyControlled) { PlayLocalMuzzleEffect(CamLoc); ... }   // 코스메틱
+    if (bAuthority)          Combat->HandleServerFire(Fire->Direction, Fire->ClientMoveTimeStamp);
+```
+
+**왜 역할별 경로를 따로 만들지 않나 (2026-09-23).** 호스트는 `bLocallyControlled`이면서
+`bAuthority`다. 경로를 `if (IsNetAuthority()) { 직접 판정; return; } else { 예측; 전송; }`으로
+가르면 그 `return` 하나에 정확성이 걸린다 — 실제로 빠뜨려 호스트가 `CommitAbilityCost`를 두 번
+부르는 버그가 났다. 한 함수에 모으고 단계별로 켜고 끄면 그 자리가 없어진다.
+Lyra가 같은 구조다 — 로컬 타겟팅도 같은 콜백으로 들어가고(`LyraGameplayAbility_RangedWeapon.cpp:596`),
+전송 여부만 `IsLocallyControlled() && !IsNetAuthority()`로 가른다(`:489`).
+우리가 Lyra와 다른 점: Lyra는 활성화당 한 발이라 `CommitAbility`를 콜백 안에 그냥 두지만,
+우리는 발마다 내므로 **역할 조건 밖**에 한 번만 둬야 하고, 버킷이 차감보다 앞서야 한다.
 
 **탄약 예측 (2026-09-22 추가).** 원격 클라가 발마다 예측 키 아래에서 `CommitAbilityCost`를 부르면
 `GE_ConsumeAmmo`(Instant)가 클라에선 **무한 지속 GE로 예측 적용**된다(`AbilitySystemComponent.cpp:988`) —
 HUD는 속성 변화 델리게이트를 보므로 즉시 −1. 그 키를 TargetData의 `CurrentPredictionKey`로 실으면 서버
-`ServerSetReplicatedTargetData_Implementation`이 그 키로 윈도우를 열고, 델리게이트 → `ServerConfirmOneShot` →
+`ServerSetReplicatedTargetData_Implementation`이 그 키로 윈도우를 열고, 델리게이트 → `OnTargetDataReady` →
 `CommitAbilityCost`가 같은 키로 진짜 차감, 윈도우 소멸자가 키를 ack → 클라의 예측 GE 제거
 (`GameplayEffect.cpp:4449`), 서버 복제값이 남는다. **버킷 거절·서버 탄약 부족이면 차감 없이 ack만** →
 예측 GE 제거 = 탄약이 돌아온다. 롤백 코드가 따로 없다.
-키 규칙 하나 — `CatchUpTo`는 **정확히 그 키만** 잡는다(`GameplayPrediction.cpp:321-335`). 배치 RPC는
-`CurrentPredictionKey`에 활성화 키를 싣기 때문에(`ASC_Abilities.cpp:4131`), 첫 발에서 종속 키를 새로 만들면
-그 키는 영영 ack되지 않아 예측 GE가 남는다. 그래서 활성화 윈도우 안(첫 발)이면 그 키를 그대로 쓰고,
-타이머 발(윈도우 밖)만 새 키를 만든다 — 위 `bCanGenerateNewKey` 조건이 그것이다.
+키 규칙 하나 — 배치 RPC는 `CurrentPredictionKey`를 버리고 활성화 키로 실행한다
+(`ASC_Abilities.cpp:4130-4131`, `:4235`). 그래서 첫 발에서 종속 키를 새로 만들면 그 키 자체는 서버에
+도달하지 않는다. 기본 설정(CVar `AbilitySystem.PredictionKey.DepChainBehavior = 1`)에서는 베이스 ack이
+종속 키까지 전파돼(`GameplayPrediction.cpp:355-357`) 예측 GE가 정리되지만, 엔진 주석이 그 경로를
+"논리적으로 옳지 않다"고 적고 목표값을 3으로 잡아 뒀다 — 3에서는 전파가 끊겨 예측 GE가 남는다.
+활성화 윈도우 안(첫 발)이면 그 키를 그대로 쓰는 쪽이 두 설정 모두에서 안전하다. 타이머 발(윈도우 밖)은
+독립 키다 — 위 `bCanGenerateNewKey` 조건이 그것이다. 상세는 `DOCS/Mine/Concepts/PredictionKey.md` §6-7.
 Lyra는 탄약을 예측하지 않는다(`ULyraAbilityCost_ItemTagStack::ApplyCost`가 권위에서만). 우리는 HUD 지연이
 체감된 문제라 한다.
 - `ArmNextShot` / `OnFireTimerTick` / `InputPressed`:
@@ -340,27 +357,6 @@ void InputReleased(...) override { if (FireMode == EEPFireMode::Auto) EndAbility
 뗌이 취소면 예약 슬롯이 절대 안 찬다. 뗌의 의미를 어빌리티가 모드별로 정한다.
   `FireOnce`가 탄약 소진으로 `EndAbility`를 부른 뒤 `ArmNextShot`이 다시 돌지 않도록, `EndAbility`가
   `FireTimerHandle`을 지우는 지금 코드를 유지하고 `ArmNextShot`은 `IsActive()`를 확인한다.
-- `OnTargetDataReady` (서버):
-```cpp
-void OnTargetDataReady(const FGameplayAbilityTargetDataHandle& Data, FGameplayTag /*ActivationTag*/)
-{
-    const FEPTargetData_Fire* Fire = static_cast<const FEPTargetData_Fire*>(Data.Get(0));
-    ASC->ConsumeClientReplicatedTargetData(CurrentSpecHandle, CurrentActivationInfo.GetActivationPredictionKey());
-    if (!Fire) return;
-    if (!ServerConfirmOneShot(Fire->Direction))
-        EndAbility(..., true, false);                                   // 탄약 소진 → 서버가 끝내면 클라도 따라 끝난다
-}
-```
-- `ServerConfirmOneShot(const FVector& Direction)`:
-```cpp
-    const float Rate = Char->GetLocalModifiers().Product(EmpGameplayTags::TAG_Modifier_FireRate);
-    if (!Weapon->GetFireLimiter().TryTake(Now, Weapon->GetBaseFireRate() * Rate)) return true;   // 너무 빠름 → 이 발만 버림, 어빌리티 유지
-    if (!CommitAbilityCost(...)) return false;                                                    // 탄약 소진 → 종료
-    Combat->HandleServerFire(Direction, ClientMoveTimeStamp);                                     // 원점은 안에서 서버가 히스토리에서
-    return true;
-```
-  `true`/`false`의 의미: `false`만 `EndAbility`(탄약 소진). 속도 초과는 한 발 버리는 것이지 사격
-  종료가 아니다.
 - `EndAbility`: 타이머 정리(지금 코드) + 서버면 `AbilityTargetDataSetDelegate(...).Remove(TargetDataDelegateHandle)`.
 
 **`UEPCombatComponent`**
@@ -483,7 +479,7 @@ TargetData 전송으로 바꾸면 `Single` 클릭 하나가 Reliable RPC 3개(`S
 - **`CanActivateAbility`에 소비 없는 피크 추가** — `FireLimiter`에 `HasTokenAvailable(Now, Refill)`을
   두고 원격 클라 인스턴스의 `CanActivateAbility`에서 먼저 걸러 활성화 자체를 거절 —
   `EndAbility` 사이클을 아예 안 돌게 한다. `TryTake()`를 그 자리에 직접 못 쓰는 이유는 소비
-  부작용이 있어서다(활성화 단계에서 한 번, `ServerConfirmOneShot`에서 또 한 번 깎는 이중
+  부작용이 있어서다(활성화 단계에서 한 번, 발 처리에서 또 한 번 깎는 이중
   소비 — 순수 조회와 소비를 같은 메서드로 섞지 않는다).
   **주의:** 저장된 `Tokens`는 마지막 `TryTake` 시점 값이라 그대로 비교하면 오래 쉰 정직한
   클라를 거절한다. 피크도 **리필을 계산은 하되 저장하지 않는다**:
@@ -553,7 +549,7 @@ ActivationOwnedTags.AddTag(EmpGameplayTags::TAG_State_Reloading);   // 재장전
 | 11 | 배칭 전후 RPC 수 — `ShouldDoServerAbilityRPCBatch` false/true, `log LogAbilitySystem verbose` | `Single` 클릭당 3 → 2, `Auto` N발 N+2 → N+1 |
 | 12 | 탄약 예측 — `PktLag 200`에서 `Auto` 사격, HUD 잔탄 | 클릭 즉시 −1 (전엔 RTT 뒤). 흔들림(−2 → −1) 없음. 조작 시뮬(4번 방식)로 거절된 발은 잔탄이 다시 +1 |
 
-검증용 임시 로그는 `ServerConfirmOneShot`의 `TryTake` 실패 분기 하나면 된다.
+검증용 임시 로그는 `OnTargetDataReady`의 `TryTake` 실패 분기 하나면 된다.
 
 ---
 

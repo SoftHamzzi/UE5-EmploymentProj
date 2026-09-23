@@ -6,6 +6,7 @@
 > 문서 우선순위: 구현 시 충돌하면 이 문서 → STATUS → 설계 문서 순
 > 2026-09-21: UT식 원점 동기(타임스탬프) 반영 — Step 2·4·6·8·15 변경
 > 2026-09-22: 탄약 예측 반영 — Step 9 `FireOnce`·`SendFireTargetData`, §15 15번, 함정표
+> 2026-09-23: 역할 분기 제거 — `SendFireTargetData`·`ServerConfirmOneShot`을 `OnTargetDataReady` 하나로 합침 (Lyra 구조). Step 8·9 변경
 
 ---
 
@@ -422,7 +423,8 @@ struct FGameplayAbilityTargetDataHandle;
 /**
  * 무기 주 사용(발사). 연사 한 번당 활성화 한 번.
  * 오너 클라·호스트: FireOnce → 다음 발 재예약(FireTimer) → 틱에서 Auto/예약이면 계속, 아니면 종료.
- * 서버(원격 클라 인스턴스): 쏘지 않고 TargetData만 받아 ServerConfirmOneShot. 종료는 클라의 ServerEndAbility.
+ * 서버(원격 클라 인스턴스): 쏘지 않고 TargetData만 기다린다. 종료는 클라의 ServerEndAbility.
+ * 발 하나의 처리는 역할과 무관하게 OnTargetDataReady 한 곳 — 전송·코스메틱·판정만 역할별로 켜고 끈다.
  */
 UCLASS()
 class EMPLOYMENTPROJ_API UEPGA_Item_PrimaryUse : public UGameplayAbility
@@ -471,16 +473,18 @@ private:
 	FDelegateHandle TargetDataDelegateHandle;   // 서버: AbilityTargetDataSetDelegate 바인딩
 
 	// === 함수 ===
-	// --- 오너 클라·호스트 ---
-	void FireOnce();
+	// --- 로컬 컨트롤(오너 클라·호스트)만 ---
+	void FireOnce();        // 페이싱 + TargetData 생성 → OnTargetDataReady 직접 호출
 	void ArmNextShot();
 	void OnFireTimerTick();
-	void SendFireTargetData(const FVector& Direction, float ClientMoveTimeStamp);
 
-	// --- 서버 (호스트는 FireOnce에서 직접) ---
+	/**
+	 * 발 하나가 처리되는 유일한 지점. 세 역할이 전부 여기로 모인다 (Lyra RangedWeapon 구조):
+	 *   오너 클라   — FireOnce가 직접 호출 → 예측 차감 + 코스메틱 + 서버로 전송
+	 *   호스트      — FireOnce가 직접 호출 → 차감 + 코스메틱 + 판정 (전송 없음)
+	 *   서버 인스턴스 — 델리게이트로 진입 → 차감 + 판정 (코스메틱·전송 없음)
+	 */
 	void OnTargetDataReady(const FGameplayAbilityTargetDataHandle& Data, FGameplayTag ApplicationTag);
-	/** 유일한 발사 확정 지점. false = 탄약 소진(어빌리티 종료). 버킷 거절은 true(한 발만 버림) */
-	bool ServerConfirmOneShot(const FVector& Direction, float ClientMoveTimeStamp);
 
 	// --- 헬퍼 ---
 	AEPCharacter* GetCharacter() const;
@@ -492,6 +496,9 @@ private:
 ```
 
 `ApplyCooldown` 오버라이드, `static GetFireInterval`, 공개 `ServerConfirmOneShot(Origin, Direction)` — 전부 사라진다.
+
+**2026-09-23 구조 변경:** `SendFireTargetData`와 `ServerConfirmOneShot`도 없앴다. 둘 다 `OnTargetDataReady` 안으로 흡수된다 —
+역할별 우회 경로를 만들지 않고 한 함수로 모으는 Lyra 방식(`LyraGameplayAbility_RangedWeapon.cpp:489`, `:596`). STATUS §2 2026-09-23 참고.
 
 ---
 
@@ -537,7 +544,7 @@ bool UEPGA_Item_PrimaryUse::CanActivateAbility(const FGameplayAbilitySpecHandle 
 		return false;                                        // Dead / Reloading 태그
 
 	if (!ActorInfo->IsLocallyControlled())
-		return true;                                         // 서버가 든 원격 클라 인스턴스: 속도는 ServerConfirmOneShot의 버킷이 본다
+		return true;                                         // 서버가 든 원격 클라 인스턴스: 속도는 OnTargetDataReady의 버킷이 본다
 
 	// 연타 가드. 예약 슬롯 덕에 보통은 안 걸린다 — 어빌리티가 Interval 동안 살아 있어 클릭이 InputPressed로 간다.
 	// 탄약 소진 등으로 먼저 끝난 직후의 클릭만 여기 온다.
@@ -618,58 +625,35 @@ void UEPGA_Item_PrimaryUse::InputReleased(const FGameplayAbilitySpecHandle Handl
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);   // 떼면 연사 중단 → ServerEndAbility (예전 CancelAbilities와 같은 경로)
 }
 
-// ---------------------------------------------------------------- 오너 클라·호스트
+// ---------------------------------------------------------------- 로컬 (오너 클라·호스트)
 
 void UEPGA_Item_PrimaryUse::FireOnce()
 {
-	AEPCharacter*       Char   = GetCharacter();
-	AEPWeapon*          Weapon = GetWeapon();
-	UEPCombatComponent* Combat = Char ? Char->GetCombatComponent() : nullptr;
-	if (!Char || !Weapon || !Combat || !Weapon->CanFire())
+	AEPCharacter* Char   = GetCharacter();
+	AEPWeapon*    Weapon = GetWeapon();
+	if (!Char || !Weapon || !Weapon->CanFire())
 	{
-		EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, true);   // 탄약 소진 — 서버 인스턴스도 끝내야 하므로 복제
+		EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, false);   // 탄약 소진 — 서버 인스턴스도 끝내야 하므로 복제
 		return;
 	}
 
 	Weapon->GetFireTimer().Start(GetWorld()->GetTimeSeconds(), 1.f / Weapon->GetBaseFireRate());
-	const FVector Direction         = Char->GetControlRotation().Vector();
-	const float   ClientMoveTimeStamp = GetClientMoveTimeStamp();     // 지금 위치를 만든 무브 (CMC 틱 전이므로 직전 프레임 것)
 
-	if (CurrentActorInfo->IsNetAuthority())
-	{
-		// 호스트 — 왕복 없이 직접. 타임스탬프 -1 → 현재 위치
-		if (!ServerConfirmOneShot(Direction, ClientMoveTimeStamp))
-			EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, true);
-		return;
-	}
+	// 이 발의 페이로드. 핸들이 TSharedPtr로 소유권을 가져간다 — delete 금지
+	FEPTargetData_Fire* Data  = new FEPTargetData_Fire();
+	Data->Direction           = Char->GetControlRotation().Vector();
+	Data->ClientMoveTimeStamp = GetClientMoveTimeStamp();      // 호스트는 -1 (히스토리 없음 → 현재 위치)
 
-	// 원격 클라 — 탄약 예측 + 코스메틱 + TargetData, 셋이 같은 예측 키 아래.
-	// 첫 발은 활성화 윈도우 안(활성화 키 유효) → 새 키를 만들지 않는다: 배치 RPC가 활성화 키만 싣고, CatchUpTo는 정확히 그 키만 잡는다.
-	// 타이머 발은 윈도우 밖 → 새 키.
-	UAbilitySystemComponent* ASC = GetAbilitySystemComponentFromActorInfo();
-	FScopedPredictionWindow ScopedPrediction(ASC, /*bCanGenerateNewKey*/ !ASC->ScopedPredictionKey.IsValidForMorePrediction());
-
-	if (!CommitAbilityCost(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo))   // GE_ConsumeAmmo 예측 적용 → HUD 즉시 −1
-	{
-		EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, true);
-		return;
-	}
-
-	const FVector CamLoc = Char->GetCameraComponent()->GetComponentLocation();
-	Combat->PlayLocalMuzzleEffect(CamLoc);                                               // 코스메틱은 클라 값으로
-	if (Weapon->WeaponDef->BallisticType == EEPBallisticType::ProjectileFast)
-		Combat->SpawnLocalCosmeticProjectile(CamLoc, Direction);
-
-	SendFireTargetData(Direction, ClientMoveTimeStamp);                                  // 윈도우 안에서 — ScopedPredictionKey를 싣는다
+	// 역할 분기 없이 곧바로 처리 지점으로. Lyra StartRangedWeaponTargeting:596과 같은 마무리
+	OnTargetDataReady(FGameplayAbilityTargetDataHandle(Data), FGameplayTag());
 }
 
 void UEPGA_Item_PrimaryUse::ArmNextShot()
 {
 	if (!IsActive()) return;                   // FireOnce가 탄약 소진으로 방금 끝냈으면 예약하지 않는다
 
-	AEPCharacter* Char   = GetCharacter();
-	AEPWeapon*    Weapon = GetWeapon();
-	if (!Char || !Weapon) return;
+	AEPWeapon* Weapon = GetWeapon();
+	if (!Weapon) return;
 
 	const float Remaining = Weapon->GetFireTimer().GetRemaining(GetWorld()->GetTimeSeconds(), GetFireRateMultiplier());
 	GetWorld()->GetTimerManager().SetTimer(FireTimerHandle, this, &UEPGA_Item_PrimaryUse::OnFireTimerTick,
@@ -688,55 +672,68 @@ void UEPGA_Item_PrimaryUse::OnFireTimerTick()
 	EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, /*bReplicateEndAbility*/ true, false);
 }
 
-void UEPGA_Item_PrimaryUse::SendFireTargetData(const FVector& Direction, float ClientMoveTimeStamp)
-{
-	UAbilitySystemComponent* ASC = CurrentActorInfo->AbilitySystemComponent.Get();
-	if (!ASC) return;
-
-	FEPTargetData_Fire* Data = new FEPTargetData_Fire();   // 핸들이 TSharedPtr로 소유권을 가져간다
-	Data->Direction           = Direction;
-	Data->ClientMoveTimeStamp = ClientMoveTimeStamp;
-	const FGameplayAbilityTargetDataHandle Handle(Data);
-
-	// CurrentPredictionKey = 이 발의 예측 키 (FireOnce의 윈도우). 서버가 같은 키로 윈도우를 열어 CommitAbilityCost → ack → 클라 예측 GE 제거.
-	// 거절(버킷·탄약)이면 차감 없이 ack만 → 예측 GE 제거 = 탄약 복구
-	ASC->CallServerSetReplicatedTargetData(CurrentSpecHandle, CurrentActivationInfo.GetActivationPredictionKey(),
-		Handle, FGameplayTag(), ASC->ScopedPredictionKey);
-}
-
-// ---------------------------------------------------------------- 서버
+// ---------------------------------------------------------------- 발 하나의 처리 (세 역할 공통)
 
 void UEPGA_Item_PrimaryUse::OnTargetDataReady(const FGameplayAbilityTargetDataHandle& Data, FGameplayTag /*ApplicationTag*/)
 {
-	UAbilitySystemComponent* ASC = CurrentActorInfo->AbilitySystemComponent.Get();
+	UAbilitySystemComponent* ASC = CurrentActorInfo ? CurrentActorInfo->AbilitySystemComponent.Get() : nullptr;
 	if (!ASC) return;
 
-	// 캐시를 먼저 비운다 — 다음 발이 "overriding pending replicated target data" 로그를 내지 않게
-	ASC->ConsumeClientReplicatedTargetData(CurrentSpecHandle, CurrentActivationInfo.GetActivationPredictionKey());
+	const bool bLocallyControlled = CurrentActorInfo->IsLocallyControlled();
+	const bool bAuthority         = CurrentActorInfo->IsNetAuthority();
+	const FPredictionKey ActivationKey = CurrentActivationInfo.GetActivationPredictionKey();
+
+	// 서버가 든 원격 클라 인스턴스 — 복제 캐시를 먼저 비운다.
+	// 안 하면 다음 발에서 "overriding pending replicated target data" 로그가 난다.
+	if (!bLocallyControlled)
+		ASC->ConsumeClientReplicatedTargetData(CurrentSpecHandle, ActivationKey);
 
 	const FEPTargetData_Fire* Fire = Data.IsValid(0) ? static_cast<const FEPTargetData_Fire*>(Data.Get(0)) : nullptr;
 	if (!Fire) return;   // 배치 RPC는 TargetData가 비어 있어도 델리게이트를 부른다 (첫 발이 CanFire 실패한 경우)
 
-	if (!ServerConfirmOneShot(FVector(Fire->Direction), Fire->ClientMoveTimeStamp))
-		EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, false);   // 탄약 소진 → ClientEndAbility로 클라도 따라 끝난다
-}
-
-bool UEPGA_Item_PrimaryUse::ServerConfirmOneShot(const FVector& Direction, float ClientMoveTimeStamp)
-{
 	AEPCharacter*       Char   = GetCharacter();
 	AEPWeapon*          Weapon = GetWeapon();
 	UEPCombatComponent* Combat = Char ? Char->GetCombatComponent() : nullptr;
-	if (!Char || !Weapon || !Combat) return false;
+	if (!Char || !Weapon || !Combat) return;
 
-	const float RefillPerSecond = Weapon->GetBaseFireRate() * GetFireRateMultiplier();   // TryTake 시점의 유효 발사 속도
-	if (!Weapon->GetFireLimiter().TryTake(GetWorld()->GetTimeSeconds(), RefillPerSecond))
-		return true;                                          // 너무 빠름 → 이 발만 버림. 어빌리티는 유지
+	// 예측 창 — 클라에서만 동작한다(서버·호스트는 생성자가 즉시 return, GameplayPrediction.cpp:406).
+	// 첫 발은 활성화 창 안이라 활성화 키가 유효 → 새 키를 만들지 않는다. 타이머 발은 창 밖 → 새 독립 키.
+	FScopedPredictionWindow ScopedPrediction(ASC, /*bCanGenerateNewKey*/ !ASC->ScopedPredictionKey.IsValidForMorePrediction());
 
+	// --- 1) 속도 검증. 권위만, 그리고 탄약 차감보다 먼저 --- (거절된 발이 탄약을 깎으면 안 된다)
+	if (bAuthority)
+	{
+		const float RefillPerSecond = Weapon->GetBaseFireRate() * GetFireRateMultiplier();   // TryTake 시점의 유효 발사 속도
+		if (!Weapon->GetFireLimiter().TryTake(GetWorld()->GetTimeSeconds(), RefillPerSecond))
+			return;                       // 이 발만 버린다. 어빌리티는 유지 — 클라의 예측 −1은 키 ack으로 저절로 복구
+	}
+
+	// --- 2) 탄약. 한 번만 부른다 --- 클라는 예측(창 안), 권위는 확정. 호스트는 권위이자 로컬이지만 호출은 여전히 한 번
 	if (!CommitAbilityCost(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo))
-		return false;                                         // 탄약 소진 → 종료
+	{
+		EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, /*bReplicateEndAbility*/ true, false);
+		return;
+	}
 
-	Combat->HandleServerFire(Direction, ClientMoveTimeStamp); // 원점은 안에서 서버가 히스토리에서
-	return true;
+	// --- 3) 서버에 알린다. 원격 클라 본인만 --- (Lyra :489의 bShouldNotifyServer와 같은 조건)
+	// 호스트는 여기서 자동으로 걸러진다 — 자기 자신에게 RPC를 보낼 이유가 없다
+	if (bLocallyControlled && !bAuthority)
+		ASC->CallServerSetReplicatedTargetData(CurrentSpecHandle, ActivationKey, Data, FGameplayTag(), ASC->ScopedPredictionKey);
+
+	// --- 4) 코스메틱. 로컬만 --- 플레이어가 보는 건 클라 카메라 값 (설계 §4-2)
+	if (bLocallyControlled)
+	{
+		if (const UCameraComponent* Cam = Char->GetCameraComponent())
+		{
+			Combat->PlayLocalMuzzleEffect(Cam->GetComponentLocation());
+			if (Weapon->WeaponDef->BallisticType == EEPBallisticType::ProjectileFast)
+				Combat->SpawnLocalCosmeticProjectile(Cam->GetComponentLocation(), Fire->Direction);
+		}
+	}
+
+	// --- 5) 판정. 권위만 --- 원점은 안에서 ClientMoveTimeStamp로 히스토리 조회
+	if (bAuthority)
+		Combat->HandleServerFire(Fire->Direction, Fire->ClientMoveTimeStamp);
 }
 
 // ---------------------------------------------------------------- 헬퍼
@@ -776,9 +773,10 @@ bool UEPGA_Item_PrimaryUse::IsAutoFire(const AEPWeapon* Weapon)
 **읽는 순서 (오너 클라, `Single` 더블클릭):**
 ```
 클릭1  Input_Fire → 스펙 비활성 → TryActivateAbility
-        ActivateAbility → FireOnce(발사, FireTimer.Start, TargetData{Dir, TS}) → ArmNextShot(Interval 뒤 틱)
+        ActivateAbility → FireOnce(FireTimer.Start, TargetData{Dir, TS} 생성)
+                        → OnTargetDataReady(예측 차감 → 서버 전송 → 코스메틱) → ArmNextShot
 클릭2  Input_Fire → 스펙 활성 → AbilitySpecInputPressed → InputPressed → bPendingShot = true
-틱     OnFireTimerTick → bPendingShot → FireOnce(발사) → ArmNextShot
+틱     OnFireTimerTick → bPendingShot → FireOnce → OnTargetDataReady → ArmNextShot
 틱     OnFireTimerTick → Auto 아님, 예약 없음 → EndAbility(복제) → ServerEndAbility
 ```
 
@@ -786,9 +784,31 @@ bool UEPGA_Item_PrimaryUse::IsAutoFire(const AEPWeapon* Weapon)
 ```
 ServerMove ×N → CMC OnMovementUpdated → SSR OnServerMoveProcessed → RecordShotOrigin(TS, 카메라)   (캐릭터 채널, 계속)
 ServerTryActivateAbility → ActivateAbility → 델리게이트 바인딩, 대기         (PlayerState 채널)
-ServerSetReplicatedTargetData ×2 → OnTargetDataReady → ServerConfirmOneShot(버킷 → 탄약 → HandleServerFire[TS → 원점])
+ServerSetReplicatedTargetData ×2 → OnTargetDataReady(버킷 → 탄약 → HandleServerFire[TS → 원점])
 ServerEndAbility → EndAbility → 델리게이트 해제
 ```
+
+**호스트 (리슨 서버 자기 폰):** 위 두 경로가 한 줄로 합쳐진다.
+```
+Input_Fire → ActivateAbility → FireOnce → OnTargetDataReady(버킷 → 탄약 → 코스메틱 → HandleServerFire) → ArmNextShot
+```
+RPC도, 예측 창도 없다 — `bLocallyControlled && !bAuthority`가 false라 전송을 건너뛰고,
+`FScopedPredictionWindow`의 클라용 생성자는 권위에서 즉시 return한다(`GameplayPrediction.cpp:406`).
+
+**역할별로 어느 단계가 도는가:**
+
+| 단계 | 오너 클라 | 호스트 | 서버 인스턴스 |
+|---|:---:|:---:|:---:|
+| 0. `ConsumeClientReplicatedTargetData` | | | ○ |
+| 1. 버킷 `TryTake` | | ○ | ○ |
+| 2. `CommitAbilityCost` | ○ (예측) | ○ | ○ |
+| 3. `CallServerSetReplicatedTargetData` | ○ | | |
+| 4. 코스메틱 | ○ | ○ | |
+| 5. `HandleServerFire` | | ○ | ○ |
+
+2번이 표에서 세 열 모두에 있지만 **한 인스턴스당 한 번**이다. 호스트가 로컬이자 권위라고
+두 번 부르지 않는다 — 이전 판(`IsNetAuthority()` 분기 + `ServerConfirmOneShot`)에서 `return`이
+빠지면 두 번 불리던 자리가 구조적으로 사라졌다.
 
 ---
 
@@ -948,9 +968,9 @@ public:
 검증용 임시 로그 — 끝나면 지운다:
 ```cpp
 // FireOnce, FireTimer.Start 직후
-UE_LOG(LogTemp, Log, TEXT("[Fire] CL shot now=%.3f ts=%.4f cam=%s dir=%s"), GetWorld()->GetTimeSeconds(), ClientMoveTimeStamp,
-	*Char->GetCameraComponent()->GetComponentLocation().ToString(), *Direction.ToString());
-// ServerConfirmOneShot, TryTake 실패 분기
+UE_LOG(LogTemp, Log, TEXT("[Fire] CL shot now=%.3f ts=%.4f cam=%s dir=%s"), GetWorld()->GetTimeSeconds(), Data->ClientMoveTimeStamp,
+	*Char->GetCameraComponent()->GetComponentLocation().ToString(), *Data->Direction.ToString());
+// OnTargetDataReady, TryTake 실패 분기
 UE_LOG(LogTemp, Warning, TEXT("[Fire] SV bucket rejected now=%.3f"), GetWorld()->GetTimeSeconds());
 // HandleServerFire, Origin 확정 직후
 UE_LOG(LogTemp, Log, TEXT("[Fire] SV shot ts=%.4f hit=%d origin=%s dir=%s"), ClientMoveTimeStamp, bHistoryHit ? 1 : 0, *Origin.ToString(), *Direction.ToString());
@@ -995,9 +1015,10 @@ UE_LOG(LogTemp, Log, TEXT("[Fire] SV shot ts=%.4f hit=%d origin=%s dir=%s"), Cli
 | `InputPressed`가 안 불린다 | `AbilitySpecInputPressed`는 **스펙이 활성일 때만** 인스턴스에 전달(`ASC_Abilities.cpp:2879`). `Input_Fire`의 `IsActive()` 분기 확인 |
 | 배치 RPC가 빈 TargetData로 델리게이트를 부른다 | `OnTargetDataReady`의 `IsValid(0)` 검사. 첫 발이 `CanFire` 실패면 빈 배치가 온다 |
 | 서버 로그 "overriding pending replicated target data" | 직전 발을 `Consume`하지 않았다는 뜻. `OnTargetDataReady` 첫 줄에서 소비 |
-| 첫 발에서 새 예측 키를 만든다 (`FScopedPredictionWindow(ASC)` 무조건) | 활성화 윈도우 안에서 만든 종속 키는 배치 RPC가 안 싣고(`ASC_Abilities.cpp:4131` 활성화 키만), `CatchUpTo`는 정확히 그 키만 잡아(`GameplayPrediction.cpp:321`) 예측 GE가 남는다 → HUD −1 고정. `bCanGenerateNewKey = !ScopedPredictionKey.IsValidForMorePrediction()` |
+| 첫 발에서 새 예측 키를 만든다 (`FScopedPredictionWindow(ASC)` 무조건) | 활성화 윈도우 안에서 만든 종속 키는 배치 RPC가 싣지 않는다(`ASC_Abilities.cpp:4130-4131`, 활성화 키만). 기본 CVar(`AbilitySystem.PredictionKey.DepChainBehavior = 1`)에서는 베이스 ack이 종속 키까지 전파돼(`GameplayPrediction.cpp:355-357`) 정리는 되지만, 엔진 주석이 "논리적으로 옳지 않다"고 적어 둔 **레거시 동작**이고 목표값 3에서는 예측 GE가 남는다 → HUD −1 고정. 활성화 키 재사용은 두 설정 모두에서 안전: `bCanGenerateNewKey = !ScopedPredictionKey.IsValidForMorePrediction()`. 전체 근거는 `DOCS/Mine/Concepts/PredictionKey.md` §6-7 |
 | `CommitAbilityCost`를 윈도우 **밖**에서 부른다 | `GetPredictionKeyForNewAction()`이 무효 → 예측 안 됨. `FScopedPredictionWindow` 선언 **뒤에** 부른다 |
-| 서버 `ServerConfirmOneShot`에서 `CommitAbilityCost`가 클라 키를 안 쓴다 | 서버는 `ServerSetReplicatedTargetData_Implementation`이 연 윈도우 안에 있어 `GetPredictionKeyForNewAction()`이 클라 키 — 자동. 호스트 경로(윈도우 없음)는 권위라 예측 자체가 없다 |
+| 서버 `OnTargetDataReady`에서 `CommitAbilityCost`가 클라 키를 안 쓴다 | 서버는 `ServerSetReplicatedTargetData_Implementation`이 연 윈도우 안에 있어 `GetPredictionKeyForNewAction()`이 클라 키 — 자동. 호스트(윈도우 no-op)는 권위라 예측 자체가 없다 |
+| 호스트에서 탄약이 두 배로 닳는다 | 이전 판의 `IsNetAuthority()` 분기에서 `return`이 빠지면 `CommitAbilityCost`가 두 번 불렸다. 2026-09-23 구조에서는 분기 자체가 없어 재발하지 않는다 |
 | 잔탄 HUD가 한 프레임 −2로 튄다 | 예측 GE 제거(키 ack)와 서버 base 복제의 적용 순서. 같은 업데이트에 오면 프레임 안에서 해소. 지속되면 `GE_ConsumeAmmo`가 Instant인지, 스택 설정이 없는지 확인 |
 | 클라에서 `FScopedPredictionWindow(ASC, Key)` 2-인자 생성자 | 클라(`IsNetSimulating`)에선 **아무것도 안 한다**(`GameplayPrediction.cpp:378`). 불필요 |
 | 남이 건 발사 속도 버프 **종료** 직후 한두 발 거절 | 클라가 D 늦게 알아 초과분 `(빠른 rps − 느린 rps) × D`. 2배·20rps·50ms = 1발, `MaxTokens=2` 안. 넘으면 `FireRateBurstAllowance` 상향이 아니라 배율 상한을 검토 |
@@ -1006,7 +1027,7 @@ UE_LOG(LogTemp, Log, TEXT("[Fire] SV shot ts=%.4f hit=%d origin=%s dir=%s"), Cli
 | `Burst` 모드 | 지금은 `Single`과 같은 경로(`IsAutoFire` false). N발 카운터는 범위 밖 (설계 문서 §3) |
 | 재장전 중 `Auto`가 계속 쏜다 | **기존 동작** — `Reload`가 `PrimaryUse`를 취소하지 않는다. 이 문서 범위 밖. 필요하면 `Reload` 생성자 `CancelAbilitiesWithTag(Ability.Item.PrimaryUse)` 한 줄 |
 | `Modifier.FireRate` 배율을 누가 세팅하나 | 지금은 아무도 안 한다 — 저장소·태그·읽는 코드만 준비. 첫 소비자는 발사 속도 버프 스킬(`04_Polish_SkillDisplay.md` §5 timed-buff 패턴) |
-| 리슨 서버 호스트 | `IsLocallyControlled() && IsNetAuthority()` → `FireOnce`가 `ServerConfirmOneShot` 직접, 타임스탬프 -1 → 현재 카메라. 버킷도 통과한다(자기 타이머로 페이싱하니 정확히 1발/간격) |
+| 리슨 서버 호스트 | `IsLocallyControlled() && IsNetAuthority()` → `OnTargetDataReady`에서 전송만 건너뛰고 버킷·탄약·코스메틱·판정을 전부 탄다. 타임스탬프 -1 → 현재 카메라. 버킷도 통과한다(자기 타이머로 페이싱하니 정확히 1발/간격) |
 | `AEPWeapon::BeginPlay`에서 `GetDefault<UEPCombatDeveloperSettings>()` | `Config=Game`이라 ini 값이 들어온다. 미설정이면 C++ 기본 |
 | `FEPLocalTimer`를 `double`로 바꾸면 스킬 코드가 깨지나 | `GetTimeSeconds()`가 이미 `double`이라 호출자는 그대로. `Revert`의 `PrevLastUpdate`도 같이 `double` |
 

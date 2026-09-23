@@ -57,10 +57,8 @@ private:
 	void FireOnce();
 	void ArmNextShot();
 	void OnFireTimerTick();
-	void SendFireTargetData(const FVector& Direction, float ClientMoveTimeStamp);
 	
 	void OnTargetDataReady(const FGameplayAbilityTargetDataHandle& Data, FGameplayTag ApplicationTag);
-	bool ServerConfirmOneShot(const FVector& Direction, float ClientMoveTimeStamp);
 	
 	AEPCharacter* GetCharacter() const;
 	AEPWeapon* GetWeapon() const;

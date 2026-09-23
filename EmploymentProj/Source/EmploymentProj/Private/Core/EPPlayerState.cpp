@@ -1,17 +1,14 @@
-// Fill out your copyright notice in the Description page of Project Settings.
-
 // Core
 #include "Core/EPPlayerState.h"
 #include "Net/UnrealNetwork.h"
 
 // GAS
-#include "AbilitySystemComponent.h"
+#include "GAS/EPAbilitySystemComponent.h"
 #include "GAS/EPAttributeSet.h"
-#include "Math/UnitConversion.h"
 
 AEPPlayerState::AEPPlayerState()
 {
-	ASC = CreateDefaultSubobject<UAbilitySystemComponent>(TEXT("ASC"));
+	ASC = CreateDefaultSubobject<UEPAbilitySystemComponent>(TEXT("ASC"));
 	ASC->SetIsReplicated(true);
 	
 	ASC->SetReplicationMode(EGameplayEffectReplicationMode::Mixed);

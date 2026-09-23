@@ -80,19 +80,13 @@ void UEPGA_Item_PrimaryUse::EndAbility(const FGameplayAbilitySpecHandle Handle,
 	const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo,
 	bool bReplicateEndAbility, bool bWasCancelled)
 {
-	/*
-	1. `IsEndAbilityValid(Handle, ActorInfo)` 아니면 return
-2. 타이머 정리(지금 코드), `bPendingShot = false`
-3. `ActorInfo`가 있고 로컬 컨트롤이 아니면: 델리게이트 `.Remove(TargetDataDelegateHandle)` + `ConsumeClientReplicatedTargetData` (Lyra `EndAbility`와 동일)
-4. `Super`
-	 */
 	if (!IsEndAbilityValid(Handle, ActorInfo)) return;
 	
-	if (!GetWorld()) return;
-	GetWorld()->GetTimerManager().ClearTimer(FireTimerHandle);
+	if (UWorld* World = GetWorld())
+		World->GetTimerManager().ClearTimer(FireTimerHandle);
 	bPendingShot = false;
 	
-	if (ActorInfo || ActorInfo->IsLocallyControlled())
+	if (ActorInfo || !ActorInfo->IsLocallyControlled())
 	{
 		if (UAbilitySystemComponent* ASC = GetAbilitySystemComponentFromActorInfo())
 		{
@@ -132,34 +126,11 @@ void UEPGA_Item_PrimaryUse::FireOnce()
 	
 	Weapon->GetFireTimer().Start(GetWorld()->GetTimeSeconds(), 1.f / Weapon->GetBaseFireRate());
 	
-	const FVector Direction = Char->GetControlRotation().Vector();
-	const float ClientMoveTimeStamp = GetClientMoveTimeStamp();
+	FEPTargetData_Fire* Data = new FEPTargetData_Fire();
+	Data->Direction = Char->GetControlRotation().Vector();
+	Data->ClientMoveTimeStamp = GetClientMoveTimeStamp();
 	
-	if (CurrentActorInfo->IsNetAuthority())
-	{
-		if (!ServerConfirmOneShot(Direction, ClientMoveTimeStamp))
-		{
-			EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, true);
-			return;
-		}
-	}
-	
-	UAbilitySystemComponent* ASC = GetAbilitySystemComponentFromActorInfo();
-	bool bCanGenerateNewKey = !ASC->ScopedPredictionKey.IsValidForMorePrediction();
-    FScopedPredictionWindow ScopedPrediction(ASC, bCanGenerateNewKey);
-	
-	if (!CommitAbilityCost(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo))
-	{
-		EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, true);
-		return;
-	}
-	
-	const FVector CamLoc = Char->GetCameraComponent()->GetComponentLocation();
-	Combat->PlayLocalMuzzleEffect(CamLoc);
-	if (Weapon->WeaponDef->BallisticType == EEPBallisticType::ProjectileFast)
-		Combat->SpawnLocalCosmeticProjectile(CamLoc, Direction);
-	
-	SendFireTargetData(Direction, ClientMoveTimeStamp);
+	OnTargetDataReady(FGameplayAbilityTargetDataHandle(Data), FGameplayTag());
 }
 
 void UEPGA_Item_PrimaryUse::ArmNextShot()
@@ -191,58 +162,68 @@ void UEPGA_Item_PrimaryUse::OnFireTimerTick()
 	EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, false);
 }
 
-void UEPGA_Item_PrimaryUse::SendFireTargetData(const FVector& Direction, float ClientMoveTimeStamp)
-{
-	UAbilitySystemComponent* ASC = GetAbilitySystemComponentFromActorInfo();
-	if (!ASC) return;
-	
-	FEPTargetData_Fire* Data = new FEPTargetData_Fire();
-	Data->Direction = Direction;
-	Data->ClientMoveTimeStamp = ClientMoveTimeStamp;
-	const FGameplayAbilityTargetDataHandle Handle(Data);
-	
-	const FPredictionKey AbilityKey = CurrentActivationInfo.GetActivationPredictionKey();
-	ASC->CallServerSetReplicatedTargetData(
-		CurrentSpecHandle,
-		AbilityKey,
-		Handle,
-		FGameplayTag(),
-		ASC->ScopedPredictionKey
-	);
-	
-}
-
 void UEPGA_Item_PrimaryUse::OnTargetDataReady(const FGameplayAbilityTargetDataHandle& Data, FGameplayTag ApplicationTag)
 {
 	UAbilitySystemComponent* ASC = GetAbilitySystemComponentFromActorInfo();
 	if (!ASC) return;
 
-	const FPredictionKey Key = CurrentActivationInfo.GetActivationPredictionKey();
-	ASC->ConsumeClientReplicatedTargetData(CurrentSpecHandle, Key);
+	const bool bLocallyControlled = CurrentActorInfo->IsLocallyControlled();
+	const bool bAuthority = CurrentActorInfo->IsNetAuthority();
+	const FPredictionKey ActivationKey = CurrentActivationInfo.GetActivationPredictionKey();
+	
+	// 서버: 복제 캐시 TargetData 비우기
+	if (!bLocallyControlled)
+		ASC->ConsumeClientReplicatedTargetData(CurrentSpecHandle, ActivationKey);
 	
 	const FEPTargetData_Fire* Fire = Data.IsValid(0) ? static_cast<const FEPTargetData_Fire*>(Data.Get(0)) : nullptr;
 	if (!Fire) return;
 	
-	if (!ServerConfirmOneShot(Fire->Direction, Fire->ClientMoveTimeStamp))
-		EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, false);
-}
-
-bool UEPGA_Item_PrimaryUse::ServerConfirmOneShot(const FVector& Direction, float ClientMoveTimeStamp)
-{
 	AEPCharacter* Char = GetCharacter();
-	UEPCombatComponent* Combat = Char ? Char->GetCombatComponent() : nullptr;
 	AEPWeapon* Weapon = GetWeapon();
-	if (!Char || !Combat || !Weapon) return false;
+	UEPCombatComponent* Combat = Char ? Char->GetCombatComponent() : nullptr;
+	if (!Char || !Weapon || !Combat) return;
 	
-	const float RefillPerSecond = Weapon->GetBaseFireRate() * GetFireRateMultiplier();
-	if (!Weapon->GetFireLimiter().TryTake(GetWorld()->GetTimeSeconds(), RefillPerSecond))
-		return true;
+	// 클라: 예측 창
+	FScopedPredictionWindow ScopedPrediction(ASC, !ASC->ScopedPredictionKey.IsValidForMorePrediction());
 	
+	// 1. 서버: 발사 속도 검증
+	if (bAuthority)
+	{
+		const float RefillPerSecond = Weapon->GetBaseFireRate() * GetFireRateMultiplier();
+		if (!Weapon->GetFireLimiter().TryTake(GetWorld()->GetTimeSeconds(), RefillPerSecond))
+			return;
+	}
+	
+	// 2. 서버/클라(예측): 탄약 소모
 	if (!CommitAbilityCost(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo))
-		return false;
+	{
+		EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, false);
+		return;
+	}
 	
-	Combat->HandleServerFire(Direction, ClientMoveTimeStamp);
-	return true;
+	// 3. 클라(예측): 서버에게 TargetData 전송
+	if (bLocallyControlled && !bAuthority)
+		ASC->CallServerSetReplicatedTargetData(
+			CurrentSpecHandle,
+			ActivationKey,
+			Data, FGameplayTag(), 
+			ASC->ScopedPredictionKey
+		);
+	
+	// 4. 클라(예측): 코스메틱
+	if (bLocallyControlled)
+	{
+		if (const UCameraComponent* Cam = Char->GetCameraComponent())
+		{
+			Combat->PlayLocalMuzzleEffect(Cam->GetComponentLocation());
+			if (Weapon->WeaponDef->BallisticType == EEPBallisticType::ProjectileFast)
+				Combat->SpawnLocalCosmeticProjectile(Cam->GetComponentLocation(), Fire->Direction);
+		}
+	}
+	
+	// 5. 서버: 발사 판정
+	if (bAuthority)
+		Combat->HandleServerFire(Fire->Direction, Fire->ClientMoveTimeStamp);
 }
 
 AEPCharacter* UEPGA_Item_PrimaryUse::GetCharacter() const
@@ -275,8 +256,10 @@ float UEPGA_Item_PrimaryUse::GetFireRateMultiplier() const
 float UEPGA_Item_PrimaryUse::GetClientMoveTimeStamp() const
 {
 	if (!CurrentActorInfo || CurrentActorInfo->IsNetAuthority()) return -1.f;
-	AEPCharacter* Char = GetCharacter();
-	return Char->GetCharacterMovement()->GetPredictionData_Client_Character()->CurrentTimeStamp;
+	const AEPCharacter* Char = GetCharacter();
+	const UCharacterMovementComponent* CMC = Char ? Char->GetCharacterMovement() : nullptr;
+	const FNetworkPredictionData_Client_Character* ClientData = CMC ? CMC->GetPredictionData_Client_Character() : nullptr;
+	return ClientData ? ClientData->CurrentTimeStamp : -1.f;
 }
 
 bool UEPGA_Item_PrimaryUse::IsAutoFire(const AEPWeapon* Weapon)
