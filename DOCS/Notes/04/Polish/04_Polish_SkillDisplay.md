@@ -81,7 +81,7 @@ GE로 표현하지 않는다**(§3-0 한 줄 규칙). 이번 구현 대상은 �
 
 ---
 
-## 3. 설계 — 로컬 타이머 (미구현)
+## 3. 설계 — 로컬 타이머 (**구현 완료** 2026-09-22 `ea08cfc`, §4 PIE 미검증)
 
 핑 추정을 아예 안 쓴다. 클라와 서버가 **각자 자기 값끼리만** 비교한다.
 
@@ -406,16 +406,19 @@ GAS 표준 흐름이 재검증 왕복을 해준다: 클라 `TryActivateAbility` 
 
 ### 3-8. 완료 조건
 
-- [ ] `GAS/EPLocalTimer.h` — §3-1 API, UObject 의존 없음
-- [ ] `Core/EPLocalModifiers.h` — `Set/Clear/Product`, `AEPCharacter` 멤버
-- [ ] `EPGA_Skill_Base` — `CooldownTimer`, `CompleteCast()`, `GetEffectiveCooldown()`, `CanActivateAbility` 오버라이드, 모디파이어 Set/Clear, `OnActivationRejected()` + `NewRejectedDelegate` 바인딩
-- [ ] `EPGA_Skill_Heal` 생성자 — `ActivationOwnedTags.AddTag(TAG_State_Casting)`
-- [ ] `OnCastStarted()` 빈 virtual + `CastChannelTag` 필드(기본 `State.Casting`) — 시간제 버프 자리
-- [ ] `EPCharacterMovement::GetMaxSpeed()` 로컬 배율 곱
-- [ ] 속성 2개 추가(`COND_None` 기존 규칙대로), 태그 2계층 등록
-- [ ] `SetCooldownTag`/`ApplyCooldownGE`/`GE_CooldownClass`/`GE_CastingClass`/`ConfigureCastingSpec` 제거, 에셋 참조 정리, Dash/Heal/ShieldOn 컴파일
-- [ ] `ServerCooldownTolerance` DeveloperSettings + ini
-- [ ] §4 PIE 체크리스트 통과
+> 2026-09-24 코드 대조 결과. `ServerCooldownToleranceSeconds`는 ini 항목 없이
+> C++ 기본값 0.1s를 쓴다(`EPCombatDeveloperSettings.h:46`).
+
+- [x] `GAS/EPLocalTimer.h` — §3-1 API, UObject 의존 없음
+- [x] `Core/EPLocalModifiers.h` — `Set/Clear/Product`, `AEPCharacter` 멤버
+- [x] `EPGA_Skill_Base` — `CooldownTimer`, `CompleteCast()`, `GetEffectiveCooldown()`, `CanActivateAbility` 오버라이드, 모디파이어 Set/Clear, `OnActivationRejected()` + `NewRejectedDelegate` 바인딩
+- [x] `EPGA_Skill_Heal` 생성자 — `ActivationOwnedTags.AddTag(TAG_State_Casting)`
+- [x] `OnCastStarted()` 빈 virtual + `CastChannelTag` 필드(기본 `State.Casting`) — 시간제 버프 자리
+- [x] `EPCharacterMovement::GetMaxSpeed()` 로컬 배율 곱
+- [x] 속성 2개 추가(`COND_None` 기존 규칙대로), 태그 2계층 등록
+- [x] `SetCooldownTag`/`ApplyCooldownGE`/`GE_CooldownClass`/`GE_CastingClass`/`ConfigureCastingSpec` 제거, 에셋 참조 정리, Dash/Heal/ShieldOn 컴파일
+- [x] `ServerCooldownTolerance` DeveloperSettings + ini
+- [ ] §4 PIE 체크리스트 통과 ← **유일한 미완**
 
 ### 3-9. 함정표
 
