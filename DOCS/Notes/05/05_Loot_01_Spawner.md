@@ -1,6 +1,6 @@
 # Step 01 — Spawner (루트 테이블 + 스포너 + 픽업)
 
-> 마스터 기획: `05_Loot_DOCS.md` (§4-2, §4-3, §4-4)
+> 마스터 기획: `05_Loot_Design.md` (§4-2, §4-3, §4-4)
 > 선행: `05_Loot_00_ItemCore.md` — `ItemId → Definition` 조회가 동작해야 한다
 
 ---

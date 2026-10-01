@@ -381,5 +381,5 @@ FGameplayTag ChannelTag;   // 항상 State.Casting — 스킬별 고유 태그�
 
 - `DOCS/Notes/04/04_GAS_08_HUD.md` — 구현 전체
 - `DOCS/Notes/04/04_GAS_08_HUD_STATUS.md` — 실제 구현 및 남은 이슈
-- `DOCS/Notes/04/GAS_STATUS.md` — 전체 진행 상황 및 레거시 제거 검증
+- `DOCS/Notes/04/Status/04_GAS_STATUS.md` — 전체 진행 상황 및 레거시 제거 검증
 - 엔진 `GameplayAbility.cpp:1206` — `GetActiveEffectsTimeRemainingAndDuration` 사용례

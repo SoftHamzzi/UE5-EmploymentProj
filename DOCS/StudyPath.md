@@ -818,7 +818,7 @@ FEPItemData (DataTable 행)  →  UEPItemDefinition (DataAsset)  →  FEPItemSta
 
 **내 답** — 1. GAS 통합 여부로 혼란을 주지 않기 위해 2. GAS를 재사용할 수 있어서 3. 모르겠다. 판단 기준은 모르겠다.
 
-**정답** — 세 가지는 이렇다 (`Status/GAS_STATUS.md` 7차 검수).
+**정답** — 세 가지는 이렇다 (`Status/04_GAS_STATUS.md` 7차 검수).
 
 1. **이미 모든 게임플레이 입력이 어빌리티 태그로 간다** (`EPCharacter.cpp:388-435`). 상호작용만 직접 RPC면 그 하나가 예외가 된다
 2. **`ActivationBlockedTags`가 공짜로 필요하다** — 죽은 상태(`State.Dead`)에서 줍기가 막혀야 하고, 이건 어빌리티면 한 줄이다
@@ -882,7 +882,7 @@ FEPItemData (DataTable 행)  →  UEPItemDefinition (DataAsset)  →  FEPItemSta
 - **`FFastArraySerializer`** — 일반 `TArray`는 원소 하나가 바뀌면 **배열 전체**를 다시 보낸다. FastArray는 **바뀐 원소만** 보내고 `PreReplicatedRemove`/`PostReplicatedAdd` 콜백을 준다
 - **`EntryId` 안정성** — 배낭·부착물이 **부모 `EntryId`를 참조**한다. 재번호되면 그 참조가 전부 엉뚱한 아이템을 가리킨다. **나중에 넣기 제일 비싼 종류(CLAUDE.md §2)라 처음부터 지켜야 한다**
 
-**읽을 곳:** `Status/LOOT_STATUS.md` 결정표 → `05_Loot_03_*.md`
+**읽을 곳:** `Status/05_Loot_STATUS.md` 결정표 → `05_Loot_03_*.md`
 
 ---
 
@@ -894,7 +894,7 @@ FEPItemData (DataTable 행)  →  UEPItemDefinition (DataAsset)  →  FEPItemSta
 
 > **판정 기준: *"이 확장점이 `DOCS/` 어딘가에 이름으로 적혀 있는가?"***
 
-`GrantedAbility`는 적혀 있다 — `05_Loot_DOCS.md:561`(*"루트 테이블에 붕대·회복키트가 들어가는데 사용할 방법이 없다. 구현하지는 않되 자리는 잡는다"*), `05_Loot_00_ItemCore.md:889`, `GAME.md:77`. **두 번째 소비자가 문서에 예고돼 있다.**
+`GrantedAbility`는 적혀 있다 — `05_Loot_Design.md:561`(*"루트 테이블에 붕대·회복키트가 들어가는데 사용할 방법이 없다. 구현하지는 않되 자리는 잡는다"*), `05_Loot_00_ItemCore.md:889`, `GAME.md:77`. **두 번째 소비자가 문서에 예고돼 있다.**
 
 반면 `AEPEquippable` 베이스 클래스(BACKLOG **B-7**)는 **파생이 하나뿐이라 안 만든다.** 같은 "미래 대비"인데 하나는 만들고 하나는 안 만드는 이유가 이 판정선이다.
 
@@ -965,7 +965,7 @@ git show feature-gas:EmploymentProj/Source/EmploymentProj/Public/Data/EPItemInst
 
 > 세션 2 ①의 그 패턴이 또 나온다. 다만 이번엔 **운이 좋았다** — 쓰이기 전에 발견돼서 지우는 데 비용이 0이었다. `BoneDamageMultiplierMap`은 세 편의 블로그에 "작동한다"고 쓴 뒤에 발견됐다. **같은 실수인데 발견 시점이 값을 갈랐다.**
 
-**막히면:** `DOCS/Notes/05/Status/LOOT_STATUS.md`(결정표가 답의 절반), `05_Loot_00_ItemCore.md`, `05_Loot_02_Interaction.md`, `Review/05_Loot_REVIEW7·8_*.md`
+**막히면:** `DOCS/Notes/05/Status/05_Loot_STATUS.md`(결정표가 답의 절반), `05_Loot_00_ItemCore.md`, `05_Loot_02_Interaction.md`, `Review/05_Loot_REVIEW7·8_*.md`
 
 ---
 

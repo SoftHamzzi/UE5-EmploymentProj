@@ -519,7 +519,7 @@ Weapons/
 |---|---|---|
 | `Items/<ItemId>/` | §6-3. `Data/`에 `DA_*` 9개가 이미 있는데 **아이콘이 0개다** | Step 04 (`05_Loot_04_InventoryUI.md` 완료 조건이 *"아이콘·이름·칸 수가 표시"*) |
 | `UI/Inventory/` | Step 04 인벤토리 위젯 | Step 04 |
-| `Loot/` 안의 컨테이너·자판기 | `05_Loot_DOCS.md` §7-1, §7-2 / 로드맵 7 | 미정 |
+| `Loot/` 안의 컨테이너·자판기 | `05_Loot_Design.md` §7-1, §7-2 / 로드맵 7 | 미정 |
 | `Weapons/<이름>/` 추가 | Step 05 `DefaultLoadout` | Step 05 |
 
 **전부 폴더가 아니라 에셋이 병목이다.** `Items/Backpack_Small/`을 지금 만들어 봐야 안에 넣을 메시가 없다.

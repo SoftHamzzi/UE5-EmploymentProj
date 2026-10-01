@@ -54,6 +54,6 @@
 ## 세션 시작 템플릿
 
 ```
-@GAS_STATUS.md @04_Polish_STATUS.md @Polish/04_Polish_XXX.md
+@04_GAS_STATUS.md @04_Polish_STATUS.md @Polish/04_Polish_XXX.md
 이어서 진행.
 ```

@@ -17,7 +17,7 @@ Before implementing:
 
 ## 2. Extensibility First — 단, 확장점은 문서에 이름이 있거나 사용자가 명시해야 한다
 
-**확장성과 구성가능성을 추구한다.** 이 프로젝트는 단계별로 계속 자라며(`DOCS/Notes/05/05_Loot_DOCS.md` §7 등), 나중에 붙일 것이 문서에 이미 적혀 있다.
+**확장성과 구성가능성을 추구한다.** 이 프로젝트는 단계별로 계속 자라며(`DOCS/Notes/05/05_Loot_Design.md` §7 등), 나중에 붙일 것이 문서에 이미 적혀 있다.
 
 **만든다 — 확장점이 계획서에 이름으로 있거나, 사용자가 그 확장을 명시적으로 요청했을 때**
 - 스폰할 액터 클래스, 데이터 테이블, 에셋 참조는 **설정·DataAsset·`TSubclassOf`로 뺀다.** 하드코딩하지 않는다
@@ -76,12 +76,12 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 
 UE5 C++ multiplayer extraction shooter ("EmploymentProj") - portfolio project. All documentation is in Korean.
 
-- **DOCS/DOCS.md**: Technical roadmap (§6: `Notes/NN/` 서브폴더 스키마)
+- **DOCS/ROADMAP.md**: Technical roadmap (§6: `Notes/NN/` 서브폴더 스키마)
 - **DOCS/GAME.md**: Game design document
 - **DOCS/Mine/**: Project-specific design/bug investigation docs (ContentStructure, CooldownPrediction, EquipmentSlots, GetServerWorldTimeSeconds, LagCompensationFix, ServerSideRewind). Pure engine concepts live in `DOCS/Mine/Concepts/` instead.
-- **DOCS/Notes/**: Per-stage study notes and implementation checklists (03_BoneHitbox, 04_GAS, 05_Loot etc.) — see `DOCS.md` §6 for the `Status/Issue/Polish/Review` subfolder schema
+- **DOCS/Notes/**: Per-stage study notes and implementation checklists (03_BoneHitbox, 04_GAS, 05_Loot etc.) — see `ROADMAP.md` §6 for the `Status/Issue/Polish/Review` subfolder schema
 - **DOCS/BACKLOG.md**: Deferred design decisions, each with a reason for deferral
-- **DOCS/POLISH.md**: Post-implementation bug/polish tracker (bridges to GitHub Issues)
+- **DOCS/POLISH_TRACKER.md**: Post-implementation bug/polish tracker (bridges to GitHub Issues)
 - **DOCS/StudyPath.md**: Personal study log
 - **DOCS/Blog/**: Devlog drafts per stage (`03/`, `04/`) + publish-ready posts (`Submit/`)
 
@@ -107,8 +107,8 @@ UE5 dedicated server model. All game logic is server-authoritative.
 ## GAS Migration State
 
 **완료 (2026-07-26).** 전체 이력과 레거시 제거 확인(grep 검증)은
-`DOCS/Notes/04/Status/GAS_STATUS.md`에 있다. 마스터 스펙은 `DOCS/Notes/04/04_GAS_DOCS.md`.
-이후 작업은 GAS 밖 — `DOCS/DOCS.md` §5 실행 순서 참조, 현재 `feature-loot`
+`DOCS/Notes/04/Status/04_GAS_STATUS.md`에 있다. 마스터 스펙은 `DOCS/Notes/04/04_GAS_DOCS.md`.
+이후 작업은 GAS 밖 — `DOCS/ROADMAP.md` §5 실행 순서 참조, 현재 `feature-loot`
 브랜치에서 Loot/Inventory 진행 중.
 
 NativeGameplayTags: `Public/GAS/EPNativeGameplayTags.h` (`namespace EmpGameplayTags`).
@@ -152,12 +152,12 @@ UnrealBuildTool.exe EmploymentProj Win64 Development -project="EmploymentProj/Em
 - **Claude는 구현 방법을 문서에 기술한다.** 구현 지침은 `DOCS/Notes/` 하위 해당 단계 문서에 작성한다.
 - 코드 검토, 오류 지적, 설계 설명은 허용. 파일 Edit/Write는 문서에만 사용한다.
 - **STATUS 파일이 진행 상태의 진실의 원천이다.** GAS/Loot/Polish 등 이 프로젝트의
-  모든 단계별 작업 영역이 이 방식을 쓴다 — `GAS_STATUS.md`, `LOOT_STATUS.md`,
+  모든 단계별 작업 영역이 이 방식을 쓴다 — `04_GAS_STATUS.md`, `05_Loot_STATUS.md`,
   `04_Polish_STATUS.md` 등. 해당 영역 작업 시작 시 그 영역 STATUS 파일 + 세부
   단계 STATUS 파일을 먼저 확인한다. 단계 문서(`_XXX.md`)는 예정 코드를 보여줄
   뿐 실제 구현 여부를 보장하지 않는다 — 항상 STATUS 파일로 확인할 것.
   `Notes/NN/` 하위 표준 서브폴더(`Status/Issue/Polish/Review`) 전체 규칙은
-  `DOCS/DOCS.md` §6 참고.
+  `DOCS/ROADMAP.md` §6 참고.
 - 코드 수정 후 사용자가 요청하면 STATUS 파일을 코드 기준으로 갱신한다. 세부 사항은 `SESSION.md` 참고.
 - **Notes 문서를 쓰거나 크게 고칠 때마다 `notes-review` 스킬을 쓴다** — 실무성·확장성·간결성 자체 점검 + 외부 리뷰 필요 여부 판단. 요청받지 않아도 기본으로 한다.
 - **외부 리뷰(`Review/*_Answer.md`) 답변이 있으면 그대로 반영하지 않고 `review-verifier` 서브에이전트에 위임해 검증한다.** CONFIRMED된 주장만 설계·STATUS 문서에 반영한다.

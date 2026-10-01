@@ -7,7 +7,7 @@ Step 4는 **기존 자체 구현 전투 시스템을 GAS(Gameplay Ability System
 각각 GA / Attribute / GameplayTag / Duration GE로 교체된다.
 
 > **포스팅 상태 기준**
-> 진실의 원천은 `DOCS/Notes/04/GAS_STATUS.md`와 각 단계 STATUS 파일이다.
+> 진실의 원천은 `DOCS/Notes/04/Status/04_GAS_STATUS.md`와 각 단계 STATUS 파일이다.
 > **2026-07-26 기준 01~08 전 단계 구현 + PIE 검수 완료** → 8편 모두 즉시 작성 가능.
 >
 > **작성 가이드 8편은 모두 작성되어 있다** (`Step4_Post1_*.md` ~ `Step4_Post8_*.md`).
@@ -285,7 +285,7 @@ GAS는 조용히 실패하는 지점이 많아 독자에게 실질적인 도움�
 - 제거 대상 목록(`04_GAS_DOCS.md` §7)과 유지 대상 목록(§8)을 4-1 또는 마지막 편에 로드맵으로 제시
 
 **정직하게 남길 것**
-- `GAS_STATUS.md`의 "남은 이슈" 4건 — 알면서 남겨둔 문제로 4-8 말미나 시리즈 마무리에 언급
+- `04_GAS_STATUS.md`의 "남은 이슈" 4건 — 알면서 남겨둔 문제로 4-8 말미나 시리즈 마무리에 언급
   - `EPGA_Skill_Base.cpp:85` 피격 중단인데 `bWasCancelled = false`
   - `EPGA_Skill_ShieldOn.h:31` 쿨타임 50초 vs GAME.md 스펙 30초
   - `EPSkillSlotWidget.cpp:143-149` 상태 변화 없이 `ApplyState` 호출
@@ -300,7 +300,7 @@ GAS는 조용히 실패하는 지점이 많아 독자에게 실질적인 도움�
 
 ## 참고
 
-- `DOCS/Notes/04/GAS_STATUS.md` — **진행 상황의 진실의 원천**
+- `DOCS/Notes/04/Status/04_GAS_STATUS.md` — **진행 상황의 진실의 원천**
 - `DOCS/Notes/04/04_GAS_DOCS.md` — 총괄 기획서 (배경/아키텍처/태그/에셋/로드맵)
 - `DOCS/Notes/04/04_GAS_00_Reference.md` — GAS 개념 레퍼런스
 - `DOCS/Notes/04/04_GAS_0X_*.md` — 단계별 구현서

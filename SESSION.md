@@ -13,8 +13,8 @@
 영역마다 2단 구조(작아서 단계가 안 나뉘는 영역은 위 단계 하나로 끝나기도 한다 — Polish가 그 예):
 
 - `<영역>_STATUS.md` — 그 영역 전체 진행 상황(어느 단계까지 완료됐는지)
-  - `DOCS/Notes/04/Status/GAS_STATUS.md`
-  - `DOCS/Notes/05/Status/LOOT_STATUS.md`
+  - `DOCS/Notes/04/Status/04_GAS_STATUS.md`
+  - `DOCS/Notes/05/Status/05_Loot_STATUS.md`
   - `DOCS/Notes/04/Status/04_Polish_STATUS.md`
 - `<단계>_STATUS.md` — 단계별 상세 상태(Step별 완료 여부, 버그, 미완료 항목).
   예: `04_GAS_0X_XXX_STATUS.md`, `05_Loot_0X_XXX_STATUS.md`

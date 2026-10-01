@@ -182,7 +182,7 @@ if (Parent != INDEX_NONE) return false;   // ← 몸 슬롯 외엔 전부 거절
 
 ---
 
-### 13차 **답변** 반영 (2026-08-25) — `Review/05_Loot_REVIEW13_Answer.md`
+### 13차 **답변** 반영 (2026-08-25) — `Review/05_Loot_REVIEW13_SelfReview21_Answer.md`
 
 | 위치 | 변경 |
 |---|---|
@@ -200,7 +200,7 @@ if (Parent != INDEX_NONE) return false;   // ← 몸 슬롯 외엔 전부 거절
 
 ### 13차 검수(2026-08-25)에서 추가·변경된 코드 항목
 
-> 근거: `Review/05_Loot_REVIEW_Inventory.md`. 결정 4건(A-2·A-3·A-5·D-2)은 사용자 확정.
+> 근거: `Review/05_Loot_REVIEW_Inventory_Summary.md`. 결정 4건(A-2·A-3·A-5·D-2)은 사용자 확정.
 
 | 위치 | 변경 |
 |---|---|
@@ -240,7 +240,7 @@ if (Parent != INDEX_NONE) return false;   // ← 몸 슬롯 외엔 전부 거절
 >
 > **★★ 14차에 함수째 없어졌다** — `EP.Inv.Equip`이 **콘솔 커맨드**라 `EP.Inv.Reorder`·`EP.Inv.Move`와 같이 **내부 함수를 직접 부른다.** 04-A에도 호출자가 0개였다. 아래 별도 절.
 
-> **★ 03-7(알림)은 03-A다.** `FScopedInventoryNotify`를 03-3의 `AddItem`·`SetEntryCharges`가 쓰므로 정의가 03-B에 있으면 **03-A가 컴파일되지 않는다.** 8차 검수에서 옮겨졌고, `LOOT_STATUS.md`가 한동안 옛 분할선(03-B에 03-7)을 들고 있었다 — 2026-08-20 수정.
+> **★ 03-7(알림)은 03-A다.** `FScopedInventoryNotify`를 03-3의 `AddItem`·`SetEntryCharges`가 쓰므로 정의가 03-B에 있으면 **03-A가 컴파일되지 않는다.** 8차 검수에서 옮겨졌고, `05_Loot_STATUS.md`가 한동안 옛 분할선(03-B에 03-7)을 들고 있었다 — 2026-08-20 수정.
 
 > **★ 9차(2026-08-22)에서 같은 이유로 다섯 개가 03-A로 왔다.** ~~03-B의 `Server_EquipBackpack`이 `MoveEntry`의 래퍼이고~~(14차 삭제 — 지금 근거는 **`EP.Inv.Move`가 `MoveEntry`를 직접 부른다**), `GetCapacity`가 `GetEntryInSlot`을 쓴다. **`MoveEntry`는 `RemoveEntry`·`AddSubtree`에 의존하지 않으므로 03-A 단독 컴파일 조건을 깨지 않는다** — 확인함. `SlotPriority`는 DT **데이터 마이그레이션**이라 늦을수록 비싸고, `BodySlots`는 `MoveEntry`의 정합 검사가 읽는다.
 

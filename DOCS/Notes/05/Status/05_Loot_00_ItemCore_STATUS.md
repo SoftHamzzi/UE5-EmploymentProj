@@ -139,7 +139,7 @@ Project Settings 피커에 **`FEPItemData` 행을 쓰는 DT만** 뜬다. 두 번
 
 `FEPItemData` 신규 3필드 전부 존재 — `ContainerCapacity`(`:42`) / `InitialCharges`(`:45`) / `bFungible = false`(`:56`)
 
-> **★ 이름이 `Scrap_Paper`가 아니라 `Scrap`이다.** 문서(`05_Loot_00_ItemCore.md` 00-8, `05_Loot_01_Spawner.md` 01-1, `05_Loot_DOCS.md` §4-2)에 `Scrap_Paper`로 적혀 있던 것을 전부 `Scrap`으로 맞췄다. **행 이름이 진실이고 문서가 따라간다.**
+> **★ 이름이 `Scrap_Paper`가 아니라 `Scrap`이다.** 문서(`05_Loot_00_ItemCore.md` 00-8, `05_Loot_01_Spawner.md` 01-1, `05_Loot_Design.md` §4-2)에 `Scrap_Paper`로 적혀 있던 것을 전부 `Scrap`으로 맞췄다. **행 이름이 진실이고 문서가 따라간다.**
 
 **PIE 확인: `EP.Item.Dump` → `9, 9`.** 9행이 전부 Definition을 갖고, 짝 없는 쪽이 양방향 모두 없다(`BuildDefinitionCache()`의 두 로그가 침묵).
 
@@ -151,7 +151,7 @@ Project Settings 피커에 **`FEPItemData` 행을 쓰는 DT만** 뜬다. 두 번
 |---|---|---|
 | **`Cash_10000`의 `SellPrice`** | 기본값 `100` — **1만원짜리가 100원에 팔린다** | 상점이 생길 때 (한참 뒤) |
 | `Cash_10000` / `AmmoBox_545`의 `bFungible` | `false`면 합치기 경로를 영영 안 탄다 — **03-A가 검증 대상 없이 구현된다** | Step 03-A |
-| `Backpack_B`의 `ContainerCapacity` | `0`이면 배낭이 아무것도 못 담는다. **그리고 `SlotSize`보다 작아야 한다** — `IsDataValid()`가 거부한다 (13차, `05_Loot_DOCS.md` §4-6) | Step 03-A |
+| `Backpack_B`의 `ContainerCapacity` | `0`이면 배낭이 아무것도 못 담는다. **그리고 `SlotSize`보다 작아야 한다** — `IsDataValid()`가 거부한다 (13차, `05_Loot_Design.md` §4-6) | Step 03-A |
 | 무기 `SlotSize` | `1`이면 칸 합산 검증이 무의미하다 (4~5로 올린다) | Step 03-A |
 
 **`InitialCharges`만 지금 바로 보인다** — `EP.Item.State AmmoBox_545` / `Cash_10000`의 `Charges`·`SlotSize` 열. 나머지 셋은 DT를 열어 눈으로 본다.
@@ -233,7 +233,7 @@ Project Settings 피커에 **`FEPItemData` 행을 쓰는 DT만** 뜬다. 두 번
 | `00_ItemCore.md:610`의 `TSoftObjectPtr` 근거 문장 교체 | **문서만.** *"리다이렉터가 따라간다"* → *"자동으로 안 고쳐진다. 이득은 **깨질 때 시끄러운 것**"*. **결정 자체는 그대로** |
 | `ItemDataTable`에 `RequiredAssetDataTags` | **선택.** 위 00-7 |
 | `GetPrimaryAssetId()`에 `final` | **선택.** 5차부터 보류 중 (00-0) |
-| Definition을 프래그먼트 조합으로 전환 | **하지 않는다.** 상속 유지 — 근거·비용·전환 신호는 `LOOT_STATUS.md` |
+| Definition을 프래그먼트 조합으로 전환 | **하지 않는다.** 상속 유지 — 근거·비용·전환 신호는 `05_Loot_STATUS.md` |
 | 전역 에셋 참조를 `DA_EPGameData`로 이동 | **하지 않는다.** `UDeveloperSettings` 유지 (Lyra가 같은 것을 한다) |
 
 ---

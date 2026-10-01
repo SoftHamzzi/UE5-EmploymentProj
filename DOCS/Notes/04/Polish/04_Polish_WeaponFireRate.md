@@ -431,7 +431,7 @@ TargetData 전송으로 바꾸면 `Single` 클릭 하나가 Reliable RPC 3개(`S
 1. **ASC 서브클래스** `UEPAbilitySystemComponent : UAbilitySystemComponent` —
    `virtual bool ShouldDoServerAbilityRPCBatch() const override { return true; }`(기본 `false`,
    `AbilitySystemComponent.h:1305`). `EPPlayerState`(`EPPlayerState.cpp:14`)가 이 클래스로 생성. 횡단
-   변경이라 `GAS_STATUS`·`PROJECT_CONTEXT` 갱신 대상.
+   변경이라 `04_GAS_STATUS`·`PROJECT_CONTEXT` 갱신 대상.
 2. `Input_Fire`가 핸들 기반(§4-4) — `FScopedServerAbilityRPCBatcher`가 핸들을 받는다. GASShooter의
    `BatchRPCTryActivateAbility` 패턴.
 

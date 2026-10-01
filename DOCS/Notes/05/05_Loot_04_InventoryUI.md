@@ -1,6 +1,6 @@
 # Step 04 — InventoryUI (정사각형 격자 + 부피 게이지 + 드래그)
 
-> 마스터 기획: `05_Loot_DOCS.md` (§4-6)
+> 마스터 기획: `05_Loot_Design.md` (§4-6)
 > 선행: `05_Loot_03_Inventory.md` — `OnInventoryChanged` 델리게이트가 있어야 한다
 
 ---
@@ -337,7 +337,7 @@ void UEPInventoryWidget::RefreshEntries()
     EquipColumn->Rebuild(Inventory.Get());
     ContainerColumn->ClearChildren();
 
-    // ① 본체 — 언제나 있다. ★ 최종 0칸으로 확정됐다 (13차, 05_Loot_DOCS.md §4-6·§8 미정 #9)
+    // ① 본체 — 언제나 있다. ★ 최종 0칸으로 확정됐다 (13차, 05_Loot_Design.md §4-6·§8 미정 #9)
     //   테스트 중에만 MaxSlots=10. 0이 되면 GetCapacity가 0을 돌려주고 이 구획은 그냥 안 그려진다
     MakePanel(INDEX_NONE, NSLOCTEXT("EP", "Body", "본체"));
 
@@ -360,7 +360,7 @@ UPROPERTY(config, EditAnywhere, Category = "Inventory")
 TArray<FName> ContainerOrder;   // ["Coat", "Torso", "Legs", "Back", "Wrist"]
 ```
 
-> **★ 이 필드의 최종 자리는 `UEPLootDeveloperSettings`가 아니다 (14차, `05_Loot_DOCS.md` §8 미정 #10).** 그 클래스의 규칙이 *"에셋 참조와 디버그만 둔다"* 로 명문화되면서, **캐릭터가 무엇으로 이루어졌는가**에 답하는 셋(`BodySlots` · `ContainerOrder` · `StartingEquipment`)이 전부 `UEPPawnInventoryData`(DataAsset)로 갈 자리가 됐다. **Lyra도 게임플레이 구성은 DataAsset이 든다**(`ULyraPawnData : UPrimaryDataAsset` — `LyraPawnData.h:24-53`).
+> **★ 이 필드의 최종 자리는 `UEPLootDeveloperSettings`가 아니다 (14차, `05_Loot_Design.md` §8 미정 #10).** 그 클래스의 규칙이 *"에셋 참조와 디버그만 둔다"* 로 명문화되면서, **캐릭터가 무엇으로 이루어졌는가**에 답하는 셋(`BodySlots` · `ContainerOrder` · `StartingEquipment`)이 전부 `UEPPawnInventoryData`(DataAsset)로 갈 자리가 됐다. **Lyra도 게임플레이 구성은 DataAsset이 든다**(`ULyraPawnData : UPrimaryDataAsset` — `LyraPawnData.h:24-53`).
 >
 > **지금 옮기지 않는 이유는 소비자가 둘뿐이기 때문이다** — `CanPlaceInSlot`의 검사 3과 **이 함수**. 즉 **04-3이 그 두 번째 소비자다.** 옮길 때 고칠 곳은 `GetDefault<...>()->ContainerOrder` 한 줄이고, 이행 트리거는 **로비(직업별 시작 장비)** 또는 **§7-1(월드 컨테이너에는 몸 슬롯이 없다)** 이다.
 
@@ -736,7 +736,7 @@ Entries.MarkItemDirty(B);
 
 **같은 컨테이너 안 교환이 검사 5에서 거절되므로**(위 표) **두 키가 같은 스코프에서 맞바뀌는 경우는 슬롯끼리뿐이고, 그쪽은 표시 목록에 안 나와 무해하다.**
 
-> **★ 이 계약이 §7-4에서 값을 한다** (`05_Loot_DOCS.md` §7-4 · 03-2). 탄창이 별도 아이템이 되면 재장전이 `SwapEntries(꽂힌탄창, 새탄창)` 한 줄인데, **빈 탄창이 새 탄창의 화면 자리를 물려받아** *"제자리에서 탄창만 바뀐"* 것으로 보인다. `SortKey`를 안 바꾸면 빈 탄창이 **엉뚱한 자리로 튄다.**
+> **★ 이 계약이 §7-4에서 값을 한다** (`05_Loot_Design.md` §7-4 · 03-2). 탄창이 별도 아이템이 되면 재장전이 `SwapEntries(꽂힌탄창, 새탄창)` 한 줄인데, **빈 탄창이 새 탄창의 화면 자리를 물려받아** *"제자리에서 탄창만 바뀐"* 것으로 보인다. `SortKey`를 안 바꾸면 빈 탄창이 **엉뚱한 자리로 튄다.**
 
 #### ★★ 용량식에 `SlotSize`를 무조건 더하고 빼면 안 된다 (10차 정정)
 
@@ -748,7 +748,7 @@ const int32 UsedPB = GetUsedSlots(PB) - SizeB + SizeA;   // ✗
 if (UsedPA > GetCapacity(PA) || UsedPB > GetCapacity(PB)) return false;
 ```
 
-**`GetUsedSlots`는 슬롯에 든 것을 애초에 안 센다**(`if (!E.SlotId.IsNone()) continue;` — `05_Loot_03A_Core.md:1586`). 그런데 위 식은 슬롯에 든 쪽의 크기까지 빼고 더한다. **교환은 `(ParentEntryId, SlotId)`를 통째로 맞바꾸므로 B는 A의 `SlotId`를 물려받는다** — A의 자리가 칸을 먹는 자리였을 때만 그 자리에서 칸 회계가 움직인다.
+**`GetUsedSlots`는 슬롯에 든 것을 애초에 안 센다**(`if (!E.SlotId.IsNone()) continue;` — `05_Loot_03_Inventory_A_Core.md:1586`). 그런데 위 식은 슬롯에 든 쪽의 크기까지 빼고 더한다. **교환은 `(ParentEntryId, SlotId)`를 통째로 맞바꾸므로 B는 A의 `SlotId`를 물려받는다** — A의 자리가 칸을 먹는 자리였을 때만 그 자리에서 칸 회계가 움직인다.
 
 ```cpp
 // ★ 크기 항은 그쪽이 칸을 먹는 자리일 때만 붙는다
@@ -886,7 +886,7 @@ NextEntryId는 컴포넌트 필드고 초기값이 1이다 (EPInventoryComponent
 
 세션 도장을 찍어 무효화하면 **지속이 한 번도 발휘되지 않아** 애초에 인메모리와 같아진다. **클라 로컬은 "지속"을 줄 수 없다.**
 
-**서버에 두면 저장 코드가 0줄이다.** 로드맵 5단계(`DOCS.md §5` 14번)가 엔트리 배열을 저장하므로 `SortKey`가 필드면 그냥 따라간다. 설계 근거 전문은 `05_Loot_03_Inventory.md` 03-1 `SortKey` 절.
+**서버에 두면 저장 코드가 0줄이다.** 로드맵 5단계(`ROADMAP.md §5` 14번)가 엔트리 배열을 저장하므로 `SortKey`가 필드면 그냥 따라간다. 설계 근거 전문은 `05_Loot_03_Inventory.md` 03-1 `SortKey` 절.
 
 ### ★ RPC 표면은 이 단계에서 연다 (11차 검수)
 

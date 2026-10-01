@@ -1,6 +1,6 @@
 # Step 05 — Equipment (무기 장착 흐름 이관 + 탄약 소유권 정리)
 
-> 마스터 기획: `05_Loot_DOCS.md` (§4-8)
+> 마스터 기획: `05_Loot_Design.md` (§4-8)
 > 선행: `05_Loot_04_InventoryUI.md` — 인벤토리에서 무기를 고를 수 있어야 한다
 
 ---
@@ -76,7 +76,7 @@ AS->SetAmmo(static_cast<float>(Entry.State.Charges));         // 개체 상태
 >
 > **스탯 합산 스펙은 여기 쓰지 않는다.** §7-3이 "Step 05에서 같이 정리하면 비용이 거의 없다"고 했지만 실제 `WeaponDef->` 직접 읽기는 **5개 파일**이고, 그중 `GA_Item_PrimaryUse`(`FireRate`)·`GA_Item_Reload`(`ReloadTime`)를 건드리면 **이 단계의 완료 조건("어빌리티는 한 줄도 수정하지 않았다")과 정면 충돌**한다. 그리고 부착물이 실제로 바꾸는 Spread/Recoil 계열은 **이미 `AEPWeapon` 안에 모여 있다**(`EPWeapon.cpp`). 남는 준비는 위 한 줄뿐이다.
 
-> **★★ 정정 — 위 문단은 ⓑ(확장탄창 = 스탯 부착물)의 답이다** (2026-08-24, `05_Loot_DOCS.md` §7-4).
+> **★★ 정정 — 위 문단은 ⓑ(확장탄창 = 스탯 부착물)의 답이다** (2026-08-24, `05_Loot_Design.md` §7-4).
 > **미정 #1이 ⓐ(탄창이 별도 아이템)로 가면 `MaxAmmo`에 대해서는 다른 답이 된다.** ⓐ의 `MaxAmmo`는 **꽂힌 탄창의 `Capacity`** 이고, 그건 무기 스탯이 아니라 **인벤토리 엔트리**다. 무기 액터가 그걸 읽으려면 액터에 `EntryId`를 심고 인벤토리를 뒤지게 해야 하는데, **§4-8이 여태 피해온 방향**이다.
 >
 > **ⓐ에서 읽는 주체는 `UEPCombatComponent`다.** `SetMaxAmmo`가 불리는 곳은 장착·재장전 둘뿐이고 **둘 다 이미 `EntryId`를 쥐고 있다.** `GetMaxAmmo()`는 Spread/Recoil 합산용으로 남고 **탄약에서는 손을 뗀다.**
@@ -273,7 +273,7 @@ void UEPCombatComponent::UnequipWeapon()
 
 ### ★★ ⓐ(탄창 아이템화) 대비 — 지금 해두면 공짜인 것 셋
 
-**미정 #1이 ⓐ로 가면 Step 05 직후에 붙인다**(`05_Loot_DOCS.md` §7-4). 그때 붙는 것 대부분은 이 단계 코드의 **인자만 바꾸는 일**인데, **셋만은 지금 형태를 잡아둬야 값이 싸다.** 셋 다 §7-3·미정 #1이 **이름으로 예고한 확장점**이라 §2의 판단 기준을 통과한다. 합쳐서 20줄 안쪽이다.
+**미정 #1이 ⓐ로 가면 Step 05 직후에 붙인다**(`05_Loot_Design.md` §7-4). 그때 붙는 것 대부분은 이 단계 코드의 **인자만 바꾸는 일**인데, **셋만은 지금 형태를 잡아둬야 값이 싸다.** 셋 다 §7-3·미정 #1이 **이름으로 예고한 확장점**이라 §2의 판단 기준을 통과한다. 합쳐서 20줄 안쪽이다.
 
 | | 지금 비용 | 안 하면 나중에 |
 |---|---|---|
@@ -350,7 +350,7 @@ void AEPGameMode::HandleStartingNewPlayer_Implementation(APlayerController* NewP
 
 > ### ★★ 본체는 **0칸**이다 — `AddItem(INDEX_NONE, …)`은 전부 실패한다 (15차, 13차 확정 반영)
 >
-> **초안은 `AddItem(INDEX_NONE, ItemId, State)`로 본체에 넣었다.** 13차가 본체 용량을 **0칸**으로 확정하면서(`05_Loot_03_Inventory.md` 03-3 용량표 · `05_Loot_DOCS.md` §8 미정 #9) 그 호출은 **`CanFit`에서 `0 + SlotSize <= 0`이 되어 언제나 거짓**이다.
+> **초안은 `AddItem(INDEX_NONE, ItemId, State)`로 본체에 넣었다.** 13차가 본체 용량을 **0칸**으로 확정하면서(`05_Loot_03_Inventory.md` 03-3 용량표 · `05_Loot_Design.md` §8 미정 #9) 그 호출은 **`CanFit`에서 `0 + SlotSize <= 0`이 되어 언제나 거짓**이다.
 >
 > ```
 > DefaultLoadout = ["Weapon_AK74", "AmmoBox_545", "Bandage"]
@@ -358,7 +358,7 @@ void AEPGameMode::HandleStartingNewPlayer_Implementation(APlayerController* NewP
 >    → 증상은 함정 10(DefaultWeaponClass 먼저 제거)과 **똑같다**
 > ```
 >
-> **`GetInsertionOrder()`를 쓴다** — 03-4의 `OnInteract`가 이미 정확히 이 모양이다(`05_Loot_03B_PickupDrop.md:62`). 획득 경로에 두 번째 구현을 만들지 않는다.
+> **`GetInsertionOrder()`를 쓴다** — 03-4의 `OnInteract`가 이미 정확히 이 모양이다(`05_Loot_03_Inventory_B_PickupDrop.md:62`). 획득 경로에 두 번째 구현을 만들지 않는다.
 >
 > **★ 그러려면 옷을 먼저 입고 있어야 한다.** 13차가 그 문제를 이미 풀었다 — **`StartingEquipment`**(03-B)가 캐릭터 `BeginPlay`(서버)에서 상의·하의를 입힌다. **순서가 계약이 된다:**
 >

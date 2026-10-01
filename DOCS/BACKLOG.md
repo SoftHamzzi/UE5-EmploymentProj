@@ -11,9 +11,9 @@
 |---|---|
 | 지금 안 해도 되지만 나중에 바꾸려는 설계 | **여기** |
 | 버그, 미완료 완료조건, 단계 진행 상황 | `Notes/0X/*_STATUS.md` |
-| 그 단계가 **반드시** 건드려야 하는 것 | `LOOT_STATUS.md` §기존 코드에서 반드시 손대야 할 것 |
+| 그 단계가 **반드시** 건드려야 하는 것 | `05_Loot_STATUS.md` §기존 코드에서 반드시 손대야 할 것 |
 | 기획 변경 | `GAME.md` |
-| 아직 안 만든 기능 | `DOCS.md` §5 |
+| 아직 안 만든 기능 | `ROADMAP.md` §5 |
 
 **항목 형식:** 현재 / 바꿀 것 / **지금 안 하는 이유** / 트리거 / 근거
 
@@ -36,7 +36,7 @@ TObjectPtr<USoundBase>     FireSFX, ImpactSFX;
 **트리거** — **Step 05 (무기 장착 이관).** 어차피 `WeaponDef`를 만지므로 그때 거의 공짜다. B-2의 선행 조건이기도 하다.
 
 **근거**
-- 프로젝트 자신의 결정과 충돌: `LOOT_STATUS.md` — *"획득 사운드·VFX·메시는 `UEPItemDefinition`"*
+- 프로젝트 자신의 결정과 충돌: `05_Loot_STATUS.md` — *"획득 사운드·VFX·메시는 `UEPItemDefinition`"*
 - DT vs DA 배치 원칙 — *"에셋 참조·virtual·타입 전용은 DA"*
 - Lyra: `ULyraPickupDefinition`이 `DisplayMesh`/`PickedUpSound`/`PickedUpEffect`를 들고 액터 클래스 필드는 없다
 
@@ -128,7 +128,7 @@ default:                          // ★
 **지금 안 하는 이유** — 아직 장착 가능한 게 무기뿐이다.
 
 **트리거** — **Step 05.** 이미 그 방향으로 설계돼 있다:
-- `LOOT_STATUS.md` 장비 슬롯 결정 — *"`SlotId`가 유일한 진실. 남는 상태는 `ActiveHotbarIndex` 하나"*
+- `05_Loot_STATUS.md` 장비 슬롯 결정 — *"`SlotId`가 유일한 진실. 남는 상태는 `ActiveHotbarIndex` 하나"*
 - `05_Loot_05_Equipment.md:119` — `Inv->GetEquippedEntryId()`
 
 > **★ Step 05에서 지킬 것:** 새 코드의 진입점으로 `GetEquippedWeapon()`을 쓰지 않는다.
@@ -147,7 +147,7 @@ default:                          // ★
 
 **트리거** — 붕대·구급상자 사용 구현 시. **이미 예정돼 있다:**
 - 자리는 잡혀 있음: `UEPItemDefinition::GrantedAbility` (`EPItemDefinition.h:38`)
-- `05_Loot_DOCS.md:561` — *"루트 테이블에 붕대·회복키트가 들어가는데 사용할 방법이 없다. 구현하지는 않되 자리는 잡는다"*
+- `05_Loot_Design.md:561` — *"루트 테이블에 붕대·회복키트가 들어가는데 사용할 방법이 없다. 구현하지는 않되 자리는 잡는다"*
 - `05_Loot_00_ItemCore.md:889` — *"`GrantedAbility` 실제 사용 → 소모품 구현 시점"*
 - `GAME.md:77` 붕대가 루트 일반 50%, `:156` 1칸, `:171` 사용 횟수
 

@@ -1,7 +1,7 @@
 # Step 00 — ItemCore (아이템 계층 정비)
 
-> 마스터 기획: `05_Loot_DOCS.md` (§4-1, §4-9)
-> 진행 상황: `Status/LOOT_STATUS.md`
+> 마스터 기획: `05_Loot_Design.md` (§4-1, §4-9)
+> 진행 상황: `Status/05_Loot_STATUS.md`
 
 ---
 
@@ -19,7 +19,7 @@
 - [ ] **데디케이티드 서버로 실행해도 `Definitions=9`** — Definition 상주가 넷모드와 무관함을 확인
 - [ ] `UEPItemInstance` / `UEPWeaponInstance` 파일이 프로젝트에서 사라졌고 빌드가 통과한다
 
-> **★ 개체 상태가 `UObject`가 아니라 `USTRUCT`다.** 이 결정의 근거와 검증 기록은 `05_Loot_DOCS.md` §4-1 / `05_Loot_REVIEW_StructMigration.md`. **아이템은 스택되지 않으며**, 인벤토리 용량은 칸 수 합산이다 (§4-6).
+> **★ 개체 상태가 `UObject`가 아니라 `USTRUCT`다.** 이 결정의 근거와 검증 기록은 `05_Loot_Design.md` §4-1 / `05_Loot_REVIEW_StructMigration_Summary.md`. **아이템은 스택되지 않으며**, 인벤토리 용량은 칸 수 합산이다 (§4-6).
 
 ---
 
@@ -234,7 +234,7 @@ EDataValidationResult UEPItemDefinition::IsDataValid(FDataValidationContext& Con
             Result = EDataValidationResult::Invalid;
         }
 
-        // ★ 컨테이너 중첩 깊이를 유한하게 유지한다 (05_Loot_DOCS.md §4-6)
+        // ★ 컨테이너 중첩 깊이를 유한하게 유지한다 (05_Loot_Design.md §4-6)
         if (Row->ContainerCapacity > 0 && Row->ContainerCapacity >= Row->SlotSize)
         {
             Context.AddError(FText::Format(
@@ -649,7 +649,7 @@ public:
 >
 > 진짜 이득은 **깨질 때 시끄럽다**는 것이다 — 리네임 탐지(`FindCDOReferences`, `:708`) + 리다이렉터 강제 생성(`:796`) + 경고 다이얼로그(`:463`) + 에디터 에셋 피커. `FName` 경로는 이 넷 전부가 없어 **진짜로 조용히 깨진다.**
 >
-> 상세와 표는 `05_Loot_DOCS.md` §9에 있다. 검증 근거: `Review/05_Loot_REVIEW6_Answer.md` §1.
+> 상세와 표는 `05_Loot_Design.md` §9에 있다. 검증 근거: `Review/05_Loot_REVIEW06_GlobalDataRef_Answer.md` §1.
 
 **AssetManager 등록** — Project Settings → Asset Manager → Primary Asset Types to Scan에 추가:
 
@@ -704,7 +704,7 @@ public:
 
 > ### ★★ 컨테이너 행은 `ContainerCapacity < SlotSize`를 지켜야 한다 (13차, 2026-08-25)
 >
-> **초안의 `Backpack_Small`(`SlotSize 2 / Cap 12`)은 이 규칙을 위반한다** — `IsDataValid()`가 **거부하는 행**이다. `05_Loot_DOCS.md` §4-6이 이 규칙을 확정하기 전에 적힌 값이라 그대로 남아 있었다.
+> **초안의 `Backpack_Small`(`SlotSize 2 / Cap 12`)은 이 규칙을 위반한다** — `IsDataValid()`가 **거부하는 행**이다. `05_Loot_Design.md` §4-6이 이 규칙을 확정하기 전에 적힌 값이라 그대로 남아 있었다.
 >
 > ```
 > 넣기 판정   :  SlotSize(넣을 것)  ≤  Capacity(담을 것)     ← ≤ 다
@@ -717,7 +717,7 @@ public:
 
 > ### ★★ 네 번째 검사(`SlotSize >= 1`)가 왜 지금 생겼나 (13차)
 >
-> **본체가 10칸인 동안은 `SlotSize = 0`이 무해했다.** 0이 되면(`05_Loot_DOCS.md` §4-6) `0 + 0 <= 0`이 참이라 **그 아이템만 무한히 들어간다.** 증상이 크래시도 경고도 아니고 *"이 아이템만 가방에 안 들어간다"* 라 발견이 늦다.
+> **본체가 10칸인 동안은 `SlotSize = 0`이 무해했다.** 0이 되면(`05_Loot_Design.md` §4-6) `0 + 0 <= 0`이 참이라 **그 아이템만 무한히 들어간다.** 증상이 크래시도 경고도 아니고 *"이 아이템만 가방에 안 들어간다"* 라 발견이 늦다.
 >
 > 그리고 `SlotSize = 0`은 **실수하기 쉬운 값이다** — *"열쇠·퀘스트 토큰은 자리를 안 먹었으면"* 이라는 기획이 오면 DT에 0을 넣는 것이 가장 자연스러운 표현이다.
 >

@@ -957,7 +957,7 @@ public:
 
 되돌리기: 14-3 한 줄을 `UAbilitySystemComponent`로. 다른 코드는 그대로 동작한다.
 
-**횡단 변경 기록:** `Notes/04/Status/GAS_STATUS.md`에 "ASC 서브클래스 `UEPAbilitySystemComponent`(배칭 전용)" 한 줄. `PROJECT_CONTEXT.md`는 pre-commit 훅이 갱신.
+**횡단 변경 기록:** `Notes/04/Status/04_GAS_STATUS.md`에 "ASC 서브클래스 `UEPAbilitySystemComponent`(배칭 전용)" 한 줄. `PROJECT_CONTEXT.md`는 pre-commit 훅이 갱신.
 
 ---
 

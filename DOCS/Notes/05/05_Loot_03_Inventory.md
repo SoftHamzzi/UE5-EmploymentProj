@@ -4,10 +4,10 @@
 >
 > | 문서 | 무엇 |
 > |---|---|
-> | **`05_Loot_03A_Core.md`** | 자료구조 · 컴포넌트 · 칸 합산 · 슬롯 정합 · 표시 순서 · 알림 · 검증 커맨드 |
-> | **`05_Loot_03B_PickupDrop.md`** | 줍기(`OnInteract`) · 버리기(`Server_DropItem`) · 자동 착용 · 시작 장비 |
+> | **`05_Loot_03_Inventory_A_Core.md`** | 자료구조 · 컴포넌트 · 칸 합산 · 슬롯 정합 · 표시 순서 · 알림 · 검증 커맨드 |
+> | **`05_Loot_03_Inventory_B_PickupDrop.md`** | 줍기(`OnInteract`) · 버리기(`Server_DropItem`) · 자동 착용 · 시작 장비 |
 
-**진행 상태의 진실의 원천은 `Status/LOOT_STATUS.md`와 `Status/05_Loot_03_Inventory_STATUS.md`다.**
+**진행 상태의 진실의 원천은 `Status/05_Loot_STATUS.md`와 `Status/05_Loot_03_Inventory_STATUS.md`다.**
 
 ---
 

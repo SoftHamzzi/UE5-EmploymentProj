@@ -2,7 +2,7 @@
 
 > 작성일: 2026-08-22
 > 근거: 사용자 기획 확정(언턴드 방식) + 프로젝트 코드 직독(`EPItemData.h:39-42`, `EPTypes.h:43-50`, `05_Loot_03_Inventory.md`) + `GAME.md` §인벤토리·§장비
-> 관련: `DOCS/Notes/05/05_Loot_03_Inventory.md` (자료구조), `05_Loot_05_Equipment.md` (장착), `05_Loot_DOCS.md` §7-3·§8
+> 관련: `DOCS/Notes/05/05_Loot_03_Inventory.md` (자료구조), `05_Loot_05_Equipment.md` (장착), `05_Loot_Design.md` §7-3·§8
 
 ---
 
@@ -125,7 +125,7 @@ MoveEntry(스코프2, M4, "Optic")
 
 **M4에는 영원히 조준경을 못 단다.** 그리고 이 검사는 §6 `MoveEntry`의 핵심 검사다.
 
-`Hotbar1`~`Hotbar4`와 착용 8칸은 몸에 하나뿐이라 **우연히** 맞는다. 부착 슬롯 4종에서만 틀리므로 **Step 03에서는 절대 안 걸리고 §7-3 부착물을 붙이는 날 나타난다.** 8차가 `FindFungibleEntryId(Container, ItemId)`로 얻은 교훈이 여기 그대로 적용된다(`LOOT_STATUS.md:69`).
+`Hotbar1`~`Hotbar4`와 착용 8칸은 몸에 하나뿐이라 **우연히** 맞는다. 부착 슬롯 4종에서만 틀리므로 **Step 03에서는 절대 안 걸리고 §7-3 부착물을 붙이는 날 나타난다.** 8차가 `FindFungibleEntryId(Container, ItemId)`로 얻은 교훈이 여기 그대로 적용된다(`05_Loot_STATUS.md:69`).
 
 ### 왜
 
@@ -424,7 +424,7 @@ if (!bIsBodySlot && !NewSlotId.IsNone())
 
 > **전역에서 읽어야 하는 이유:** 소비자가 둘이다 — `MoveEntry`의 검증과 **Step 04 UI의 슬롯 그리기**. UI에는 물어볼 인벤토리 인스턴스가 없을 수도 있다. ~~6차의 *"전역 데이터 참조는 `UDeveloperSettings`"* 확정과 같은 자리다.~~
 >
-> **★★ 뒷문장은 14차에 철회했다 (§15-5).** 근거가 *"전역에서 닿아야 한다"* 까지만 말하고 **선반을 특정하지 않는다.** `UEPLootDeveloperSettings`는 **임시 자리**이고 최종 자리는 `UEPPawnInventoryData`(DataAsset)다 — `05_Loot_DOCS.md` §8 미정 #10.
+> **★★ 뒷문장은 14차에 철회했다 (§15-5).** 근거가 *"전역에서 닿아야 한다"* 까지만 말하고 **선반을 특정하지 않는다.** `UEPLootDeveloperSettings`는 **임시 자리**이고 최종 자리는 `UEPPawnInventoryData`(DataAsset)다 — `05_Loot_Design.md` §8 미정 #10.
 >
 > **`BodySlots`는 지금, `AttachmentSlots`는 §7-3에.** `BodySlots`가 없으면 Step 04 드래그가 열리는 순간 위 상태가 실재하고, 그때 `MoveEntry`를 다시 열어야 한다. `AttachmentSlots`는 소비자가 `MoveEntry`의 부착 갈래 하나뿐이고 그 갈래가 Step 03·04에 도달 불가다.
 
@@ -601,9 +601,9 @@ CLAUDE.md §2 *"상상한 확장점"* 에 걸린다. 9차 검수에서 명시적
 | `05_Loot_03_Inventory.md` | `:319` 세이브 | 장착 필드 2개 | `ActiveHotbarIndex` |
 | `05_Loot_03_Inventory.md` | `:642` | *"`GetEquippedBackpack()`이 아직 `INDEX_NONE`"* | 파생 게터로 문장만 조정 |
 | `05_Loot_03_Inventory.md` | `:1288-1289` | 범위 밖 목록 + *"항상 거짓인 분기"* 경고 | 분기가 사라지므로 문장 교체 |
-| `LOOT_STATUS.md` | `:54` 배낭 행 | *"`EquippedBackpackEntryId` 별도 필드"* | `SlotId = "Back"` |
-| `LOOT_STATUS.md` | `:63` | *"`Build.cs` 수정 불필요"* | **8차 정정 미반영분.** `NetCore` 추가 필요 |
-| `LOOT_STATUS.md` | `:76` 장비 슬롯 행 | *"필드 둘 … 셋이 되면 `TMap`"* | `SlotId`가 진실 |
+| `05_Loot_STATUS.md` | `:54` 배낭 행 | *"`EquippedBackpackEntryId` 별도 필드"* | `SlotId = "Back"` |
+| `05_Loot_STATUS.md` | `:63` | *"`Build.cs` 수정 불필요"* | **8차 정정 미반영분.** `NetCore` 추가 필요 |
+| `05_Loot_STATUS.md` | `:76` 장비 슬롯 행 | *"필드 둘 … 셋이 되면 `TMap`"* | `SlotId`가 진실 |
 | `EPItemData.h` | `:39-56` | — | **`SlotPriority` 추가** (코드) |
 | `EPLootDeveloperSettings.h` | — | — | **`BodySlots` 추가** (코드) |
 
@@ -611,9 +611,9 @@ CLAUDE.md §2 *"상상한 확장점"* 에 걸린다. 9차 검수에서 명시적
 
 | 문서 | 위치 | 조치 |
 |---|---|---|
-| **`DOCS/BACKLOG.md`** | **`:124`·`:129-133`·`:240`** | **★ B-5 항목 전체.** *"진실은 `EquippedEntryId`(int32)"* 가 B-5의 문장이다. 진실이 `ActiveHotbarIndex` → `GetEquippedEntryId()`로 바뀌면 서술이 통째로 낡는다. `LOOT_STATUS.md:27`이 B-5를 *"안 지키면 나중이 비싸진다"* 로 지목한다 |
+| **`DOCS/BACKLOG.md`** | **`:124`·`:129-133`·`:240`** | **★ B-5 항목 전체.** *"진실은 `EquippedEntryId`(int32)"* 가 B-5의 문장이다. 진실이 `ActiveHotbarIndex` → `GetEquippedEntryId()`로 바뀌면 서술이 통째로 낡는다. `05_Loot_STATUS.md:27`이 B-5를 *"안 지키면 나중이 비싸진다"* 로 지목한다 |
 | **`DOCS/StudyPath.md`** | **`:926-935`** | **★ 세션 5의 "정답"** 이 *"맞다. `EquippedEntryId`(int32)다"* 이고 다이어그램(`:932`)까지 있다. **사용자가 읽고 외우는 문서**라 틀린 채 두면 가장 비싸다 |
-| `05_Loot_DOCS.md` | `:169`·`:521`·`:590`·`:802`·`:823` | 색인 / §4-8 본문 / 단계표 / §8 확정표 / 영속화 목록 |
+| `05_Loot_Design.md` | `:169`·`:521`·`:590`·`:802`·`:823` | 색인 / §4-8 본문 / 단계표 / §8 확정표 / 영속화 목록 |
 | `05_Loot_04_InventoryUI.md` | `:38`·`:113`·`:331` | `:113`이 `GetEquippedBackpack()`을 **호출**한다. `:38`·`:331`은 *"장비 슬롯 UI = `EquippedEntryId` 강조"* → **12칸 슬롯 UI**로 범위가 는다 |
 | `05_Loot_05_Equipment.md` | `:19-20`·`:91`·`:119`·`:124`·`:134`·`:141`·`:173`·`:181`·`:262` | 완료 조건 / 흐름도 / 코드 / 순서 규칙 / 필드 선언 참조 / 함정 8. **＋ `HotbarRefs` 청소를 완료 조건에 신규 추가** (§4) |
 | `05_Loot_01_Spawner.md` | `:770` | *"`EquippedEntryId`가 셋이 되면 `TMap`"* 을 비유로 씀 → 비유가 무효 |
@@ -624,7 +624,7 @@ CLAUDE.md §2 *"상상한 확장점"* 에 걸린다. 9차 검수에서 명시적
 |---|---|---|
 | `GAME.md` | `:158` | 본체 10칸이 과도기임을 명시 (§8) |
 | `GAME.md` | `:178-180` | 무기 슬롯 2 + 배낭 1 → **핫바 10 + 착용 8** |
-| `05_Loot_DOCS.md` | §8 미정 #5 | 무기 2정 — **확정으로 이동** |
+| `05_Loot_Design.md` | §8 미정 #5 | 무기 2정 — **확정으로 이동** |
 
 ### 9-4. 03-A/B/C 분할 재조정
 
@@ -664,7 +664,7 @@ CLAUDE.md §2 *"상상한 확장점"* 에 걸린다. 9차 검수에서 명시적
 
 ## 11. 9차 검수 반영 이력
 
-**요청서:** `DOCS/Notes/05/Review/05_Loot_REVIEW9_Request.md` / **답변:** `05_Loot_REVIEW9_Answer.md` (2026-08-22)
+**요청서:** `DOCS/Notes/05/Review/05_Loot_REVIEW09_SlotExpansion_Request.md` / **답변:** `05_Loot_REVIEW09_SlotExpansion_Answer.md` (2026-08-22)
 
 ### 11-1. 답변대로 반영한 것
 
@@ -677,7 +677,7 @@ CLAUDE.md §2 *"상상한 확장점"* 에 걸린다. 9차 검수에서 명시적
 | 5 | `AllowedSlots` | **`SlotPriority`로 개명** | §5 |
 | 6 | *"부착물은 따로 필드 불필요"* | **틀렸다 — `AttachmentSlots` 예고** | §5 |
 | 7 | `HotbarRefs` 지금 (*"제거 경로 셋"*) | **Step 04/05로.** 근거가 사실이 아니었다 — 셋 다 `RemoveSelf` 하나로 모인다 | §4 |
-| 8 | 파급 목록 | **7건 추가** — `BACKLOG.md` B-5 / `StudyPath.md` / `LOOT_STATUS.md` 3행 / 04 문서 3곳 / 05 문서 9곳 / `05_Loot_DOCS.md` 5곳 / 03 문서 3곳 | §9 |
+| 8 | 파급 목록 | **7건 추가** — `BACKLOG.md` B-5 / `StudyPath.md` / `05_Loot_STATUS.md` 3행 / 04 문서 3곳 / 05 문서 9곳 / `05_Loot_Design.md` 5곳 / 03 문서 3곳 | §9 |
 | 9 | 03-A/B/C | **재조정** | §9-4 |
 
 ### 11-2. 답변과 다르게 반영한 것
@@ -690,7 +690,7 @@ CLAUDE.md §2 *"상상한 확장점"* 에 걸린다. 9차 검수에서 명시적
 
 답변 §9-1은 *"순서 계약 자체는 유지"* 로만 적었다. 실제로는 **위반했을 때의 증상이 바뀐다.** `EquippedEntryId`가 저장된 값일 때는 `RemoveSelf` 뒤에 읽어도 살아 있어 *"`INDEX_NONE`을 향한 write-back"* 이었지만, 파생 게터가 되면 **write-back이 아예 안 불린다.** `05_Loot_05_Equipment.md:141`의 근거 문장을 바꿔야 한다 — §3.
 
-**③ 답변의 줄 번호 일부가 어긋난다.** `LOOT_STATUS.md`의 `Build.cs` 서술은 `:70`이 아니라 **`:63`** 이다. 실제 위치로 §9에 반영했다.
+**③ 답변의 줄 번호 일부가 어긋난다.** `05_Loot_STATUS.md`의 `Build.cs` 서술은 `:70`이 아니라 **`:63`** 이다. 실제 위치로 §9에 반영했다.
 
 ### 11-3. 확인만 하고 안 바꾼 것
 
@@ -735,7 +735,7 @@ CLAUDE.md §2 *"상상한 확장점"* 에 걸린다. 9차 검수에서 명시적
 
 답변 §3-3은 *"델타 형태로 고치면 **반드시** 합산해야 한다"* 로 적었다. **오늘은 검사 5(*"같은 부모 ＋ 둘 다 `SlotId == None`"* 거절)가 두 델타가 동시에 0이 아닌 유일한 경우를 잘라내서** 합산과 개별 검사의 결과가 같다. **그래도 합산으로 적었다** — 검사 5를 완화하는 순간 개별 검사가 틀린 답을 내기 때문이다. *지금* 필요한 것이 아니라 *나중에 조용히 깨지지 않게* 하는 형태라고 이유를 바꿔 적었다.
 
-**④ 답변의 줄 번호 두 곳.** `FindFungibleEntryId` 확정표 행은 `LOOT_STATUS.md:69`가 아니라 **`:60`**, `GAME.md`의 부착물 문장은 `:180`이 아니라 **`:182`** 다. `OnDragOver`의 버블 라우팅은 `SlateApplication.cpp:5799`가 아니라 **`:5827`·`:5834`** 이고 `:5799`는 `OnDragEnter`(`FNoReply` — 중간에 멈추지 않는다)다. 실제 위치로 적었다.
+**④ 답변의 줄 번호 두 곳.** `FindFungibleEntryId` 확정표 행은 `05_Loot_STATUS.md:69`가 아니라 **`:60`**, `GAME.md`의 부착물 문장은 `:180`이 아니라 **`:182`** 다. `OnDragOver`의 버블 라우팅은 `SlateApplication.cpp:5799`가 아니라 **`:5827`·`:5834`** 이고 `:5799`는 `OnDragEnter`(`FNoReply` — 중간에 멈추지 않는다)다. 실제 위치로 적었다.
 
 ### 12-3. 이 문서 밖에서 스스로 추가한 것
 
@@ -947,4 +947,4 @@ TSoftObjectPtr<UStaticMesh> PlaceholderPickupMesh;  TSoftClassPtr<AEPPickup> Pic
 
 #### 그래도 지금 옮기지 않는다
 
-읽는 곳이 둘(`CanPlaceInSlot` · Step 04 UI)이라 이전이 두 줄이고, 지금 DataAsset을 만들면 **소비자가 하나인 계층**이 는다(CLAUDE.md §2). **이름만 적어둔다** — `05_Loot_DOCS.md` §8 미정 #10을 `BodySlots`·`ContainerOrder`·`StartingEquipment` 셋으로 넓혔다. 트리거는 **로비** 아니면 **§7-1**.
+읽는 곳이 둘(`CanPlaceInSlot` · Step 04 UI)이라 이전이 두 줄이고, 지금 DataAsset을 만들면 **소비자가 하나인 계층**이 는다(CLAUDE.md §2). **이름만 적어둔다** — `05_Loot_Design.md` §8 미정 #10을 `BodySlots`·`ContainerOrder`·`StartingEquipment` 셋으로 넓혔다. 트리거는 **로비** 아니면 **§7-1**.

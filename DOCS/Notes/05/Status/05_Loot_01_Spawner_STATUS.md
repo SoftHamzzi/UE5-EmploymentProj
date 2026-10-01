@@ -93,7 +93,7 @@ void AEPGameMode::HandleMatchHasStarted()
 
 **루프가 `Super::` 앞이라는 것이 핵심이다.** `AGameMode::HandleMatchHasStarted`(`GameMode.cpp:203-221`)가 그 안에서 `RestartPlayer` → `NotifyBeginPlay`를 부르므로, 뒤에 두면 플레이어 폰이 먼저 생긴다.
 
-스폰 시점이 스포너 `BeginPlay`가 아니라 GameMode의 `MatchState`인 이유는 `05_Loot_DOCS.md` §4-3.
+스폰 시점이 스포너 `BeginPlay`가 아니라 GameMode의 `MatchState`인 이유는 `05_Loot_Design.md` §4-3.
 
 ---
 
