@@ -343,3 +343,24 @@ DOCS/
 | (4-8 항목 6) CLAUDE.md Tradeoff 줄, "이 지침이 작동하고 있다면" 문단 | **둘 다 지운다** |
 
 사실 확인 (작업 전): §4-2 표의 "지금" 파일은 모두 있다. Review 쌍은 13개 번호(2~13, 16)이다.
+
+### 2026-10-02 — 항목별 결과
+
+| 항목 | 결과 |
+|---|---|
+| 4-1 Codex 플러그인 | **미완 — 사용자 몫.** `.claude/settings.json` 수정이 권한 분류기에 막혔다(자기 설정 변경). 사용자가 `"enabledPlugins": { "codex@openai-codex": true }`를 직접 넣고 새 세션에서 `/codex:setup` 확인. 참고: 플러그인은 지금 `krafton_ai` 프로젝트 범위로만 설치돼 있다(`~/.claude/plugins/installed_plugins.json`) — 켜도 안 뜨면 이 프로젝트에서 `/plugin install codex@openai-codex` |
+| 4-2 이름 변경 | 완료, 커밋 `909a8c0`. rename 35건 + 참조 수정 26파일. Review 주제: 02 StackRemoval · 03 Practicality · 04 Followup3 · 05 Spawner · 06 GlobalDataRef · 07 Interaction · 08 InventoryGAS · 09 SlotExpansion · 10 GridUI · 11 ItemOrderServer · 12 ReorderGap · 13 SelfReview21 · 16 InventoryUI. 옛 이름 grep 0건(이 문서 §1·§2.7·§2.9·§3·§4-2 제외). **남은 것 둘:** `.claude/settings.local.json:31`의 권한 규칙이 `DOCS/DOCS.md`를 가리킨다(로컬 권한 파일이라 손대지 않음), `.claude/agents/review-verifier.md:16` 예시의 `REVIEW1_Answer.md`(없는 파일을 가리키는 예시) |
+| 4-3 결정 분리 | 완료, 커밋 `101632b`. `05_Loot_DECISIONS.md` 신설 — 결정표 96행을 D-001~D-096으로(원문 그대로, 번호·상태 칸만 추가), 프래그먼트 절을 D-097로, "설계 변경 이력"을 "차수별 경위"로. STATUS에는 진행 상황·작업 목록·시작 시점 코드 상태만 남았다. Design과 같은 줄 0건 |
+| 4-4 `session-start` | 작성. Polish처럼 영역 Design이 없는 곳은 작업 문서 `상태:` → 없으면 사용자에게 묻는다. 대상에 Polish 작업명 허용 |
+| 4-5 `handoff` | 작성 |
+| 4-6 인수인계 칸 | `05_Loot_STATUS.md`, `04_Polish_STATUS.md`에 추가. Loot Design에 `상태: 승인`(소급). 두 STATUS의 옛 "세션 시작 템플릿"을 `/session-start` 안내로 교체 |
+| 4-7 `ROADMAP.md` §6 | `Guide/` 행, 영역 문서 세 가지, 이름 규칙, 가이드 템플릿 추가 |
+| 4-8 세 문서 | `CLAUDE.md` 167 → 88줄. `.claude/rules/ue-cpp.md`·`notes-docs.md` 신설. Architecture의 `UEPItemInstance`는 이미 삭제된 클래스라 `FEPItemState`로 고쳤다(`Types/EPTypes.h:77`). `SESSION.md` 역할별로 재작성. `AGENTS.md` 수정 — **단 `.gitignore:122`가 `AGENTS.md`를 무시해 커밋되지 않는다.** 커밋 `b80aba1` |
+| 4-8 확인 | **미실행.** `/claude-api prompt-audit`는 이 세션의 스킬 목록에 없어 부를 수 없었다. `/context`로 CLAUDE.md·rules 로드 확인은 새 세션에서 |
+| 4-9 시험 운용 | 미실행. Polish 인수인계 칸의 다음 행동으로 적었다(`/session-start 리뷰 Polish WeaponFireRate` — PrimaryUse 가이드 §3-B 채점) |
+
+**4-3에서 발견한 모순 (고치지 않음 — 설계 세션이 판정):**
+1. D-004 "본체 10칸 + 배낭 별도 풀" ↔ D-011 "본체 0칸, 착용 컨테이너에서만"(13차). Design §8은 0칸(10은 테스트값)이라 D-004가 옛 결정으로 보인다.
+2. D-055 "`Server_ReorderEntry`(RPC)는 04-B" ↔ D-064 "`Server_ReorderEntry` — Step 03-A". 11차 검수가 RPC를 04-B로 옮겼으므로(차수별 경위) D-064가 옛 결정으로 보인다.
+3. (모순 아님, 참고) Design §8 "불변식 강제"는 `AddEntryCharges()` 내부라고 하고 D-009는 `SetEntryCharges`가 유일한 쓰기 지점이라고 한다. D-009가 더 새 표현이다.
+4. (범위 밖, 참고) `05_Loot_STATUS.md` 진행 상황 22줄의 "03-B 배낭" 항목은 13차에 없어진 구간이다.
