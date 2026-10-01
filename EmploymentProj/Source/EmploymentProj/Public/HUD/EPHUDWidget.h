@@ -61,7 +61,22 @@ protected:
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UTextBlock> InteractPrompt;
 	
+	// 디버그용
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> NetDebugText;
+	
 private:
+	// === 변수 ===
+	TWeakObjectPtr<UAbilitySystemComponent> ASC;
+	TWeakObjectPtr<AEPGameState> GameState;
+	
+	FDelegateHandle HealthHandle;
+	FDelegateHandle MaxHealthHandle;
+	FDelegateHandle AmmoHandle;
+	FDelegateHandle MaxAmmoHandle;
+	FDelegateHandle ReloadingHandle;
+	
+	// === 함수 ===
 	void UnbindAll();
 	
 	void OnHealthChanged(const FOnAttributeChangeData& Data);
@@ -71,12 +86,5 @@ private:
 	void RefreshHealth();
 	void RefreshAmmo();
 	
-	TWeakObjectPtr<UAbilitySystemComponent> ASC;
-	TWeakObjectPtr<AEPGameState> GameState;
-	
-	FDelegateHandle HealthHandle;
-	FDelegateHandle MaxHealthHandle;
-	FDelegateHandle AmmoHandle;
-	FDelegateHandle MaxAmmoHandle;
-	FDelegateHandle ReloadingHandle;
+	void RefreshNetDebug();
 };

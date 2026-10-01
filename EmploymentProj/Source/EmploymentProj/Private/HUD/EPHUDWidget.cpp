@@ -7,6 +7,7 @@
 #include "Components/ProgressBar.h"
 #include "Components/TextBlock.h"
 #include "Core/EPGameState.h"
+#include "GameFramework/PlayerState.h"
 #include "GAS/EPAttributeSet.h"
 #include "GAS/EPNativeGameplayTags.h"
 #include "HUD/EPSkillSlotWidget.h"
@@ -56,6 +57,8 @@ void UEPHUDWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
 		const int32 Total = FMath::Max(0, FMath::FloorToInt(GameState->GetRemainingTime()));
 		TimerText->SetText(FText::FromString(FString::Printf(TEXT("%d:%02d"), Total / 60, Total % 60)));
 	}
+	
+	RefreshNetDebug();
 }
 
 void UEPHUDWidget::NativeDestruct()
@@ -131,4 +134,28 @@ void UEPHUDWidget::RefreshAmmo()
 	
 	if (AmmoText) AmmoText->SetText(FText::FromString(
 		FString::Printf(TEXT("%d / %d"), FMath::RoundToInt(Ammo), FMath::RoundToInt(MaxAmmo))));
+}
+
+void UEPHUDWidget::RefreshNetDebug()
+{
+#if !UE_BUILD_SHIPPING
+
+	if (!NetDebugText) return;
+	
+	const APlayerController* PC = GetOwningPlayer();
+	const APlayerState* PS = PC ? PC->PlayerState : nullptr;
+	const float RttMs = PS ? PS->GetPingInMilliseconds() : 0.f;
+	
+	FString Emu = TEXT("Emu off");
+#if DO_ENABLE_NET_TEST
+	if (const UNetDriver* Driver = GetWorld()->GetNetDriver())
+	{
+		const FPacketSimulationSettings& S = Driver->PacketSimulationSettings;
+		Emu = FString::Printf(TEXT("Emu Out %d / In %d"),
+			S.PktLag > 0 ? S.PktLag : S.PktLagMax, S.PktIncomingLagMax);
+	}
+#endif
+	
+	NetDebugText->SetText(FText::FromString(FString::Printf(TEXT("RTT %.0fms | %s"), RttMs, *Emu)));
+#endif
 }

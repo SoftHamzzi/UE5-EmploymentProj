@@ -296,7 +296,7 @@ void AEPCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCompone
 	{
 		EnhancedInput->BindAction(
 			PC->GetInteractAction(),
-			ETriggerEvent::Triggered,
+			ETriggerEvent::Started,
 			InteractionComponent,
 			&UEPInteractionComponent::Input_Interact
 		);

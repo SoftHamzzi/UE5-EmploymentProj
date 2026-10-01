@@ -99,9 +99,12 @@
 
 - [x] 설계 문서 `../04_Polish_WeaponFireRate.md` §4를 안 B로 동기화 (2026-09-20 — §4-2 구조, §4-4 코드, §4-5 배칭, §4-7 대가, §6 PIE 11행)
 - [x] 구현서 `04_Polish_WeaponFireRate_Implementation.md` 작성 (2026-09-20). Step 1~12 TargetData 전송 → PIE → Step 13 배칭(독립). 구현 시 충돌하면 구현서 → 이 STATUS → 설계 문서 순
-- [ ] `UEPAbilitySystemComponent` 신설은 PlayerState 생성 코드가 바뀌는 횡단 변경 — GAS_STATUS·PROJECT_CONTEXT 갱신 대상
-- [ ] 스킬 PIE 검증 완료 후 착수
-- [ ] 후속 후보(순서 없음): `FireIndex` 재전송 큐(유실 저항) / `HasTokenAvailable` 피크 / `bRPCDoSDetection` / `FireMode::Burst` 카운터 / `CalculateSpread` 디버그 로그·`ApplySpread` 죽은 코드 제거 / `Issue/FireRate_GECooldownPrediction.md` "Ability Batching" 오기 정정 / `DOCS/Mine/LagCompensationFix.md`·포트폴리오의 "클라가 원점·방향을 보낸다" 서술 갱신
+- [x] **구현 + PIE 확인 완료 (2026-09-24, 사용자 확인).** 코드 대조: `SendFireTargetData`·`ServerConfirmOneShot`·`Server_ConfirmFire`·200cm 드리프트 검사 전부 없음. `OnTargetDataReady` 단일 경로(버킷 → `CommitAbilityCost` → 전송 → 코스메틱 → `HandleServerFire`), `FireTimer.Start(…, 1/GetBaseFireRate())`, `Input_Fire` 핸들 기반 + `FScopedServerAbilityRPCBatcher`, `Input_StopFire` → `AbilitySpecInputReleased`, `UEPAbilitySystemComponent::ShouldDoServerAbilityRPCBatch() = true` + `EPPlayerState.cpp:11`, `HandleServerFire`의 `GetShotOriginAt`, Reload `ActivationOwnedTags(State.Reloading)`, `ApplySpread`·`CalculateSpread` 로그 제거
+- [x] `UEPAbilitySystemComponent` 신설 — 횡단 변경을 `Status/GAS_STATUS.md`에 기록 (2026-09-24). `PROJECT_CONTEXT.md`는 pre-commit 훅이 갱신
+- [ ] **남은 코드 정리**
+  - 태그 삭제 — `TAG_State_FireCooldown`(`EPNativeGameplayTags.h:13`/`.cpp:12`), `TAG_Cooldown_Weapon_PrimaryUse`(`.h:33`/`.cpp:33`) 아직 정의돼 있다. 구현서 Step 3 순서대로 `GE_FireCooldown` 에셋 참조부터 정리
+  - **`EPLocalModifiers.h:4`의 `#include "AnimationEditorTypes.h"`** — Persona 에디터 모듈 헤더를 런타임 헤더가 include한다. 에디터 빌드는 통과하지만 **패키징(Game/Server 타깃)에서 깨질 수 있다.** 쓰는 곳이 없으니 삭제
+- [ ] 후속 후보(순서 없음): `FireIndex` 재전송 큐(유실 저항) / `HasTokenAvailable` 피크 / `bRPCDoSDetection` / `FireMode::Burst` 카운터 / `Issue/FireRate_GECooldownPrediction.md` "Ability Batching" 오기 정정 / `DOCS/Mine/LagCompensationFix.md`·포트폴리오의 "클라가 원점·방향을 보낸다" 서술 갱신
 
 ---
 

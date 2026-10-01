@@ -19,6 +19,13 @@
 
 **GAS 마이그레이션 완료 (2026-07-26).** 다음 작업은 GAS 밖 — `DOCS/DOCS.md` §5 실행 순서 참조.
 
+> **이후 횡단 변경**
+>
+> | 날짜 | 변경 | 이유 | 상세 |
+> |---|---|---|---|
+> | 2026-09-24 | ASC 서브클래스 `UEPAbilitySystemComponent` 신설, `EPPlayerState`가 이 클래스로 생성 | `ShouldDoServerAbilityRPCBatch() = true` — 어빌리티 RPC 배칭(무기 발사 활성화 + 첫 TargetData를 한 RPC로). **배칭 전용**, 다른 기능 없음 | `../Polish/WeaponFireRate/04_Polish_WeaponFireRate_STATUS.md` §1 |
+> | 2026-09-22 | 스킬 쿨다운·캐스팅 GE 제거 → `FEPLocalTimer` + `FEPLocalModifiers` | GE 제거는 예측되지 않아 재발동 차단이 RTT만큼 늦게 풀림 | `../Polish/04_Polish_SkillDisplay.md` §3 |
+
 > **이후 단계에서 추가되는 어빌리티** — 여기 목록이 아니라 해당 단계 문서가 진실의 원천이다.
 >
 > | 어빌리티 | 태그 | 어디서 | 상태 |

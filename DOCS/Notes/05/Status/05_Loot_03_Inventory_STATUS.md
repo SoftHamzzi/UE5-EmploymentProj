@@ -1,32 +1,136 @@
 # 05_Loot_03_Inventory — 구현 상태
 
-**전체 상태: 골격만. 로직 0줄.**
+**전체 상태(2026-09-30 재대조): 03-A 로직은 사실상 구현돼 있다. 진짜 버그 2건 발견, 우선 수정.**
 
 > 세션 시작 시 이 파일을 반드시 읽을 것.
 > 현재 코드 상태의 정확한 스냅샷. 문서(`05_Loot_03_Inventory.md`)의 예정 코드와 혼동 금지.
-> 최종 확인: 2026-08-25 (소스 3종 **재대조** ＋ 13차 검수·답변 ＋ **14차** 반영)
+> 최종 확인: **2026-09-30** (소스 3종 + `EPInventoryCheats.cpp/h` **재대조**, 아래 5+ 주 전 스냅샷을 대체한다)
 
-**소스 확인 결과 (2026-08-25 재대조)** — 세 파일 전부 존재. **골격이 8월 22일 스냅샷보다 훨씬 앞서 있다.**
+---
 
-| 파일 | 줄 | 상태 |
+## ★★ 2026-09-30 재대조 — 이전 스냅샷(08-25)은 틀렸다
+
+이전 스냅샷은 "골격만, 로직 0줄"이라고 적었다. **사실이 아니다.** 08-25 이후 GAS-polish 작업과
+겹쳐 진행됐는지 커밋 이력은 확인 못 했지만, 지금 소스는 03-A 함수 대부분이 **실제 로직을
+갖고 있다.** 아래 "함수별 상태"가 진실이고, 그 아래 옛 섹션들(골격 결함 3건 등)은 **전부
+해소됐다** — 지우지 않고 취소선 처리한다.
+
+### 디버그 커맨드 — 문서와 다른 이름으로 이미 존재한다
+
+`EPInventoryCheats.cpp/h`가 콘솔 CVar(`EP.Inv.*`)가 아니라 **`UCheatManagerExtension`**으로
+구현돼 있다. 기능은 동일하지만 **이름이 다르다** — 이 문서 하위 섹션이 인용하는 `EP.Inv.Add`
+등은 전부 아래로 고쳐 읽는다.
+
+| 문서가 부르는 이름 | 실제 이름 | 시그니처 |
 |---|---|---|
-| `Public/Inventory/EPInventoryTypes.h` | 22 | `FEPInventoryEntry` 필드 **6개**(`SortKey` 포함) 선언 완료 |
-| `Public/Inventory/EPInventoryComponent.h` | 131 | `FEPInventoryList` ＋ `TStructOpsTypeTraits` ＋ **컴포넌트 함수 40여 개 선언 완료.** 파일 앞부분 include·전방선언 3종도 들어갔다 |
-| `Private/Inventory/EPInventoryComponent.cpp` | 189 | 생성자 3줄 완료(`SetIsReplicatedByDefault(true)` · `bCanEverTick = false` · `Entries.Owner = this`). **`RemoveEntry` / `RemoveEntryInternal` / `RemoveChildrenRecursive` 세 개만 본문이 있고 나머지는 빈 스텁** |
+| `EP.Inv.Add` | `EPInvAdd` | `(ItemId, Container=-1)` — PlayerIndex 없음, 빙의 폰 기준 |
+| `EP.Inv.Move` | `EPInvMove` | `(EntryId, NewParent, SlotId)` — `"-"`가 `NAME_None` |
+| `EP.Inv.Reorder` | `EPInvReorder` | `(EntryId, PrevEntryId)` |
+| `EP.Inv.Dump` | `EPInvDump` | 인자 없음. 본체+컨테이너별 칸 사용량까지 찍는다 |
+| (문서에 없음) | `EPInvDrop` | `(EntryId)` — `Server_DropItem` 호출만, 본체는 스텁 |
+| (문서에 없음) | `EPInvDumpAll` | 인자 없음. 월드의 모든 `AEPCharacter` 엔트리 수 |
 
-> **★ 옛 스냅샷이 *"엔진 템플릿 그대로 / `bCanEverTick = true`"* 라고 적고 있었다 (13차 답변).** 셋 다 사실이 아니었다 — **결함 #1·#3·#4가 이미 고쳐진 뒤**였다. `CLAUDE.md`가 STATUS를 진실의 원천으로 못박았으므로 **이 표가 소스보다 뒤에 있으면 안 된다.**
+**즉 완료 조건 14·15·17(★, `EP.Inv.Move`/`EP.Inv.Reorder` 필요)은 "커맨드가 없어서 검증
+불가"가 아니라 "커맨드는 있고 PIE에서 안 돌려봤다"로 상태가 바뀐다.**
+
+### 함수별 상태 (`.cpp` 기준, 2026-09-30)
+
+**진짜 구현됨 (스텁 아님):**
+`AddItem` · `FindEntry` · `FindFungibleEntryId` · `GetUsedSlots` · `GetCapacity` · `CanFit` ·
+`CanPlaceInSlot` · `GetEntryInSlot` · `GetEquippedEntryId` · `GetSortedContents` ·
+`SetEntryCharges` · `AddEntryCharges` · `MoveEntry`(검사 0~6 전부) · `RemoveEntry` /
+`RemoveEntryInternal` / `RemoveChildrenRecursive` / `RemoveSelf` · `ContainsEntry` ·
+`InsertEntry`(키 발급이 `AddDefaulted` **전** — 함정 4x 반영 확인) · `AssignSortKey` ·
+`RenormalizeSortKeys` · `KeySpace_NextAtEnd`(오버플로 가드 포함) · `KeySpace_Min` ·
+`KeySpace_NextAbove`(반환형 `bool` — 헤더 코멘트가 요구하던 대로) · `ReorderEntry` /
+`ReorderEntryInternal`(함정 4t·4u 가드 다 있다) · `GetLifetimeReplicatedProps`
+
+**여전히 스텁 (03-B 몫, 예정대로):**
+`AddSubtree` → `return 0` · `TryAutoEquip` → `return 0` · `GetInsertionOrder` → `return {}` ·
+`Server_DropItem_Implementation` → `return`(본체 없음) · `SpawnPickupInFront` → `return nullptr`
+
+**★ 진짜 버그 — `KeyOf`가 `SortKey`가 아니라 `EntryId`를 돌려준다**
+
+```cpp
+// EPInventoryComponent.cpp:465-474 (현재)
+int32 UEPInventoryComponent::KeyOf(int32 EntryId, int32& OutKey) const
+{
+    for (const FEPInventoryEntry& E : Entries.Items)
+    {
+        if (E.EntryId != EntryId) continue;
+        OutKey = E.EntryId;   // ← 버그. E.SortKey여야 한다
+        return true;
+    }
+    return false;
+}
+```
+
+`ReorderEntryInternal`이 `PrevEntryId != INDEX_NONE`일 때(맨 앞이 아닌 곳에 끼워 넣을 때)
+`KeyOf(PrevEntryId, PrevKey)`로 기준 키를 구한다(`:495`). **`EntryId`가 `SortKey`로 둔갑해
+들어가면 그 뒤 `KeySpace_NextAbove`·중간값 계산이 전부 엉뚱한 값 위에서 돈다.** 맨 앞
+재배치(완료 조건 17 일부)는 이 경로를 안 타서 정상일 수 있지만, **일반적인 "이 항목 뒤에
+놓기"(조건 14)는 현재 코드로는 못 믿는다.**
+
+부수적으로 반환형도 헤더 코멘트(`// 반환 : 찾았는가 (※ 문서상 bool...)`)와 다르게 **`int32`로
+선언돼 있다** — `KeySpace_NextAbove`는 이미 `bool`로 고쳐졌는데 `KeyOf`만 안 따라갔다. 같이
+고친다.
+
+**★ 잠재 버그 — `AddItem`의 널 역참조**
+
+```cpp
+// EPInventoryComponent.cpp:45-64
+const FEPItemData* Data = Defs() ? Defs()->FindData(ItemId) : nullptr;
+if (Data->bFungible)   // ← Data가 nullptr이면 즉시 크래시
+```
+
+DT에 없는 `ItemId`를 넘기면(오타, 마이그레이션 누락) 널 체크 없이 바로 역참조한다. 아래
+`CanFit`은 같은 상황에서 `if (!Data) return false;`로 방어하는데 `AddItem`만 안 한다 — 같은
+파일 안에서 방어 패턴이 갈린 사례.
+
+**관찰 — `IsFungible()`이 죽은 스텁이다**
+
+```cpp
+bool UEPInventoryComponent::IsFungible(FName ItemId) const { return true; }
+```
+
+`AddItem`은 이 함수를 안 부르고 `Data->bFungible`을 직접 읽는다(위 코드). `IsFungible()`은
+선언돼 있고 항상 `true`를 반환하는데 **호출자가 0곳**이라 지금은 무해하지만, 나중에 누가
+"있으니까" 불러 쓰면 항상 `true`를 받는다. 지우거나 `Data->bFungible`을 돌려주게 고친다.
+
+**관찰 — `CanPlaceInSlot`이 부착 슬롯(`Parent != INDEX_NONE`)을 전부 거절한다**
+
+```cpp
+if (!GetDefault<UEPLootDeveloperSettings>()->BodySlots.Contains(SlotId)) return false;
+if (Parent != INDEX_NONE) return false;   // ← 몸 슬롯 외엔 전부 거절
+```
+
+헤더 코멘트(`:110`)는 "부착 슬롯이면 그 무기의 EntryId"라고 몸 슬롯 외 경로를 전제하는데,
+본문은 `Parent != INDEX_NONE`이면 무조건 거절한다. **의도적으로 부착물(Step 05?)을 지금
+막아둔 것인지, 03-A 범위에서 빠뜨린 것인지 문서상 확인이 안 된다.** 03-A 완료 조건에 부착
+슬롯이 없으니 지금 당장 막힌 건 아니지만, 결정이면 여기에 이유를, 실수면 언제 고칠지를
+적어야 한다 — 결정 필요.
+
+---
+
+**소스 확인 결과 (2026-08-25 재대조, ~~2026-09-30 대체됨~~)** — 세 파일 전부 존재. ~~골격이 8월 22일 스냅샷보다 훨씬 앞서 있다.~~
+
+| 파일 | 줄(08-25) | 줄(09-30) | 상태 |
+|---|---|---|---|
+| `Public/Inventory/EPInventoryTypes.h` | 22 | 22 | 그대로 |
+| `Public/Inventory/EPInventoryComponent.h` | 131 | **307** | 함수 수 그대로, **코멘트/문서화가 대폭 늘었다** |
+| `Private/Inventory/EPInventoryComponent.cpp` | 189 | **539** | ~~세 개만 본문 있고 나머지 스텁~~ → **위 "함수별 상태" 참고 — 대부분 실구현** |
+
+> **★ 옛 스냅샷이 *"엔진 템플릿 그대로 / `bCanEverTick = true`"* 라고 적고 있었다 (13차 답변).** 셋 다 사실이 아니었다 — **결함 #1·#3·#4가 이미 고쳐진 뒤**였다. `CLAUDE.md`가 STATUS를 진실의 원천으로 못박았으므로 **이 표가 소스보다 뒤에 있으면 안 된다.** ← **이 경고가 09-30에도 한 번 더 맞았다.** 08-25 스냅샷 자체가 5주 넘게 방치되며 다시 소스보다 뒤처졌다. STATUS는 "세션 시작 시 읽는 것"이지 "한 번 재대조하면 끝"이 아니다.
 
 **`EmploymentProj.Build.cs:11`에 `NetCore` 추가 완료** — 없으면 `LNK2019: Z_Construct_UScriptStruct_FFastArraySerializerItem`. 실증됨.
 
-### 남은 골격 결함 3건 (03-A 착수 전)
+### ~~남은 골격 결함 3건~~ — 2026-09-30 확인: 전부 해소됨
 
-| # | 위치 | 문제 |
-|---|---|---|
-| **1** | `EPInventoryComponent.h:20` | **`TArray<class FEPInventoryEntry> Items;` — `class` 키워드가 남았다.** `#include`(`:8`)는 들어갔으므로 불완전 타입은 해결됐지만, `FEPInventoryEntry`는 `struct`라 **MSVC C4099**(`first seen using 'struct' now seen using 'class'`). include가 있는 지금은 **전방선언 흉내를 낼 이유도 없다** |
-| **2** | `EPInventoryComponent.h:22` | **`TObjectPtr<UActorComponent> Owner`로 교체한다** (11차 결정). ~~전방 선언~~은 11차가 **기각한 대안**이다. **＋ `PostReplicatedReceive`에 `Cast<UEPInventoryComponent>`** — **둘은 같은 커밋이어야 한다.** 지금은 구체 타입이라 컴파일되고, **11차 결정을 적용하는 순간** 캐스트 없이는 깨진다 |
-| **3** | `EPInventoryComponent.cpp:104` | **`FScopedInventoryNotify`의 정의가 소스 어디에도 없다.** 헤더 `:130`의 `friend struct` 선언은 **불완전 타입**이라 인스턴스를 못 만든다 — **03-A 첫 빌드에서 막힌다.** 정의는 `.cpp` 상단(03-7 참조) |
-
-> **~~#3 `SetIsReplicatedByDefault`~~ · ~~#4 `bCanEverTick`~~ 은 이미 고쳐졌다** (2026-08-25 확인).
+| # | 위치 | 08-25 문제 | 09-30 상태 |
+|---|---|---|---|
+| ~~1~~ | `EPInventoryComponent.h:20` | `TArray<class FEPInventoryEntry> Items;`의 `class` 키워드 | **해소.** 지금은 `TArray<FEPInventoryEntry> Items;`(`class` 없음) |
+| ~~2~~ | `EPInventoryComponent.h:24` | `Owner`를 `TObjectPtr<UActorComponent>` + 캐스트로 교체하기로 했었음 | **다른 형태로 해소.** 지금은 `TObjectPtr<UEPInventoryComponent> Owner`(구체 타입 그대로)이고 `PostReplicatedReceive`도 캐스트 없이 `Owner->OnInventoryChanged.Broadcast()`. 같은 헤더 안이라 애초에 불완전 타입 문제가 없었다 — **11차가 전제한 문제 상황 자체가 성립 안 했던 것으로 보인다.** 지금 형태로 컴파일되고 동작하니 재론하지 않는다 |
+| ~~3~~ | `EPInventoryComponent.cpp:104` | `FScopedInventoryNotify` 정의 없음 | **해소.** `.cpp` 11-24행에 정의됨, `MoveEntry`·`SetEntryCharges`·`InsertEntry`·`AssignSortKey`·`RemoveEntryInternal`·`RemoveSelf` 전부가 이걸로 감싸져 있다 |
 
 ### 9차(2026-08-22) 기획 확대로 추가된 코드 항목
 
@@ -148,6 +252,11 @@
 
 ## 완료 조건 대조
 
+> **2026-09-30 — 03-A 항목 전부 상태가 바뀌었다.** "코드가 없어서 ⬜"가 아니라 **"코드는 있는데
+> 한 번도 PIE로 안 돌려봤다"**로 이유가 바뀐다. `EPInvAdd`/`EPInvMove`/`EPInvReorder`/`EPInvDump`
+> (구 `EP.Inv.*`, 위 재대조 절 참고)로 지금 바로 검증 가능하다. **단 14번은 `KeyOf` 버그부터
+> 고쳐야 신뢰할 수 있다.**
+
 | # | 완료 조건 | 담당 | 상태 |
 |---|---|---|---|
 | 1 | 주운 아이템이 인벤토리에 들어가고 클라이언트에 복제된다 | 03-B | ⬜ |
@@ -163,7 +272,7 @@
 | 11 | 버린 직후 0.5초 동안 회색 프롬프트 + 서버 거부 | 03-B | ⬜ |
 | 12 | 다른 클라이언트에 내 인벤토리가 복제되지 않는다 (`COND_OwnerOnly`) | 03-A | ⬜ |
 | 13 | 줍고 버려도 기존 `EntryId`가 **재번호되지 않는다** | 03-B | ⬜ |
-| 14 | **★ `EP.Inv.Reorder`로 자리를 바꾸면 `Dump` 순서가 바뀌고 클라·서버가 같다** (11차) | 03-A | ⬜ |
+| 14 | **★ `EP.Inv.Reorder`로 자리를 바꾸면 `Dump` 순서가 바뀌고 클라·서버가 같다** (11차) | 03-A | ⬜ **`KeyOf` 버그 선결** |
 | 15 | **★ 다른 컨테이너로 옮기면 목적지 맨 뒤** — 옛 키를 들고 가지 않는다 (함정 4m) | 03-A | ⬜ |
 | 16 | **★ 배낭에 4개 이상 넣고 순서를 섞은 뒤 버렸다 주우면 그 순서 그대로** (11차) | 03-B | ⬜ |
 | 17 | **★ 핫바에 꽂았다 빼면 원래 자리로 돌아온다** — 동률이 안 난다 (함정 4q) | 03-A | ⬜ |
@@ -248,12 +357,17 @@
 
 ---
 
-## 남은 작업
+## 남은 작업 (2026-09-30 갱신)
 
-Step 03 전체. **03-A → 03-B → 03-B** 순서로 진행하고, 각 구간 끝에서 멈춰 검증한다.
+**~~Step 03 전체~~ — 03-A 로직은 거의 끝나 있다.** 순서를 다시 잡는다.
 
-| 구간 | 멈춰서 검증할 것 |
-|---|---|
-| 03-A | `EP.Inv.Add`로 칸 합산 · `bFungible` · `COND_OwnerOnly`. **`RemoveEntry`/`AddSubtree` 없이 컴파일·실행된다** |
-| 03-B | 배낭을 주우면 두 번째 풀이 열리는가. 아직 못 버린다 |
-| 03-B | `RemoveEntry` / `AddSubtree` / 캐스케이드 / `Server_DropItem` + 이월 2건 |
+| 순서 | 할 것 | 비고 |
+|---|---|---|
+| 1 | **버그 수정** — `KeyOf`가 `E.SortKey`를 돌려주게(반환형도 `bool`로), `AddItem`에 `if (!Data) return INDEX_NONE;` 가드 | 둘 다 위 "새로 발견된 버그" 절. 작고 03-A를 신뢰하려면 선행돼야 한다 |
+| 2 | **결정** — `CanPlaceInSlot`의 부착 슬롯(`Parent != INDEX_NONE`) 거절이 의도인지. 의도면 이 문서에 이유를, 실수면 조건 자체를 고친다 | 03-A 완료 조건엔 부착이 없어 지금 당장 급하진 않다 |
+| 3 | **PIE 검증** — `EPInvAdd`/`EPInvMove`/`EPInvReorder`/`EPInvDump`(구 `EP.Inv.*`)로 완료 조건 2~6, 12, 14~15, 17~19를 실제로 돌려본다. **1번을 하기 전엔 14번을 통과로 치지 않는다** | 커맨드는 이미 있다 — `05_Loot_00_ItemCore.md`류 검증 패턴과 동일 |
+| 4 | **`IsFungible()` 정리** — 죽은 스텁이니 지우거나 `Data->bFungible` 위임 | 사소, 아무 때나 |
+| 5 | **03-B** — `AddSubtree`/`TryAutoEquip`/`GetInsertionOrder`/`Server_DropItem_Implementation`/`SpawnPickupInFront` 본체 채우기 + `EPGA_Interact`(픽업 경로)가 `AddItem`을 실제로 부르게 배선. 지금은 F로 주워도 인벤토리에 안 들어간다(호출자 0곳, 직접 확인) | Step 02 이월 2건(02-3 사거리, 02-4 동시 F)도 여기서 |
+
+**요약: "03-A를 시작한다"가 아니라 "이미 쓰인 03-A를 버그 2개 고치고 처음으로 PIE에 태운다"에
+더 가깝다.** 03-B(줍기 연동)는 여전히 처음부터다 — 스텁 5개와 pickup 배선이 남아 있다.

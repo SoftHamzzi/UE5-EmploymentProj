@@ -12,7 +12,8 @@ toc_sticky: true
 
 mermaid: true
 
-date: 2026-09-26
+date: 2026-09-24 10:02:00 +0900
+last_modified_at: 2026-09-24
 ---
 
 📌 [단발 사격을 막고 있던 것은 쿨다운 GE였다](/devlog/EP_GAS-WeaponFireRate)에서 예고한 나머지
@@ -48,7 +49,7 @@ void Server_ConfirmFire(FVector_NetQuantize Origin, FVector_NetQuantizeNormal Di
 반면 클라이언트가 발사하는 순간 읽은 벡터를 그대로 실어 보내면 오차가 0이다. 조작해도
 얻는 것이 에임봇 이상이 아니라 검증할 이유도 없다.
 
-명령과 그때의 시점 각도를 한 패킷에 담는 것은 Source 계열의 usercmd 모델이고, 주류 FPS가
+명령과 그때의 시점 각도를 한 패킷에 담는 것은 Source 엔진 계열의 usercmd(입력 한 번과 그 순간의 시점 각도를 같이 담는 명령) 모델이고, 주류 FPS가
 쓰는 모양이다. 그래서 방향은 보내고, 원점만 뺀다.
 
 ## 전송을 GAS TargetData로 옮겼다
@@ -171,6 +172,28 @@ Data->ClientMoveTimeStamp = CMC->GetPredictionData_Client_Character()->CurrentTi
 처리할 때마다 `{그 타임스탬프, 처리 직후 카메라 위치}`를 기록해 두고, 발사가 오면 페이로드의
 타임스탬프로 찾는다. 찾으면 오차가 0이다. 채널 도착 순서와 무관해진다.
 
+```mermaid
+sequenceDiagram
+    participant C as 클라이언트
+    participant M as 서버 CMC
+    participant R as 리와인드 컴포넌트
+    participant A as 서버 어빌리티
+    C->>M: 무브 10.03
+    M->>R: 처리 완료 알림
+    Note over R: 10.03, 위치 1 기록
+    Note over C: 이 순간 발사
+    C->>M: 무브 10.06
+    M->>R: 처리 완료 알림
+    Note over R: 10.06, 위치 2 기록<br/>현재 위치는 이제 2
+    C->>A: TargetData (방향, 10.03)
+    A->>R: 10.03의 원점은
+    R-->>A: 위치 1
+    Note over A: 현재 위치 2가 아니라<br/>쏜 순간의 위치 1로 판정
+```
+
+이동 패킷과 발사 패킷은 서로 다른 채널이라 도착 순서가 보장되지 않는다. 위 그림은 발사
+뒤에 보낸 이동이 먼저 도착한 경우다. 서버가 현재 위치를 썼다면 위치 2에서 쐈을 것이다.
+
 ## 타임스탬프는 검증할 필요가 없다
 
 좌표를 받지 않고 타임스탬프를 받는 것이 왜 나은지가 이 설계의 핵심이다.
@@ -189,7 +212,7 @@ Data->ClientMoveTimeStamp = CMC->GetPredictionData_Client_Character()->CurrentTi
 
 ## 히스토리는 리와인드 컴포넌트가 들기로 했다
 
-기록할 자리를 정하는 데 한 번 생각을 고쳤다. 처음엔 CMC가 배열을 들게 하려고 했다. UT도
+기록할 자리를 정하는 데 한 번 생각을 고쳤다. 처음엔 캐릭터 무브먼트 컴포넌트(CMC)가 배열을 들게 하려고 했다. UT도
 `AUTCharacter`가 들고 있으니 캐릭터나 무브먼트가 자연스러워 보였다.
 
 이 프로젝트에는 이미 "이 캐릭터의 과거 위치"를 아는 컴포넌트가 있다. 지연 보상용
@@ -205,27 +228,20 @@ Data->ClientMoveTimeStamp = CMC->GetPredictionData_Client_Character()->CurrentTi
 | 무엇을 | 히트 본 전체의 월드 Transform | 카메라 위치 하나 |
 
 CMC는 기록하지 않고 알리기만 한다. `OnMovementUpdated`에서 무브 하나를 처리할 때마다
-`{서버 시각, 위치, 클라 타임스탬프, 마지막 무브인지}`를 브로드캐스트하고, 리와인드
+`{서버 시각, 위치, 클라이언트 타임스탬프, 마지막 무브인지}`를 브로드캐스트하고, 리와인드
 컴포넌트가 받아서 자기 배열 둘을 각자 규칙대로 채운다.
 
 원점을 `TG_PostPhysics`까지 미루지 않은 이유는 미룰 필요가 없기 때문이다. 카메라는 캡슐에
 붙어 있어 캡슐이 움직인 직후면 이미 갱신돼 있다. 본 Transform만 애니메이션 평가를
 기다려야 한다.
 
-## 지금 상태
+## 같은 작업에서 한 나머지
 
-설계와 구현서는 끝났고 코드를 쓰는 중이다. PIE 실측은 아직 못 했다.
+구현을 마치고 PIE에서 확인했다.
 
-<!-- [스크린샷 1] 이동 중 발사에서 원점이 맞는지
-     찍는 법: SSR 디버그 드로우를 켜고(bEnableSSRDebugDraw) PktLag 200,
-     좌우로 스트레이프하면서 정지한 상대를 쏜다. 흰색 트레이스 선의 시작점이
-     쏜 순간의 카메라 위치에 붙어 있어야 한다.
-     비교용으로 폴백 경로(타임스탬프를 -1로 강제)도 한 컷 찍으면 차이가 보인다. -->
-![shot_origin_history.gif](GITHUB_ASSET_URL)
-
-같은 작업에 남은 것이 둘이다. 탄약을 클라이언트가 예측해서 미리 깎는 것, 그리고 역할별로
-갈라져 있던 처리 경로를 하나로 합치는 것이다. 둘 다 예측 키를 다루는 이야기라 다음 편에서
-같이 쓴다.
+같은 작업에서 두 가지를 더 바꿨다. 탄약을 클라이언트가 예측해서 미리 깎는 것, 그리고
+역할별로 갈라져 있던 처리 경로를 하나로 합친 것이다. 둘 다 예측 키를 다루는 이야기라
+다음 편에서 같이 쓴다.
 
 ## 배운 것
 

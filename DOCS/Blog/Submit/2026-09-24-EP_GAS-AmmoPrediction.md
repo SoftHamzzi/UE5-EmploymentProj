@@ -12,7 +12,8 @@ toc_sticky: true
 
 mermaid: true
 
-date: 2026-09-27
+date: 2026-09-24 10:03:00 +0900
+last_modified_at: 2026-09-24
 ---
 
 📌 [발사 원점을 클라이언트에게 받지 않기로 한 글](/devlog/EP_GAS-FireTargetData)에서 예고한
@@ -26,17 +27,24 @@ date: 2026-09-27
 발사는 즉시 나가는데 잔탄 숫자만 늦게 바뀌었다. 탄약이 `Ammo` 어트리뷰트이고, 차감이
 서버에서만 일어나 복제로 내려오기 때문이다.
 
-Lyra는 이걸 예측하지 않는다. `ULyraAbilityCost_ItemTagStack::ApplyCost`가 권위에서만 돈다.
+Lyra는 이걸 예측하지 않는다. `ULyraAbilityCost_ItemTagStack::ApplyCost`가 권위(최종 판정을 내리는 쪽, 보통 서버)에서만 돈다.
 쏘는 감각에 직접 닿는 값은 아니니 그 선택도 이해가 된다.
 
 이 프로젝트에서는 넣기로 했다. 30발 탄창을 쓰는 게임에서 잔탄은 계속 보는 숫자이고, 핑
 200ms에서 한 발 쏠 때마다 숫자가 뒤늦게 따라오는 것이 눈에 걸렸다.
 
-<!-- [스크린샷 1] 잔탄이 늦게 줄어드는 것
-     찍는 법: PktLag 200으로 PIE 2인, 클라에서 단발로 천천히 발사하며 HUD 잔탄만 크게.
-     발사 이펙트가 나간 뒤 숫자가 바뀌는 간격이 보여야 한다.
-     탄약 예측을 넣기 전 커밋에서 찍는다. -->
-![ammo_delayed.gif](GITHUB_ASSET_URL)
+```mermaid
+sequenceDiagram
+    participant C as 클라이언트
+    participant S as 서버
+    Note over C: t=0 발사<br/>총구 이펙트 즉시, 잔탄 30 그대로
+    C->>S: TargetData
+    Note over S: t=U 탄약 차감, 30에서 29
+    S->>C: Ammo 복제
+    Note over C: t=RTT 잔탄 29
+```
+
+발사는 0에 일어나는데 숫자는 RTT 뒤에 바뀐다. 핑 200ms면 쏠 때마다 0.2초씩 늦게 따라온다.
 
 ## 예측 키는 미리 한 일에 붙는 꼬리표다
 
@@ -71,12 +79,12 @@ sequenceDiagram
 연사는 정의상 여러 프레임에 걸쳐 있다. 그래서 어빌리티가 살아 있는 것과 창이 열려 있는
 것은 별개이고, 타이머로 오는 두 번째 발부터는 창을 새로 열어야 한다.
 
-둘째, ack은 RPC가 아니라 프로퍼티 복제다. 서버가 "이 키 처리했다"를 따로 보내는 것이
+둘째, 확인 응답(ack)은 RPC가 아니라 프로퍼티 복제다. 서버가 "이 키 처리했다"를 따로 보내는 것이
 아니라, `ReplicatedPredictionKeyMap`이라는 배열이 복제되면서 알려진다.
 
 ## 즉발 효과를 예측하려면 즉발이 아니게 만들어야 한다
 
-탄약 −1은 Instant GE다. 이미 깎은 값을 어떻게 되돌릴지가 문제인데, GAS는 이걸 정면으로
+탄약 −1은 Instant GE(GameplayEffect)다. 이미 깎은 값을 어떻게 되돌릴지가 문제인데, GAS는 이걸 정면으로
 해결하지 않고 표현을 바꾼다.
 
 ```cpp
@@ -133,11 +141,20 @@ InPredictionKey.NewCaughtUpDelegate().BindUObject(Owner,
 두 경우가 **같은 코드 경로**다. 차이는 서버가 base를 바꿨는지 하나뿐이다. 되돌리기와
 정산이 분리돼 있지 않으니 롤백 코드를 쓸 자리가 없다.
 
-<!-- [스크린샷 2] 버킷이 거절한 발에서 잔탄이 돌아오는 것
-     찍는 법: FireRateBurstAllowance를 1로 낮추고 PktLag 200 PktLagVariance 100으로
-     패킷을 몰리게 한 뒤 연사. 총구 이펙트는 나갔는데 잔탄이 잠깐 줄었다 되돌아오는 프레임이
-     잡혀야 한다. 서버 로그의 bucket rejected와 같이 보이면 더 좋다. -->
-![ammo_restored.gif](GITHUB_ASSET_URL)
+```mermaid
+sequenceDiagram
+    participant C as 클라이언트
+    participant S as 서버
+    Note over C: 발사, 예측 창 열림, 키 K<br/>예측 GE로 잔탄 30에서 29 즉시
+    C->>S: TargetData, 키 K
+    Note over S: 키 K로 창 열림<br/>버킷 거절, 차감 안 함
+    Note over S: 창 닫힘, 키 K 확인 응답
+    S->>C: 확인 응답(ack) 복제
+    Note over C: 키 K의 예측 GE 제거<br/>잔탄 29에서 30으로 복구
+```
+
+서버 쪽에 되돌리기 코드가 없다. 서버는 아무것도 안 했고 창이 닫히면서 ack만 나갔다.
+클라이언트에서 29가 30으로 돌아오는 것은 엔진이 GE를 적용할 때 걸어둔 콜백이 한 일이다.
 
 ## 첫 발만 활성화 키를 다시 쓴다
 
@@ -192,7 +209,8 @@ if (CurrentActorInfo->IsNetAuthority())
 ```
 
 리슨 서버 호스트는 로컬 컨트롤이면서 권위다. 저 `return`을 빠뜨리면 아래로 흘러내려
-`CommitAbilityCost`가 두 번 불린다. 실제로 빠뜨렸고, 호스트에서만 탄약이 두 배로 닳았다.
+`CommitAbilityCost`가 두 번 불린다. 실제로 빠뜨렸고, 그대로 돌렸다면 호스트에서만 탄약이
+두 배로 닳았을 것이다. 코드 리뷰에서 잡았다.
 
 한 줄만 채우면 되는 문제였지만, 구조 자체를 바꾸는 쪽으로 갔다. Lyra가 같은 상황을 분기
 없이 처리하고 있었다.
@@ -207,7 +225,7 @@ const bool bShouldNotifyServer = CurrentActorInfo->IsLocallyControlled() && !Cur
 
 역할별 경로를 만들지 않고, 모두가 같은 함수로 들어온 뒤 단계별로 켜고 끈다.
 
-| 단계 | 오너 클라 | 호스트 | 서버 인스턴스 |
+| 단계 | 오너 클라이언트 | 호스트 | 서버 인스턴스 |
 |---|:---:|:---:|:---:|
 | 복제 캐시 소비 | | | 있음 |
 | 버킷 검증 | | 있음 | 있음 |
@@ -230,9 +248,10 @@ Lyra를 그대로 베끼지는 않았다. 두 군데가 다르다.
 때문이다(`GameplayPrediction.cpp:406`). 서버는 `ServerSetReplicatedTargetData`가 이미 클라이언트
 키로 창을 열어 둔 상태라 그 안에서 돈다.
 
-## 지금 상태
+## 확인
 
-설계와 구현서는 끝났고 코드를 쓰는 중이다. PIE 실측은 아직 못 했다.
+구현을 마치고 PIE에서 확인했다. 잔탄이 발사와 같은 프레임에 줄고, 리슨 서버 호스트에서도
+한 발에 한 번만 깎인다.
 
 예측 키를 파고든 결과는 별도 개념 문서로 정리해 뒀다. 키의 수명, 종속 관계가 생기는 조건,
 거절과 정산의 차이를 엔진 소스 줄 번호와 함께 적었다. 같은 것을 두 번 조사하지 않기
