@@ -1,5 +1,6 @@
 # Loot 총괄 기획서 (EmploymentProj)
 
+> **상태: 승인** (2026-10-02 소급 — 이미 이 설계대로 구현 중. 설계가 바뀌면 `초안`으로 되돌린다)
 > 아이템 획득 파이프라인 전체 그림을 담은 마스터 문서.
 > 세부 구현: `05_Loot_01_Spawner.md` ~ / 진행 상황: `Status/05_Loot_STATUS.md` / 결정 이력: `05_Loot_DECISIONS.md`
 > 관련: `DOCS/Mine/Item.md`(아이템 아키텍처), `DOCS/GAME.md`(자판기·경제 기획)

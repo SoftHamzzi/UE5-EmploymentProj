@@ -220,7 +220,61 @@
 | `Status/` | 진행 상태의 진실의 원천. `_STATUS.md`가 실제 구현 여부를 말해준다 — 스펙 문서(`_XXX.md`)는 예정만 보여줄 뿐 구현을 보장하지 않는다 |
 | `Issue/` | 발견된 문제의 원인 조사 기록. 해결 여부는 보장하지 않는다 — 고쳤으면 본문 스펙 문서나 STATUS로 반영 |
 | `Polish/` | 이미 동작하는 기능의 개선/재설계 기록 |
-| `Review/Request`, `Review/Answer` | 세션을 나눠 서로 맥락을 모르게 한 교차 검증. Request가 질문, Answer가 답변 — Answer는 그대로 반영하지 않고 `review-verifier` 서브에이전트로 검증한 뒤에만 반영한다 |
+| `Review/Request`, `Review/Answer` | 세션을 나눠 서로 맥락을 모르게 한 교차 검증. Request가 질문, Answer가 답변 — Answer는 그대로 반영하지 않고 `review-verifier` 서브에이전트로 검증한 뒤에만 반영한다. 코드 리뷰 결과는 `Review/` 바로 아래 `_Code.md` |
+| `Guide/` | 사용자가 코딩하며 보는 가이드(레벨 L1~L3 + 자기 점검). 아래 "가이드" |
 
-계층: 루트 문서(`ROADMAP.md`, `GAME.md`)는 로드맵/기획, 중간 문서(`NN_XXX_DOCS.md`)는
-단계별 설계, 리프 문서(`NN_XXX_NN_Name.md` + 짝지어진 STATUS)는 실제 구현 스펙이다.
+계층: 루트 문서(`ROADMAP.md`, `GAME.md`)는 로드맵/기획, 영역 설계(`NN_<영역>_Design.md`)는
+단계별 설계, 리프 문서(`NN_<영역>_SS_<이름>.md` + 짝지어진 STATUS)는 실제 구현 스펙이다.
+완료된 01~04 영역은 옛 이름(`04_GAS_DOCS.md` 등)을 그대로 둔다.
+
+### 영역 문서 세 가지
+
+| 문서 | 담는 것 | 갱신 |
+|---|---|---|
+| `NN_<영역>_Design.md` | 지금 유효한 설계(범위, 순서, 구조, 인터페이스). 맨 위 `> **상태: 초안 / 검토 완료 / 승인**` | 덮어쓴다. 바뀌면 `상태: 초안`으로. `승인`은 사용자만 |
+| `NN_<영역>_DECISIONS.md` | 결정마다 번호·날짜·상태(제안/채택/기각/대체됨)·맥락·결정·**버린 대안과 이유**·근거·다시 열 조건. 형식은 `Notes/05/05_Loot_DECISIONS.md` 맨 위 | **추가만.** 대체되면 옛 항목에 `대체됨 → D-NNN` |
+| `Status/NN_<영역>_STATUS.md` | 진행 상황 + 위쪽 **인수인계** 칸(`/handoff`가 덮어씀) | 코드와 대조해서만 |
+
+개발·리뷰 세션이 설계를 바꾸고 싶으면 DECISIONS에 `제안` 항목을 쓰고 멈춘다. 설계 세션이 처리한다.
+관문은 하나다 — 영역 Design이 `승인`이 아니면 개발 세션은 구현서·가이드를 쓰지 않는다.
+
+### 이름 규칙
+
+같은 종류는 같은 형식, 이름순 정렬 = 읽는 순서. **완료된 01~04 영역 문서와 `Blog/`·`Mine/`은 소급하지 않는다** — 새 문서부터 적용한다.
+
+| 종류 | 형식 | 예 |
+|---|---|---|
+| 영역 설계 | `NN_<영역>_Design.md` | `05_Loot_Design.md` |
+| 결정 이력 | `NN_<영역>_DECISIONS.md` | `05_Loot_DECISIONS.md` |
+| 영역 상태 | `Status/NN_<영역>_STATUS.md` | `05_Loot_STATUS.md` |
+| 구현서(정답지) | `NN_<영역>_SS_<이름>.md` — 접미사 없음 | `05_Loot_04_InventoryUI.md` |
+| 하위 Step | 부모 이름 뒤에 `_A_`, `_B_` | `05_Loot_03_Inventory_A_Core.md` |
+| 가이드 | `Guide/<구현서 이름>_Guide.md` | `Guide/05_Loot_04_InventoryUI_Guide.md` |
+| Step 상태 | `Status/NN_<영역>_SS_<이름>_STATUS.md` | `05_Loot_03_Inventory_STATUS.md` |
+| 설계 검토 | `Review/Request/NN_<영역>_REVIEWnn_<주제>_Request.md` (+ `Answer/`) — 번호 두 자리 | `05_Loot_REVIEW02_StackRemoval_Request.md` |
+| 검토 요약 | `Review/NN_<영역>_REVIEW_<주제>_Summary.md` | `05_Loot_REVIEW_Inventory_Summary.md` |
+| 코드 리뷰 | `Review/NN_<영역>_REVIEW_<Step>_Code.md` | `05_Loot_REVIEW_03B_Code.md` |
+
+Polish 작업은 지금처럼 `Polish/<작업명>/` 안에 구현서·가이드·STATUS를 둔다. 블로그 초안은 `Blog/NN/NN_PostN_<주제>.md`.
+
+### 가이드
+
+**구현서 = 정답지.** 구현서는 상세하게 쓰되 사용자는 **리뷰 전까지 열지 않는다.** 가이드 맨 위에 이 사실과 레벨을 적는다.
+
+| 레벨 | 가이드에 담을 것 | 담지 않을 것 |
+|---|---|---|
+| **L3** | 함수별 계약 + 쓸 API + 단계 순서 + 이유 | 코드 |
+| **L2** | 함수 목록 + **불변식** + **도구 목록**(쓸 수 있는 API) + 검증 기준 | 단계 순서, 어디서 어떤 API를 부를지 |
+| **L1** | 목표, 제약, PIE 검증 기준 | 함수 나누기, API |
+
+- **불변식으로 쓰기 (L2):** 순서를 적지 않고 지켜야 할 성질을 적는다. 예 — "① 탄약은 발당 정확히 한 번 깎인다(호스트 포함) ② 버킷이 거절한 발은 서버 탄약을 바꾸지 않는다. 도구: `TryTake`, `CommitAbilityCost`, `FScopedPredictionWindow`. → 순서는 직접 정한다."
+- **레벨 정하기:** 새 영역은 L3에서 시작한다. 리뷰에서 구현서와 차이가 작고 채점을 통과하면 다음 Step을 한 단계 내리고, 막힌 곳이 많으면 유지하거나 올린다. 리뷰 세션이 STATUS "다음 행동"에 적는다.
+- **검증 방법:** 가이드마다 PIE 확인 표(조작 → 기대 결과)와 필요한 임시 로그를 적는다.
+- **자기 점검:** 본문에 답이 없고 머리로 돌려 봐야 나오는 **예측형 질문**으로 쓴다. 예 — "`CommitAbilityCost`를 역할 분기 안에 넣으면 호스트에서 한 발에 탄약이 몇 개 줄어드나?" **§A 코딩 전**(설계 이해)과 **§B 코딩 후**(동작 이해)로 나눈다 — A의 답이 B에서 바뀐 곳이 배운 곳이다. 문항마다 아래 칸을 두고, **채점은 리뷰 세션이 한다**(틀린 개념은 `StudyPath.md`로).
+
+```
+N. 질문
+- 답(코딩 전):
+- 답(코딩 후):
+- 채점: ○ / △ / ✗ — 근거 file:line — 보충
+```

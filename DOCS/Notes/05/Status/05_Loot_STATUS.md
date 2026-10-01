@@ -6,6 +6,19 @@
 
 ---
 
+## 인수인계
+
+| 항목 | 내용 |
+|---|---|
+| 갱신 | 2026-10-02, developer 세션(역할별 세션 도입 작업, `DOCS/SETUP_SessionRoles.md`) |
+| 지금 단계 | **Step 03-A — 코드는 거의 다 있고, 버그 2건 수정과 첫 PIE 검증이 남았다.** 03-B(줍기·버리기)는 스텁 5개와 픽업 배선부터. 상세: `05_Loot_03_Inventory_STATUS.md` "남은 작업" |
+| **다음 행동** | 사용자가 03-A 버그 2건(`KeyOf`가 `SortKey`를 반환, `AddItem` null 가드)을 고치고 PIE로 완료 조건을 돌린 뒤 → `/session-start 리뷰 Loot 03A`. 그다음 `/session-start 개발 Loot 03B` — **가이드 L2** (2026-10-02 사용자 결정) |
+| 하지 말 것 | 버그 1번(`KeyOf`)을 고치기 전에 완료 조건 14를 통과로 치지 않는다. Step 문서의 `EP.Inv.*` 이름을 그대로 믿지 않는다 — 실제는 `EPInv*` 치트(Step STATUS 표) |
+| 근거 | `05_Loot_03_Inventory_STATUS.md` 2026-09-30 재대조, 커밋 `909a8c0`(이름 변경)·`101632b`(결정 분리) |
+| 막힌 점 / 사용자 확인 필요 | ① `05_Loot_DECISIONS.md`에서 서로 모순되는 결정 두 쌍(D-004↔D-011 본체 칸 수, D-055↔D-064 `Server_ReorderEntry` 단계) — 설계 세션이 판정한다 ② `CanPlaceInSlot`의 부착 슬롯 거절이 의도인지(Step STATUS "남은 작업" 2) |
+
+---
+
 ## 진행 상황
 
 - [x] 05_Loot_00 ItemCore (아이템 계층 정비 + `FEPItemState` + Definition 서브시스템) — **`EP.Item.Dump` → `9, 9`.** 상세: `05_Loot_00_ItemCore_STATUS.md`
@@ -98,7 +111,4 @@
 
 ## 세션 시작 템플릿
 
-```
-@05_Loot_STATUS.md @05_Loot_0X_XXX_STATUS.md
-Step X 진행.
-```
+`/session-start <역할> Loot <대상>` — 위 인수인계 칸의 "다음 행동"을 따른다. 끝낼 때는 `/handoff`.

@@ -4,6 +4,19 @@
 
 ---
 
+## 인수인계
+
+| 항목 | 내용 |
+|---|---|
+| 갱신 | 2026-10-02, developer 세션(역할별 세션 도입 작업, `DOCS/SETUP_SessionRoles.md`) |
+| 지금 단계 | 무기 발사 2차 PIE 확인 완료(2026-09-24). 남은 것은 사용자 코드 정리 3건(아래 "남음"과 `Polish/WeaponFireRate/04_Polish_WeaponFireRate_STATUS.md` §4) |
+| **다음 행동** | `/session-start 리뷰 Polish WeaponFireRate` — 미응답인 `04_Polish_WeaponFireRate_PrimaryUse_Guide.md` §3-B를 채점 방식으로 처리한다(역할별 세션 시험 운용, SETUP §4-9) |
+| 하지 말 것 | 이 영역은 작업 문서마다 설계가 있다(영역 Design 없음). 작업 문서를 고칠 일이 생기면 개발·리뷰 세션에서 고치지 말고 `제안`으로 남긴다 |
+| 근거 | `a8285db`(디버그 HUD), `Polish/WeaponFireRate/04_Polish_WeaponFireRate_STATUS.md` §4 |
+| 막힌 점 / 사용자 확인 필요 | 사용자 코드 정리: 태그 2개 삭제, `EPLocalModifiers.h`의 `AnimationEditorTypes.h` include 삭제, `UEPGA_Skill_Base::EndAbility` 첫 줄 `IsEndAbilityValid` 가드 |
+
+---
+
 ## 완료
 
 - [x] 이동(CMC) 4건 — 크라우치 중 Sprint 차단, 공중 크라우치 차단,
@@ -53,7 +66,4 @@
 
 ## 세션 시작 템플릿
 
-```
-@04_GAS_STATUS.md @04_Polish_STATUS.md @Polish/04_Polish_XXX.md
-이어서 진행.
-```
+`/session-start <역할> Polish <작업>` — 위 인수인계 칸의 "다음 행동"을 따른다. 끝낼 때는 `/handoff`.
