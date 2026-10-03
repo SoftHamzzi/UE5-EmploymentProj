@@ -229,6 +229,12 @@ DOCS/
 - `.claude/settings.json`에 추가: `"enabledPlugins": { "codex@openai-codex": true }` (기존 `permissions`는 유지)
 - 완료 조건: 새 세션에서 `/codex:setup`이 준비 완료를 보고한다.
 
+### 4-1b. `review-verifier` 에이전트 고치기 (먼저 할 것)
+- 지금 `.claude/agents/review-verifier.md`는 **로드되지 않는다.** `description`이 여러 줄 큰따옴표 문자열(`<example>` 포함)이라 Claude Code의 YAML 파서가 실패하고 에이전트를 건너뛴다 (2026-10-02 `claude plugin validate .claude/agents`로 확인: "YAML frontmatter failed to parse"). krafton_ai에서 같은 문제를 같은 방법으로 고쳤다.
+- 고치는 법: `description: "…"`를 `description: |` 블록 형식으로 바꾸고 각 줄을 두 칸 들여쓴다 (따옴표 제거). `unreal-engine-researcher.md`도 같이 검사한다.
+- 완료 조건: `claude plugin validate .claude/agents` 통과, 새 세션의 Agent 목록에 두 에이전트가 보인다.
+- 참고: 지금까지 "review-verifier로 검증"이라고 한 Review들이 실제로 어떤 에이전트로 검증됐는지 사용자에게 알린다 (로드되지 않았다면 대체 에이전트였거나 메인 세션이 직접 했을 수 있다).
+
 ### 4-2. 이름 변경 (§3-5 승인 후에만)
 §2.9 "지금 바꾼다" 범위만 바꾼다.
 
@@ -364,3 +370,9 @@ DOCS/
 2. D-055 "`Server_ReorderEntry`(RPC)는 04-B" ↔ D-064 "`Server_ReorderEntry` — Step 03-A". 11차 검수가 RPC를 04-B로 옮겼으므로(차수별 경위) D-064가 옛 결정으로 보인다.
 3. (모순 아님, 참고) Design §8 "불변식 강제"는 `AddEntryCharges()` 내부라고 하고 D-009는 `SetEntryCharges`가 유일한 쓰기 지점이라고 한다. D-009가 더 새 표현이다.
 4. (범위 밖, 참고) `05_Loot_STATUS.md` 진행 상황 22줄의 "03-B 배낭" 항목은 13차에 없어진 구간이다.
+
+### 2026-10-03 — 4-1b `review-verifier`
+- 재현: `claude plugin validate .claude/agents` → `review-verifier.md` "YAML frontmatter failed to parse". 실제로 2026-10-02 세션의 Agent 목록에 `unreal-engine-researcher`만 있고 `review-verifier`는 없었다.
+- 수정: `description: "…"`(여러 줄 큰따옴표)를 `description: |` 블록으로 바꾸고 두 칸 들여썼다. 문구는 바꾸지 않았다. `unreal-engine-researcher.md`는 한 줄 문자열(`\n` 이스케이프)이라 원래 통과한다.
+- 결과: `claude plugin validate .claude/agents` 통과. 새 세션 Agent 목록 확인은 남음.
+- 지난 검증이 실제로 무엇으로 됐나: `review-verifier.md`는 2026-09-04(`c226355`)에 들어왔고 그때부터 로드되지 않았다. 남아 있는 세션 기록 5개(2026-03~)에 `review-verifier` 호출은 **0건**이다(Agent 호출은 `general-purpose` 4건 — 3월 웹 조사, `Explore` 1건뿐). Loot 리뷰 2~16차(2026-07~08)는 에이전트가 생기기 전이다. 즉 **지금까지 "검증"은 전부 메인 세션이 직접 소스를 대조한 것**이고, 독립 에이전트 검증을 거친 Review는 없다. 지운 세션 기록은 확인할 수 없다.

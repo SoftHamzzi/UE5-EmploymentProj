@@ -1,24 +1,25 @@
 ---
 name: review-verifier
-description: "외부 AI 리뷰 답변(`Notes/*/Review/*_Answer.md` 등)이 도착했을 때, 그 안의 각 기술적 주장을 실제 프로젝트 소스나 UE5 엔진 소스로 대조 검증한다. 리뷰 답변을 설계 문서나 STATUS 파일에 반영하기 전에는 항상 이 에이전트로 먼저 검증한다 — 리뷰가 옳다고 전제하지 않는다.
+description: |
+  외부 AI 리뷰 답변(`Notes/*/Review/*_Answer.md` 등)이 도착했을 때, 그 안의 각 기술적 주장을 실제 프로젝트 소스나 UE5 엔진 소스로 대조 검증한다. 리뷰 답변을 설계 문서나 STATUS 파일에 반영하기 전에는 항상 이 에이전트로 먼저 검증한다 — 리뷰가 옳다고 전제하지 않는다.
 
-<example>
-Context: 외부 리뷰가 'FScopedPredictionWindow의 2인자 생성자가 클라이언트에서도 예측 창을 연다'고 주장했다.
-user: '이 리뷰 답변 검증해줘'
-assistant: 'review-verifier 서브에이전트로 엔진 소스 대조 검증을 실행하겠습니다.'
-<commentary>
-리뷰 답변의 기술적 주장은 실제 엔진 소스로 확인되기 전엔 신뢰할 수 없으므로 review-verifier에 위임한다.
-</commentary>
-</example>
+  <example>
+  Context: 외부 리뷰가 'FScopedPredictionWindow의 2인자 생성자가 클라이언트에서도 예측 창을 연다'고 주장했다.
+  user: '이 리뷰 답변 검증해줘'
+  assistant: 'review-verifier 서브에이전트로 엔진 소스 대조 검증을 실행하겠습니다.'
+  <commentary>
+  리뷰 답변의 기술적 주장은 실제 엔진 소스로 확인되기 전엔 신뢰할 수 없으므로 review-verifier에 위임한다.
+  </commentary>
+  </example>
 
-<example>
-Context: 외부 리뷰가 GAS 태그 카운트가 예측/확정 GE 스왑 시 1→0→1로 전이된다고 주장했다.
-user: 'REVIEW1_Answer.md 내용이 맞는지 확인하고 STATUS에 반영해줘'
-assistant: '반영 전에 review-verifier로 각 주장부터 소스 대조 검증하겠습니다.'
-<commentary>
-검증 없이 리뷰 결론을 STATUS 파일에 바로 반영하면 오진단이 그대로 굳어질 수 있다.
-</commentary>
-</example>"
+  <example>
+  Context: 외부 리뷰가 GAS 태그 카운트가 예측/확정 GE 스왑 시 1→0→1로 전이된다고 주장했다.
+  user: 'REVIEW1_Answer.md 내용이 맞는지 확인하고 STATUS에 반영해줘'
+  assistant: '반영 전에 review-verifier로 각 주장부터 소스 대조 검증하겠습니다.'
+  <commentary>
+  검증 없이 리뷰 결론을 STATUS 파일에 바로 반영하면 오진단이 그대로 굳어질 수 있다.
+  </commentary>
+  </example>
 model: sonnet
 tools: Read, Glob, Grep, Bash
 ---
