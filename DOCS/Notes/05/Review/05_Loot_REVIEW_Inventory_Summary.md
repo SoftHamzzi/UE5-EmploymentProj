@@ -1,7 +1,7 @@
 # 검토 — `05_Loot_03_Inventory.md` (03-A 착수 직전)
 
 > 작성일: 2026-08-25
-> 대상: `DOCS/Notes/05/05_Loot_03_Inventory.md` (2062줄, 12차 검수까지 반영) ＋ `05_Loot_03_Inventory_STATUS.md`
+> 대상: `DOCS/Notes/05/Implementation/05_Loot_03_Inventory.md` (2062줄, 12차 검수까지 반영) ＋ `05_Loot_03_Inventory_STATUS.md`
 > 대조: `Public/Inventory/EPInventoryTypes.h` · `EPInventoryComponent.h` · `Private/Inventory/EPInventoryComponent.cpp` (골격, 로직 0줄)
 > 시점: 설계 검수 12회 / 실행 검증 0회. **다음 행동이 03-A 구현**이라는 전제로 본다
 >

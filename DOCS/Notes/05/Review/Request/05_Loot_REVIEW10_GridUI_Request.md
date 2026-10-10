@@ -399,7 +399,7 @@ UPROPERTY(config, EditAnywhere) TArray<FName> ContainerOrder;   // ★ 10차. ["
 
 | 파일 | 관계 |
 |---|---|
-| **`DOCS/Notes/05/05_Loot_04_InventoryUI.md`** | **이번 제안의 본체.** 전면 재작성 (715줄) |
+| **`DOCS/Notes/05/Implementation/05_Loot_04_InventoryUI.md`** | **이번 제안의 본체.** 전면 재작성 (715줄) |
 | `DOCS/Mine/EquipmentSlots.md` | 9차 결정 본체. §7-1에 `ContainerOrder` 추가 |
 | `05_Loot_03_Inventory.md` | `MoveEntry` 절 · 교체 절 (§3) |
 | `05_Loot_STATUS.md` | 확정표 5행 추가 (§7-2) |

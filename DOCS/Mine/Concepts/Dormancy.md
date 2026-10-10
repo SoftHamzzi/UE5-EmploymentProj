@@ -1,7 +1,7 @@
 # UE5 Network Dormancy (네트워크 휴면)
 
 > 엔진 소스 기준: UE 5.7
-> 관련 사용처: `AEPPickup`(`DOCS/Notes/05/05_Loot_01_Spawner.md` 01-4)
+> 관련 사용처: `AEPPickup`(`DOCS/Notes/05/Implementation/05_Loot_01_Spawner.md` 01-4)
 
 ---
 

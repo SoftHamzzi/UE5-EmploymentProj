@@ -59,6 +59,7 @@ bool UEPItemDefinitionSubsystem::MakeItemState(FName ItemId, FEPItemState& OutSt
 		return false;
 	}
 	Def->InitState(*Row, OutState);
+	OutState.ItemUid = FGuid::NewGuid();
 	return true;
 }
 
@@ -209,8 +210,8 @@ static FAutoConsoleCommandWithWorldAndArgs CmdItemState(
 			const FEPItemData* Row = Sub->FindData(ItemId);
 			const UEPItemDefinition* Def = Sub->FindDefinition(ItemId);
 			
-			UE_LOG(LogTemp, Log, TEXT("[ItemCore] %s, Charges = %d, Durability = %.1f, SlotSize = %d (%s)"),
-				*ItemId.ToString(), State.Charges, State.Durability,
+			UE_LOG(LogTemp, Log, TEXT("[ItemCore] %s, Uid = %s, Charges = %d, Stats = %d, SlotSize = %d (%s)"),
+				*ItemId.ToString(), *State.ItemUid.ToString(), State.Charges, State.Stats.Num(),
 				Row->SlotSize, *GetNameSafe(Def->GetClass()));
 		}
 	), ECVF_Cheat);

@@ -197,9 +197,9 @@ X를 "구급상자 앞"(= 화면 두 번째, 같은 자리)에 놓으면 X = 983
 
 | 파일 | 관계 |
 |---|---|
-| **`DOCS/Notes/05/05_Loot_03_Inventory.md`** | `ReorderEntry`(03-2) · `NextKeyAtEndOf`(03-3) · 함정 4p·4q·4r·4s |
+| **`DOCS/Notes/05/Implementation/05_Loot_03_Inventory.md`** | `ReorderEntry`(03-2) · `NextKeyAtEndOf`(03-3) · 함정 4p·4q·4r·4s |
 | `DOCS/Notes/05/Review/05_Loot_REVIEW11_ItemOrderServer_Answer.md` §3-3 · §4 | **처방의 출처.** 고칠 곳 넷을 지목했는데 `ReorderEntry`가 빠졌다 |
 | `DOCS/Mine/EquipmentSlots.md` §5 · §13-6 · §13-7 | 핫바 5~0이 이 문제가 없는 이유 · 11차 경위 · 다르게 판정한 셋 |
-| `DOCS/Notes/05/05_Loot_04_InventoryUI.md` 04-8 | 드롭 지점 → 앞 이웃 변환. §2가 B로 가면 여기도 단순해진다 |
+| `DOCS/Notes/05/Implementation/05_Loot_04_InventoryUI.md` 04-8 | 드롭 지점 → 앞 이웃 변환. §2가 B로 가면 여기도 단순해진다 |
 | `DOCS/Notes/05/Status/05_Loot_STATUS.md` | 확정표 순서 항목 · 11차 이력 |
 | `Public/Inventory/EPInventoryComponent.h` | 현재 골격 (로직 0줄) |

@@ -2,7 +2,7 @@
 
 > 작성일: 2026-08-22
 > 근거: 사용자 기획 확정(언턴드 방식) + 프로젝트 코드 직독(`EPItemData.h:39-42`, `EPTypes.h:43-50`, `05_Loot_03_Inventory.md`) + `GAME.md` §인벤토리·§장비
-> 관련: `DOCS/Notes/05/05_Loot_03_Inventory.md` (자료구조), `05_Loot_05_Equipment.md` (장착), `05_Loot_Design.md` §7-3·§8
+> 관련: `DOCS/Notes/05/Implementation/05_Loot_03_Inventory.md` (자료구조), `05_Loot_05_Equipment.md` (장착), `05_Loot_Design.md` §7-3·§8
 
 ---
 

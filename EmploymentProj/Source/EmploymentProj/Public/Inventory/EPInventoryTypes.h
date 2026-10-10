@@ -18,5 +18,5 @@ struct FEPInventoryEntry : public FFastArraySerializerItem
 	UPROPERTY() FName ItemId;
 	UPROPERTY() FEPItemState State;
 	
-	UPROPERTY() int32 SortKey = 0;
+	UPROPERTY() int64 SortKey = 0;
 };

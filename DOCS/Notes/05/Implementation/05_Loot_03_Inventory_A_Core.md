@@ -27,13 +27,15 @@
 - [ ] **15.** **다른 컨테이너로 옮기면 목적지 맨 뒤에 붙는다** — 옛 컨테이너의 키를 들고 가지 않는다 (함정 4m)
 - [ ] **17.** **무기를 핫바에 꽂았다 빼면 원래 자리로 돌아온다** — 그 사이에 다른 아이템을 넣어도 **동률이 나지 않는다** (함정 4q)
 - [ ] **18.** **재정규화와 경계 가드를 본다** (함정 4r·4t)
-  > ① `EP.Inv.Reorder`로 **같은 틈에 16회** 삽입 → **이분 고갈 → 재정규화가 돈다.** `RenormalizeSortKeys`가 죽은 코드가 아님을 증명하는 것은 **이 경로 하나다**
+  > ① `EP.Inv.Reorder`로 **같은 틈에 32회** 삽입 → **이분 고갈 → 재정규화가 돈다.** `RenormalizeSortKeys`가 죽은 코드가 아님을 증명하는 것은 **이 경로 하나다**
   > ② **맨 앞으로 20회 반복 이동**(`PrevEntryId = -1`) → **`ensure`가 울리지 않고 순서가 매번 실제로 바뀐다.** 키가 `−Step`씩 내려가는 것을 `Dump`의 `SortKey` 열로 본다
-  > **★ ②에서는 재정규화가 돌지 않는다 (13차 정정).** 경계까지 **32,764회**가 필요하고 맨 앞 분기는 `bNoGap`이 항상 거짓이다. 이건 **함정 4t의 회귀 테스트**다 — 가드를 잘못 쓰면 `ensure`가 울리거나(`bRetry` 있음) **서버가 멈춘다**(`bRetry` 없음)
+  > **★ ②에서는 재정규화가 돌지 않는다 (13차 정정).** 경계까지 **2,147,483,644회**(`(2^63 − Guard) / Step`, 2026-10-07 `int64` 기준 — 옛 `int32`에서는 32,764회)가 필요하고 맨 앞 분기는 `bNoGap`이 항상 거짓이다. 이건 **함정 4t의 회귀 테스트**다 — 가드를 잘못 쓰면 `ensure`가 울리거나(`bRetry` 있음) **서버가 멈춘다**(`bRetry` 없음)
   > **경계 재정규화는 커맨드로 도달 불가다.** 확인하려면 `SortKeyGuard`를 일시적으로 크게 잡는다
 - [ ] **19.** 아이템을 원래 자리에 도로 놓으면 `SortKey`가 안 바뀐다 (`Dump`로 확인, 함정 4u)
-- [ ] **13.** 다른 클라이언트에 내 인벤토리가 복제되지 않는다 (`COND_OwnerOnly`)
+- [ ] **13.** 다른 클라이언트에 내 인벤토리가 복제되지 않는다 (소유자 그룹 — 컴포넌트 단위 `COND_NetGroup`, D-101)
 - [ ] **16.** `EP.Inv.Reorder`로 자리를 바꾸면 `Dump` 순서가 바뀌고 **클라와 서버가 같은 순서를 찍는다**
+- [ ] **21.** (2026-10-07, D-098) `EPInvDumpServer`의 `Uid` 열이 **엔트리마다 다르고**, `EPInvMove`로 다른 컨테이너에 옮겨도 **그 엔트리의 `Uid`가 그대로**다. 클라 `EPInvDump`의 `Uid` 열은 전부 `-`다(복제 안 함)
+  > 현금뭉치 둘을 합치면(완료 조건 3) 남는 `Uid`는 **먼저 있던 쪽**이다
 
 > **★ 이 구간의 검증은 전부 `EP.Inv.*` 커맨드로 한다** (03-9). UI는 Step 04이고 줍기는 03-B다.
 >
@@ -43,7 +45,7 @@
 
 ## 체크포인트 — 이 단계는 둘로 나눠 진행한다 (13차에 셋에서 줄었다)
 
-**파일을 쪼개지 않는다.** 경계에서 `RemoveEntry`가 정확히 갈라져 한 함수가 두 문서에 적히고, 그게 stale이 세 번 연속 난 원인이다. 대신 **작업을 나눈다** — 완료 조건 19개는 다른 단계 두 개 분량이다.
+**~~파일을 쪼개지 않는다~~ → 15차에 쪼갰다** (아래 15차 절). 8차의 규칙은 *"경계에서 `RemoveEntry`가 갈려 stale이 세 번 났다 — 파일은 하나로 두고 작업만 나눈다"* 였고, 그 근거가 13차·15차에 무너졌다. **작업을 둘로 나눈다는 것은 그대로다** — 완료 조건 20개(＋2026-10-07의 21·22)는 다른 단계 두 개 분량이다.
 
 > **★★ 13차에 가운데 구간(옛 03-B 배낭)이 없어졌다.** 거기 남은 새 코드가 `Server_EquipBackpack`(3줄) 하나였는데 **Step 03에 호출자가 0개**였다 — 아래 별도 절.
 >
@@ -51,8 +53,8 @@
 
 | | 범위 | 완료 조건 | 멈춰서 검증 |
 |---|---|---|---|
-| **03-A 코어** | 03-1 · 03-2 · 03-3 · **03-7** · 03-9<br>**＋ `GetEntryInSlot(Parent, SlotId)`**<br>**＋ `MoveEntry` (정합·사이클 검사 포함)**<br>**＋ `ActiveHotbarIndex` 필드**<br>**＋ `FEPItemData::SlotPriority` (DT 필드 + 배낭 행)**<br>**＋ `UEPLootDeveloperSettings::BodySlots`**<br>**＋ `SortKey` 일습 — `AssignSortKey` · `GetSortedContents` · `ReorderEntry` · `RenormalizeSortKeys`** (**RPC는 아니다** — 아래)<br>**＋ `EP.Inv.Move` · `EP.Inv.Add [Container]` (13차)** | **2~6, 7의 후반(독립 풀), 14·15·17~19** | `EP.Inv.Add`로 칸 합산·`bFungible`·`COND_OwnerOnly`, **`EP.Inv.Reorder`로 순서·재정규화, `EP.Inv.Move`로 검사 0~6·완료 조건 15·17.** **`RemoveEntry`/`AddSubtree` 없이 컴파일·실행된다** |
-| **03-B 줍기·버리기** | 03-4 · 03-5 · 03-6<br>**＋ `GetInsertionOrder()`**<br>**＋ 스냅샷의 루트/자식 `SortKey`·`SlotId` 규칙**<br>**＋ `AddSubtree` · `TryAutoEquip` · `StartingEquipment`** (13차) | **1, 7의 전반(자동 착용), 8~13, 16** + 이월 2건 | `RemoveEntry` / `AddSubtree` / 캐스케이드 / `Server_DropItem` / 스폰 직후 상의·하의 착용 |
+| **03-A 코어** | 03-1 · 03-2 · 03-3 · **03-7** · 03-9<br>**＋ `GetEntryInSlot(Parent, SlotId)`**<br>**＋ `MoveEntry` (정합·사이클 검사 포함)**<br>**＋ `ActiveHotbarIndex` 필드**<br>**＋ `FEPItemData::SlotPriority` (DT 필드 + 배낭 행)**<br>**＋ `UEPLootDeveloperSettings::BodySlots`**<br>**＋ `SortKey` 일습 — `AssignSortKey` · `GetSortedContents` · `ReorderEntry` · `RenormalizeSortKeys`** (**RPC는 아니다** — 아래)<br>**＋ `EP.Inv.Move` · `EP.Inv.Add [Container]` (13차)** | **2~6, 7의 후반(독립 풀), 13~19, 21** | `EP.Inv.Add`로 칸 합산·`bFungible`·가시성(소유자 그룹), **`EP.Inv.Reorder`로 순서·재정규화, `EP.Inv.Move`로 검사 0~6·완료 조건 15·17.** **`RemoveEntry`/`AddSubtree` 없이 컴파일·실행된다** |
+| **03-B 줍기·버리기** | 03-4 · 03-5 · 03-6<br>**＋ `GetInsertionOrder()`**<br>**＋ 스냅샷의 루트/자식 `SortKey`·`SlotId` 규칙**<br>**＋ `AddSubtree` · `TryAutoEquip` · `StartingEquipment`** (13차) | **1, 4의 후반, 7의 전반(자동 착용), 8~12, 20, 22** + 이월 2건 | `RemoveEntry` / `AddSubtree` / 캐스케이드 / `Server_DropItem` / 스폰 직후 상의·하의 착용 |
 
 > **★ 함정표의 ★★ 대부분이 03-B에 몰려 있다.** 위험이 어디 있는지가 이 구분으로 드러난다.
 
@@ -151,13 +153,26 @@ struct FEPInventoryEntry : public FFastArraySerializerItem
     UPROPERTY() FName SlotId;                        // 장비·부착 슬롯 이름. None이면 컨테이너 수납
     UPROPERTY() FName ItemId;
     UPROPERTY() FEPItemState State;                  // 개체 상태를 값으로 내장 (Step 00)
+                                                     //   ★ 정체(ItemUid)도 여기 있다 — EntryId와 다르다 (아래)
 
     // ★★ 화면 순서. 형제(같은 Parent) 안에서만 의미가 있다 — 아래 별도 절 (11차)
     //   ★ SlotId가 있어도 키를 갖는다. 표시에서만 빠지고 자리는 잡아둔다 —
     //     그래서 무기를 핫바에 꽂았다 빼면 원래 자리로 돌아온다 (11차 검수, 함정 4q)
-    UPROPERTY() int32 SortKey = 0;
+    //   ★ int64다 (2026-10-07, D-102) — 이분 여유 32회, 형제 상한 2^31
+    UPROPERTY() int64 SortKey = 0;
 
     // ★ 항목 단위 콜백을 선언하지 않는다 — 아래 참조. 선언만 하면 링크 에러다
+};
+
+// ★ 파생 색인 (D-100). 2026-10-11부터 리스트가 든다 (D-113) — 아래 "리스트는 데이터를" 절
+//   USTRUCT가 아니다. 복제 · 세이브 · 리플렉션 어디에도 안 나간다
+//   ★ 진실이 아니다. Items에서 언제든 다시 만들 수 있다. 고쳐 쓰지 않고 통째로 다시 만든다
+struct FEPInventoryIndex
+{
+    TMap<int32, int32>          IndexById;        // EntryId → Items 인덱스
+    TMap<int32, TArray<int32>>  ChildrenOf;       // ParentEntryId → 자식 EntryId (슬롯 포함, 순서 없음)
+    TMap<FGuid, int32>          IdByUid;          // ItemUid → EntryId (서버만 의미가 있다 — 클라는 Uid가 0)
+    TMap<int32, int32>          UsedSlotsOf;      // 컨테이너 → Σ SlotSize (슬롯에 든 것 제외)
 };
 
 USTRUCT()
@@ -171,15 +186,82 @@ struct FEPInventoryList : public FFastArraySerializer
     //   아직 선언되지 않았지만 .generated.h가 전방선언을 넣어준다. 캐스트가 필요 없다.
     UPROPERTY(NotReplicated) TObjectPtr<UEPInventoryComponent> Owner;
 
-    // ★ 정의는 둘 다 .cpp다 — 이 구조체 안에서 컴포넌트는 불완전 타입이다 (15차)
+    // ★ 정의는 전부 .cpp다 — 이 구조체 안에서 컴포넌트는 불완전 타입이다 (15차)
     bool NetDeltaSerialize(FNetDeltaSerializeInfo& DeltaParms);
     void PostReplicatedReceive(const FFastArraySerializer::FPostReplicatedReceiveParameters&);
+
+    // ── 파생 색인 (2026-10-11, D-113) ─────────────────────────
+    const FEPInventoryIndex& EnsureIndex() const;     // ★ Items를 직접 도는 유일한 함수
+    void MarkIndexDirty() { bIndexDirty = true; }     // ★ 밖에서 부르는 곳은 MoveEntry 하나다 (03-A-부록 표)
+
+    // ── 원소 접근 — 쓰기 지점이 배열 원소에 닿는 유일한 통로 ──
+    //   ★ 다음 구조 변경(Append · RemoveAll · MoveEntry)까지만 유효하다. 컴포넌트 밖으로 내보내지 않는다
+    const FEPInventoryEntry* FindEntryPtr(int32 EntryId) const;
+    FEPInventoryEntry*       FindEntryMutable(int32 EntryId);
+
+    // ── 구조 변경 둘 — dirty 표시와 색인 무효화를 같이 한다 (D-113 · D-114) ──
+    //   ★★ 서버만, 그리고 컴포넌트의 AppendEntry · RemoveSelf만 부른다 — 알림 가드가 거기 있다 (함정 11f)
+    int32 Append(int32 Parent, FName ItemId, const FEPItemState& State, FName SlotId, int64 SortKey);  // 새 EntryId
+    void  RemoveAll(const TSet<int32>& Ids);          // 큰 위치부터 RemoveAtSwap → MarkArrayDirty
+
+private:
+    mutable FEPInventoryIndex Index;                  // ★ const 조회가 다시 만든다 — mutable은 여기 있다
+    mutable bool              bIndexDirty = true;
+    int32 NextEntryId = 1;                            // ★ 서버 전용 발급기. 복제하지 않는다 (D-114)
 };
 
 template<> struct TStructOpsTypeTraits<FEPInventoryList>
     : public TStructOpsTypeTraitsBase2<FEPInventoryList>
 { enum { WithNetDeltaSerializer = true }; };
 ```
+
+### ★★ 리스트는 데이터를, 컴포넌트는 규칙을 (2026-10-11, D-113 · D-114)
+
+**03-A 첫 판본은 색인 · 원소 접근 · 번호 발급기를 컴포넌트에 뒀다. 03-A가 PIE를 통과한 뒤 리스트로 옮긴다** — 동작은 같고 자리만 바뀐다. 경계는 Lyra와 같다. 추가 · 삭제와 dirty 표시는 리스트(`LyraInventoryManagerComponent.cpp:80-126`), 조회와 게임 규칙은 컴포넌트(`:204-262`)다.
+
+| | 리스트 `FEPInventoryList` | 컴포넌트 `UEPInventoryComponent` |
+|---|---|---|
+| 맡는 것 | 데이터를 어떻게 찾고 바꾸나 | 누가 · 언제 · 허락되나 |
+| 색인 | `FEPInventoryIndex` · `EnsureIndex` · `MarkIndexDirty` | — |
+| 원소 접근 | `FindEntryPtr` · `FindEntryMutable` | `FindEntry`(값 복사)만 public |
+| 구조 변경 | `Append`(번호 발급 포함) · `RemoveAll` — `MarkItemDirty`/`MarkArrayDirty`와 색인 무효화를 같이 한다 | `AppendEntry` · `RemoveSelf` — 알림 가드 + 리스트 호출 한 줄 |
+| 필드 쓰기 | — | 단일 쓰기 지점 여섯(03-7). 권한 · 가드 · `Entries.MarkItemDirty` |
+| 키 공간 | — | `KeySpace_*` · `KeyOf` — `KeySpace_NextAtEnd`가 재정규화(쓰기)를 부르고, 넷은 함께 다닌다 (D-113 ⑤) |
+| 종류별 수치 | `FEPItemState::FindStat` · `SetStat` — 데이터 부분 (`05_Loot_00_ItemCore.md` 00-1) | `SetEntryStat` · `GetEntryStat` — 권한 · 가드 · dirty |
+| 그 밖 | — | 권한 확인 · 알림 가드 · 정체 검사(`CheckIdentity`) · 가시성 · 발급 규칙의 계약 |
+
+**부르는 형태.** 컴포넌트는 멤버 `Entries`를 거친다.
+
+```cpp
+const FEPInventoryIndex& Ix = Entries.EnsureIndex();      // 조회
+FEPInventoryEntry* E = Entries.FindEntryMutable(EntryId); // 쓰기 지점 안에서만
+Entries.MarkItemDirty(*E);                                // 필드만 바꿨으면 이것 하나
+Entries.MarkIndexDirty();                                 // 부모 · 슬롯을 바꿨으면 이것도 — MoveEntry 하나
+const int32 NewId = Entries.Append(Parent, ItemId, State, SlotId, Key);   // AppendEntry 안에서만
+Entries.RemoveAll(Doomed);                                // RemoveSelf 안에서만
+```
+
+**const 규칙.** `mutable`이 컴포넌트에서 리스트로 옮겨 간다. 컴포넌트의 const 조회(`FindEntry` · `GetUsedSlots` · `KeySpace_Min` …) 안에서 `Entries`는 const이고, 거기서 부르는 `EnsureIndex() const`가 리스트의 `mutable` 멤버를 다시 만든다. **컴포넌트에는 `mutable`이 하나도 남지 않는다.** `FindEntryMutable`은 non-const라 const 함수에서는 부를 수 없다 — 쓰기가 조회 함수 안에 숨을 문법이 없다.
+
+**`friend`가 하나 준다.** `friend struct FEPInventoryList`는 수신 콜백이 컴포넌트의 private `MarkIndexDirty`를 부르려고 둔 것이었다. 이제 같은 구조체의 함수다(03-7). 콜백이 쓰는 나머지 하나인 `OnInventoryChanged`는 원래 public이다. **`friend struct FScopedInventoryNotify`는 남는다** — 가드는 컴포넌트의 `NotifyDepth`를 만진다.
+
+**복제 · 복사.** 복제하지 않는 멤버(색인 · 발급기)를 FastArray 구조체에 두는 것은 엔진과 같은 형태다. `FFastArraySerializer::ItemMap`(`FastArraySerializer.h:416`)이 `UPROPERTY`가 아닌 색인이고 `MarkArrayDirty`가 비운다(`:457-459`). 발급 카운터 `IDCounter`도 구조체 안에 있다(`:420`). 섀도 버퍼를 처음 만들 때 구조체가 통째로 복사되지만(`RepLayout.cpp:7371-7384`) `Items`와 색인이 같이 복사되므로 사본 안에서도 둘이 맞고, 사본은 조회되지 않는다. 클라는 `Append`를 부를 경로가 없어 클라의 `NextEntryId`는 1에 머문다.
+
+> **★ 세이브(로드맵 5단계)가 오면** `NextEntryId`를 읽고 쓸 접근자를 리스트에 붙인다. 지금은 소비자가 없다 (CLAUDE.md §2).
+
+#### 이동의 검증 — 새 PIE 표를 만들지 않는다
+
+동작이 같은 이동이다. **03-A PIE에서 통과한 항목이 이동 뒤에도 그대로 통과하면 회귀가 없다.**
+
+| 확인 | 기대 |
+|---|---|
+| 컴파일 · 링크 | 통과. `friend struct FEPInventoryList`를 지운 뒤에도 |
+| **회귀 — 03-A에서 통과한 항목을 다시 돈다** | 가이드 §5의 00(`Uid` 발급) · 2 · 3(합치기) · 4 · 5 · 6(용량) · 7 후반 · 14 · 15(컨테이너 · 배낭 장착 · 번호 유지) · 13 · 21(복제 · `Uid`) · `EPInvMove` 이동. 전부 이동 전과 같은 결과 |
+| **`EPInvDumpServer` 이동 전후 비교** | 같은 커맨드 순서로 찍은 두 출력이 **`EntryId` · `Parent` · `SlotId` · `SortKey` 열에서 줄 단위로 같다.** `Uid`는 실행마다 새로 발급되므로 **값이 아니라 성질**로 본다 — 엔트리마다 다르고, `EPInvMove` 전후로 그 엔트리의 값이 그대로다(완료 조건 21) |
+
+> **수치(`SetEntryStat` · `GetEntryStat` → `FEPItemState::SetStat` · `FindStat`)는 PIE로 확인할 수 없다** — 호출자가 0이고 수치를 넣는 커맨드도 없다(03-A-부록 표). 컴파일과 정답지 대조로만 본다: 같은 값이면 `false`(dirty 없음), 새 태그면 추가, 있는 태그면 덮어쓰기. 확인용 커맨드를 새로 만들지 않는다 — 소비자(방어구 · 무기 마모)가 오는 단계에서 그 단계의 PIE가 확인한다.
+
+> **미검증 넷(16 · 17 · 18 · 19)은 회귀 기준이 아니다.** 이동 뒤에 처음 확인하게 되므로, 그때 실패하면 **이동과 원래 코드 둘 다** 의심한다. 이동이 건드린 것은 조회의 자리(`Entries.`)뿐이고 키 계산식은 그대로다.
 
 ### ★ 파일 위치 — `FEPInventoryEntry`만 전용 헤더로 뺀다
 
@@ -264,12 +346,28 @@ ReplicationID = ReplicationKey = MostRecentArrayReplicationKey = INDEX_NONE;
 
 배열 인덱스로 UI를 그리거나 RPC를 보내면 **아이템을 하나 줍거나 버릴 때마다 기존 항목이 자리를 바꾸고**, 제거·정렬 중에 도착한 요청이 엉뚱한 아이템을 버린다. 산발적으로 나고 서버는 멀쩡해서 재현이 어려운 부류다.
 
-- `AddItem()`이 `NextEntryId++`로 발급한다
+- 리스트의 `Append`가 `NextEntryId++`로 발급한다 (2026-10-11, D-114 — 그 전에는 컴포넌트 필드였다)
 - 제거해도 **다른 엔트리의 `EntryId`는 재번호되지 않는다** (그래서 드랍·장착 RPC 파라미터로 안전하다)
 - UI는 `EntryId`가 아니라 **`SortKey` 오름차순**으로 그린다 (아래 별도 절). `EntryId`는 **식별자이지 순서가 아니다** — 둘을 겸하게 두면 재배치를 넣는 순간 식별자를 바꿔야 한다
 - **`ParentEntryId`가 이 번호를 참조한다.** 재번호하면 배낭 속 아이템이 엉뚱한 곳에 매달린다
 
-> **로드맵 5단계 세이브 주의:** `NextEntryId`도 함께 저장해야 한다. 안 하면 로드 후 1부터 재발급해 기존 엔트리와 충돌하고, 하필 `ParentEntryId`를 오염시켜 **아이템이 엉뚱한 컨테이너에 들어간다.**
+> **로드맵 5단계 세이브 주의:** `NextEntryId`(리스트의 private 멤버 — 그때 접근자를 붙인다)도 함께 저장해야 한다. 안 하면 로드 후 1부터 재발급해 기존 엔트리와 충돌하고, 하필 `ParentEntryId`를 오염시켜 **아이템이 엉뚱한 컨테이너에 들어간다.**
+
+### ★★ `EntryId`는 손잡이이고 `ItemUid`가 정체다 (2026-10-07, D-098)
+
+**`EntryId`는 이 컴포넌트 안에서만 유효하다.** 버리고 줍거나 다른 컴포넌트로 옮기면 `AddSubtree`가 새로 발급한다(03-4의 `OldToNew`). 그래서 *"이 AK가 아까 그 AK인가"* 를 `EntryId`로는 답할 수 없다.
+
+| | `EntryId` | `State.ItemUid` |
+|---|---|---|
+| 범위 | 이 컴포넌트 | 세상 전체 |
+| 발급 | `InsertEntry` → 리스트 `Append` (`NextEntryId++`, D-114) | **`MakeItemState`** — 아이템이 처음 생길 때 한 번 (`05_Loot_00_ItemCore.md` 00-6) |
+| 옮기면 | 새로 발급 | **그대로** — `State`째 값 복사되므로 코드 0줄 |
+| 쓰는 곳 | RPC 파라미터 · `ParentEntryId` · UI | 로그 · 세이브 · 복제(dupe) 탐지 |
+| 복제 | 한다 | 안 한다 (`NotReplicated`) |
+
+- **둘을 섞지 않는다.** `EntryId`를 전역으로 만들면 `OldToNew` 재매핑이 정체를 바꾸는 꼴이 되고, `ItemUid`를 RPC 파라미터로 쓰면 클라가 모르는 값(복제 안 함)을 보내야 한다
+- **한 컴포넌트 안에서 `ItemUid`가 겹치지 않는다** — `InsertEntry`가 색인으로 검사한다(03-3). 값 복사로 같은 아이템이 둘이 되는 버그를 그 자리에서 잡는다
+- **합치기(`bFungible`)는 받는 쪽의 `ItemUid`를 남긴다** — 흡수되는 쪽은 사라진다(03-3)
 
 ### ★ `ParentEntryId` — 배낭과 부착물이 같은 구조다
 
@@ -288,6 +386,8 @@ EntryId=5  Parent=4     Scope_4x   SlotId=Optic       ← 배낭 속 총의 부�
 ### ★★ `SortKey` — 화면 순서를 서버가 든다 (11차 결정)
 
 **형제 안에서의 상대 순서다.** 같은 `ParentEntryId`를 가진 것들끼리만 비교하고, 다른 컨테이너의 값과 겹쳐도 아무 문제가 없다. `SlotId`가 있는 엔트리는 **슬롯이 곧 자리**라 이 값을 보지 않는다.
+
+> **★ 이 문서의 키 예시 숫자(`65536`, `131072`, `32768` …)는 옛 간격 `1 << 16` 기준이다.** 지금 간격은 `1 << 32`(`int64`, D-102)이고 **비율만 같으면 동작이 같다** — 예시를 읽을 때 `65536`을 "한 칸(Step)"으로 읽는다. 횟수(고갈 32회 · 경계까지 2,147,483,644회)는 새 값으로 고쳐 두었다.
 
 ```
 Parent=NONE   SortKey=      0   Shirt_Basic  SlotId=Torso   ← 슬롯. 키는 갖되 표시에서 빠진다
@@ -390,15 +490,17 @@ int32 K = 0;  for (int32 Id : 형제) { AssignSortKey(Id, K); K += 1; }
 > 델타 경로는 바뀐 항목마다 이전 전송 상태와 비교해 changelist를 만들므로 **대역폭보다 서버 CPU가 먼저 보인다.** 스태시 정렬은 플레이어가 가장 많이 하는 조작이다.
 
 ```cpp
-static constexpr int32 SortKeyStep = 1 << 16;   // 65536
+static constexpr int64 SortKeyStep = 1LL << 32;   // 4,294,967,296 (2026-10-07, D-102)
 
 // 맨 뒤에 붙이기 :  MaxSiblingKey + SortKeyStep
 // 사이에 꽂기   :  (PrevKey + NextKey) / 2
 // 맨 앞         :  FirstKey - SortKeyStep
 ```
 
-- **상한:** 65536 간격으로 32767개까지 `int32`에 들어간다. 스태시 280개는 여유가 압도적이다
-- **고갈:** 같은 틈에 연속으로 꽂으면 ~16회에서 `(Prev+Next)/2 == Prev`가 된다 → 그 컨테이너만 `0, Step, 2*Step…`으로 **재정규화**한다. 이건 도달 불가 분기가 아니라 **이 방식의 정의상 반드시 도달하는 지점**이라 완료 조건으로 증명한다
+- **상한:** `2^32` 간격으로 형제 **2^31개**까지 `int64`에 들어간다. 스태시가 몇 천 칸이 돼도 여유가 압도적이다
+- **고갈:** 같은 틈에 연속으로 꽂으면 **32회**에서 `(Prev+Next)/2 == Prev`가 된다 → 그 컨테이너만 `0, Step, 2*Step…`으로 **재정규화**한다. 이건 도달 불가 분기가 아니라 **이 방식의 정의상 반드시 도달하는 지점**이라 완료 조건으로 증명한다
+
+> **★ `int32` · `1 << 16`에서 넓혔다 (2026-10-07, D-102).** 희소 키는 Jira LexoRank · fractional indexing과 같은 표준 기법이고, 남는 질문은 폭뿐이었다. `int32`면 16회 고갈 · 형제 32767개 상한이다. **세이브 포맷이 확정되기 전인 지금 넓히는 비용이 최저**이고, 엔트리당 4바이트가 는다. 재정규화 · 경계 가드 · 키 공간 스코프 규칙은 하나도 안 바뀐다 — 상수와 타입만 바뀐다.
 
 > **`double`을 쓰지 않는다. 결정적인 것은 고갈 판정이다(11차 검수에서 근거가 바뀌었다).**
 >
@@ -410,7 +512,7 @@ static constexpr int32 SortKeyStep = 1 << 16;   // 65536
 > if (Mid == Prev || Mid == Next) 재정규화;   // 맞는데, 보는 사람마다 버그로 신고한다
 > ```
 >
-> **정답인데 영원히 의심받는 코드다.** 5단계 2차의 외부 DB(REST) 왕복과 `EP.Inv.Dump`의 `0.37500000000000006`도 사실이지만 **둘 다 부차적이다** — DB는 마감 밖이고 Dump는 포맷으로 가릴 수 있다. 그리고 **이분 여유 16회 vs 52회는 이 선택의 축이 아니다** — 재정규화가 있으면 둘 다 "사실상 안 남"이고, 없으면 둘 다 언젠가 깨진다.
+> **정답인데 영원히 의심받는 코드다.** 5단계 2차의 외부 DB(REST) 왕복과 `EP.Inv.Dump`의 `0.37500000000000006`도 사실이지만 **둘 다 부차적이다** — DB는 마감 밖이고 Dump는 포맷으로 가릴 수 있다. 그리고 **이분 여유 32회(`int64`, D-102) vs 52회는 이 선택의 축이 아니다** — 재정규화가 있으면 둘 다 "사실상 안 남"이고, 없으면 둘 다 언젠가 깨진다.
 
 > **컨테이너가 `TArray<int32> ContentOrder`를 드는 안도 검토했다.** dirty가 1개인 건 같지만 ① **본체(`INDEX_NONE`)는 엔트리가 없어** 컴포넌트에 별도 배열이 필요하고(같은 개념이 두 집에 산다 — CLAUDE.md §2), ② 아이템이 죽을 때 **부모 배열에서 빼는 청소**가 생긴다. `SortKey`는 **엔트리와 함께 죽어 자가 청소된다** — `ActiveHotbarIndex`(슬롯을 가리켜 죽은 번호가 없음)를 `HotbarRefs`보다 낫다고 본 것과 같은 기준이다.
 >
@@ -491,6 +593,11 @@ public:
     void SetEntryCharges(int32 EntryId, int32 NewCharges);  // ★ 유일한 쓰기 지점
     void AddEntryCharges(int32 EntryId, int32 Delta);       //   Set에 위임. 음수면 차감
 
+    // ★ 종류별 수치(State.Stats)의 유일한 쓰기 지점 (2026-10-07, D-099). 없으면 추가, 있으면 덮어쓴다
+    //   지금 호출자는 0이다 — 소비자(방어구 · 무기 마모)가 오는 단계에서 처음 불린다
+    void SetEntryStat(int32 EntryId, FGameplayTag Tag, int32 Value);
+    bool GetEntryStat(int32 EntryId, FGameplayTag Tag, int32& OutValue) const;   // 없으면 false
+
     // ★ ParentEntryId + SlotId를 고치는 유일한 지점. 장착·해제·드래그·부착이 전부 이것 하나다
     bool MoveEntry(int32 EntryId, int32 NewParent, FName NewSlotId);   // 아래 별도 절
 
@@ -532,8 +639,14 @@ public:
     DECLARE_MULTICAST_DELEGATE(FOnInventoryChanged);
     FOnInventoryChanged OnInventoryChanged;               // UI가 구독 (Step 04)
 
+    // ★★ 누구에게 복제되는가를 컴포넌트가 정한다 (2026-10-07, D-101) — 아래 "가시성" 절
+    //   프로퍼티 조건이 아니다. 소유 액터가 bReplicateUsingRegisteredSubObjectList여야 동작한다
+    virtual ELifetimeCondition GetReplicationCondition() const override { return COND_NetGroup; }
+
 protected:
     virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>&) const override;
+    virtual void BeginPlay() override;                    // ★ 서버: 가시성 그룹 등록 (아래)
+    virtual void EndPlay(const EEndPlayReason::Type Reason) override;   // ★ 서버: 그룹 해제
 
     UPROPERTY(Replicated) FEPInventoryList Entries;
     // ★★ 본체 용량. **최종값은 0이다** — 수납은 착용 컨테이너에서만 나온다 (13차)
@@ -546,36 +659,51 @@ protected:
 
 private:
     // ★ 재귀 본체. bIsRoot를 밖에서 넘길 문법이 없어야 계약이 지켜진다 (아래)
-    bool RemoveEntryInternal(int32 EntryId, TArray<FEPInventoryEntry>* OutRemoved, bool bIsRoot);
-    void RemoveChildrenRecursive(int32 ParentId, TArray<FEPInventoryEntry>* OutRemoved);
-    void RemoveSelf(int32 EntryId);                  // 배열에서 빼고 MarkArrayDirty
+    //   ★★ 지우지 않는다 — Doomed에 표시만 한다. 물리적 제거는 RemoveEntry 끝에서 한 번 (2026-10-08, D-106)
+    void RemoveEntryInternal(int32 EntryId, TArray<FEPInventoryEntry>* OutRemoved, bool bIsRoot,
+                             TSet<int32>& Doomed);
+    void RemoveChildrenRecursive(int32 ParentId, TArray<FEPInventoryEntry>* OutRemoved, TSet<int32>& Doomed);
+    void RemoveSelf(const TSet<int32>& Ids);         // 배열에서 한 번에 빼고 MarkArrayDirty (D-106)
     bool ContainsEntry(int32 EntryId) const;
+
+    // ★ 원소 접근(FindEntryPtr · FindEntryMutable)과 색인은 리스트에 있다 — Entries.로 부른다 (2026-10-11, D-113)
 
     // ★ 번호 발급 · 삽입 · MarkItemDirty의 유일한 지점.
     //   칸 검사도 bFungible 합치기도 하지 않는다 — 그건 호출자 몫이다
     //   ★ SortKey도 여기서 발급한다 (형제 맨 뒤). 호출자가 정하지 않는다
+    //   = CheckIdentity + KeySpace_NextAtEnd + AppendEntry (2026-10-08)
     int32 InsertEntry(int32 Parent, FName ItemId, const FEPItemState& State, FName SlotId);
 
+    // ★★ InsertEntry의 몸통 — 알림 가드 + Entries.Append 한 줄이다 (D-106 · 2026-10-11 D-113 · D-114)
+    //   번호 발급 · 추가 · MarkItemDirty · 색인 무효화는 리스트 Append가 한다
+    //   **색인을 읽지 않는다.** 그래서 AddSubtree가 원소마다 재구축하지 않는다.
+    //   부르는 곳은 InsertEntry와 AddSubtree 둘뿐이고, 둘 다 넣기 전에 정체를 검사한다
+    int32 AppendEntry(int32 Parent, FName ItemId, const FEPItemState& State, FName SlotId, int64 SortKey);
+
+    // ★ 정체 검사 두 줄 — 유효한가 · 이미 있는가 (D-098 · D-104). 거절이면 ensure 후 false
+    //   AddItem이 **합치기 앞에서**, InsertEntry가 넣기 앞에서 부른다
+    bool CheckIdentity(FName ItemId, const FEPItemState& State) const;
+
     // ★ SortKey를 고치는 유일한 지점. MarkItemDirty가 여기 한 곳에 있다 (11차)
-    void AssignSortKey(int32 EntryId, int32 NewKey);
+    void AssignSortKey(int32 EntryId, int64 NewKey);
 
     // 형제 키를 0, Step, 2*Step... 으로 다시 깐다. 이분 고갈 시에만 돈다
     void RenormalizeSortKeys(int32 Container);
 
     // ★★ KeySpace_ 접두어는 장식이 아니다 (12차 검수). 이 셋은 **부모 전체**를 본다 —
     //   GetSortedContents(표시 목록)를 부르면 안 된다. 같은 혼동이 두 번 났다 (함정 4q·4s)
-    int32 KeySpace_NextAtEnd(int32 Container);        // 최대 + Step. ★ 유일한 발급 지점이라 const가 아니다
-    int32 KeySpace_Min      (int32 Container) const;  // 최소. 비면 0 (호출부에 자기 자신이 있어 안 빈다)
+    int64 KeySpace_NextAtEnd(int32 Container);        // 최대 + Step. ★ 유일한 발급 지점이라 const가 아니다
+    int64 KeySpace_Min      (int32 Container) const;  // 최소. 비면 0 (호출부에 자기 자신이 있어 안 빈다)
 
     // ★★ 실패를 반환값으로 돌려주지 않는다 — SortKey는 음수도 0도 유효한 값이다 (13차, 함정 4w)
-    bool KeySpace_NextAbove(int32 Container, int32 Key, int32 Exclude, int32& OutKey) const;
-    bool KeyOf(int32 EntryId, int32& OutKey) const;
+    bool KeySpace_NextAbove(int32 Container, int64 Key, int32 Exclude, int64& OutKey) const;
+    bool KeyOf(int32 EntryId, int64& OutKey) const;
 
     // ★ 재귀 본체. bRetry를 밖에서 넘길 문법이 없어야 한다 (8차 bIsRoot와 같은 형태)
     void ReorderEntryInternal(int32 EntryId, int32 PrevEntryId, bool bRetry);
 
-    static constexpr int32 SortKeyStep  = 1 << 16;
-    static constexpr int32 SortKeyGuard = SortKeyStep * 4;   // 경계까지 남길 여유
+    static constexpr int64 SortKeyStep  = 1LL << 32;     // D-102
+    static constexpr int64 SortKeyGuard = SortKeyStep * 4;   // 경계까지 남길 여유
 
     // 캐릭터 전방 100cm + 바닥 트레이스. 실패 시 발밑 (03-5)
     AEPPickup* SpawnPickupInFront() const;
@@ -583,10 +711,13 @@ private:
     // 서브시스템은 캐시하지 않고 매번 조회한다 (아래)
     const UEPItemDefinitionSubsystem* Defs() const;
 
-    int32 NextEntryId = 1;        // 서버 전용. 복제하지 않는다
+    // NextEntryId는 리스트에 있다 (2026-10-11, D-114)
 
     int32 NotifyDepth = 0;        // 중간 알림을 막는 스코프 가드 (03-7)
     friend struct FScopedInventoryNotify;
+
+    // ── 파생 색인은 리스트로 옮겼다 (2026-10-11, D-113) — 03-1 ──
+    //   그래서 friend struct FEPInventoryList도 없다. 수신 콜백이 자기 MarkIndexDirty를 부른다 (03-7)
 };
 ```
 
@@ -616,9 +747,9 @@ UEPInventoryComponent::UEPInventoryComponent()
 
 > **★★ `Entries.Owner = this;`** — 03-1이 `FEPInventoryList::Owner`를 선언하고 Step 04가 `PostReplicated*` → `Owner->OnInventoryChanged`를 전제하는데, 이 한 줄이 없으면 **콜백이 델리게이트에 닿지 못한다.** 증상은 "서버는 정상인데 클라 인벤토리 UI가 영원히 갱신되지 않는다"이고 원인이 UI나 복제로 보여서 엉뚱한 데를 판다. **Step 04 전체가 이 줄에 걸려 있다.**
 
-> **`EndPlay` 오버라이드가 없다.** 이전 설계는 여기서 엔트리의 핸들을 전부 `Destroy()`해야 했고, 그 때문에 "사망 시 드랍은 반드시 `EndPlay`보다 먼저"라는 순서 규칙이 따라붙었다. 상태가 값이므로 컴포넌트가 파괴되면 같이 사라진다 — **정리할 것도, 지킬 순서도 없다.**
+> **`EndPlay`는 엔트리를 정리하지 않는다.** 이전 설계는 여기서 엔트리의 핸들을 전부 `Destroy()`해야 했고, 그 때문에 "사망 시 드랍은 반드시 `EndPlay`보다 먼저"라는 순서 규칙이 따라붙었다. 상태가 값이므로 컴포넌트가 파괴되면 같이 사라진다 — **정리할 것도, 지킬 순서도 없다.** 2026-10-07부터 `EndPlay`가 있지만 하는 일은 **가시성 그룹 해제 한 줄**이고(아래 "가시성" 절) 엔트리와 무관하다.
 
-> **`NextEntryId`를 복제하지 않는다.** 클라는 발급하지 않고 받은 `EntryId`를 읽기만 한다. 복제하면 서버 내부 상태가 밖으로 샌다.
+> **`NextEntryId`를 복제하지 않는다** (2026-10-11부터 리스트의 private 멤버, D-114). 클라는 발급하지 않고 받은 `EntryId`를 읽기만 한다. 복제하면 서버 내부 상태가 밖으로 샌다.
 > **★ 로드맵 5단계 세이브에는 반드시 넣는다** — `NextEntryId` / `ActiveHotbarIndex` 둘. 장착·배낭은 엔트리의 `SlotId`에 들어 있으므로 배열만 저장하면 따라온다. `NextEntryId`를 빠뜨리면 로드 후 1부터 재발급해 기존 엔트리와 충돌하고, 하필 `ParentEntryId`를 오염시켜 **아이템이 엉뚱한 컨테이너에 들어간다.**
 
 #### `Defs`를 멤버로 캐시하지 않는다
@@ -656,20 +787,33 @@ if (UEPCombatComponent* Combat = GetOwner<AEPCharacter>()->GetCombatComponent())
 // public — 진입점. 재귀 파라미터가 없다
 bool UEPInventoryComponent::RemoveEntry(int32 EntryId, TArray<FEPInventoryEntry>* OutRemoved)
 {
-    return RemoveEntryInternal(EntryId, OutRemoved, /*bIsRoot=*/true);
-}
-
-// private — 재귀 본체
-bool UEPInventoryComponent::RemoveEntryInternal(int32 EntryId,
-                                                TArray<FEPInventoryEntry>* OutRemoved,
-                                                bool bIsRoot)
-{
     if (!GetOwner()->HasAuthority()) return false;
     if (!ContainsEntry(EntryId))     return false;      // 존재 확인만. 값은 아래서 뜬다
 
     FScopedInventoryNotify Guard(this);                 // 중간 알림 차단 (03-7)
 
-    // ★★ 순서를 바꾸지 말 것. ①은 반드시 ③보다 앞이다 (함정 4k).
+    // ★★ 재귀는 표시만 하고, 지우는 것은 여기서 한 번이다 (2026-10-08, D-106)
+    //   재귀 도중에 지우면 RemoveSelf가 색인을 무효화하고 바로 다음 자식 조회가 다시 만든다
+    //   — 노드마다 O(N) 재구축이다. 표시만 하면 재귀 내내 색인이 그대로다
+    TSet<int32> Doomed;
+    RemoveEntryInternal(EntryId, OutRemoved, /*bIsRoot=*/true, Doomed);
+    RemoveSelf(Doomed);                                 // ③ 물리적 제거 — 전부 표시한 뒤
+    return true;
+}
+
+// private — 재귀 본체. ★ 배열을 바꾸지 않는다 — 표시만 한다
+void UEPInventoryComponent::RemoveEntryInternal(int32 EntryId,
+                                                TArray<FEPInventoryEntry>* OutRemoved,
+                                                bool bIsRoot,
+                                                TSet<int32>& Doomed)
+{
+    // ⓪ 표시를 맨 앞에 — 이미 표시된 번호면 돌아간다. 사이클(X.Parent == X 등)의 무한 재귀를 막는다
+    //   옛 판본은 "③ 자기 제거를 캐스케이드 앞에"로 막았다. 지금은 지우는 것이 끝으로 갔으므로 표시가 그 일을 한다
+    bool bAlready = false;
+    Doomed.Add(EntryId, &bAlready);
+    if (bAlready) return;
+
+    // ★★ 순서를 바꾸지 말 것. ①은 반드시 물리적 제거(RemoveSelf)보다 앞이다 (함정 4k).
     //     GetEquippedEntryId()는 필드가 아니라 배열을 읽는 파생 게터라, RemoveSelf 뒤에
     //     부르면 INDEX_NONE을 돌려주고 아래 if가 통째로 안 돈다 — write-back이 "덮이는"
     //     것이 아니라 "안 불린다". 잔탄이 버리기 직전 값 그대로 픽업에 실려 대부분의
@@ -685,7 +829,7 @@ bool UEPInventoryComponent::RemoveEntryInternal(int32 EntryId,
         if (AEPCharacter* Ch = GetOwner<AEPCharacter>())
             if (UEPCombatComponent* C = Ch->GetCombatComponent())
                 C->UnequipWeapon();                     // write-back만 한다
-        // 비울 번호가 없다 — ③의 RemoveSelf가 슬롯을 비운다
+        // 비울 번호가 없다 — RemoveEntry 끝의 RemoveSelf(③)가 슬롯을 비운다
     }
 
     // ② 스냅샷을 자식보다 **먼저** 담는다. 루트는 컨테이너 소속을 끊는다
@@ -710,24 +854,22 @@ bool UEPInventoryComponent::RemoveEntryInternal(int32 EntryId,
         }
     }
 
-    // ③ 자신을 먼저 제거한다 — 그래야 캐스케이드가 자기를 다시 못 찾는다
-    RemoveSelf(EntryId);
+    // ③ 지우지 않는다 — ⓪에서 표시했고, RemoveEntry가 재귀를 마친 뒤 한 번에 지운다 (D-106)
 
-    // ④ 자식은 그 다음. 부모가 이미 배열에서 빠져 사이클이 성립하지 않는다
-    RemoveChildrenRecursive(EntryId, OutRemoved);
-    return true;
+    // ④ 자식은 그 다음. 전위 순회 — 스냅샷이 부모 뒤에 자식 순으로 쌓인다
+    RemoveChildrenRecursive(EntryId, OutRemoved, Doomed);
 }
 
 void UEPInventoryComponent::RemoveChildrenRecursive(int32 ParentId,
-                                                    TArray<FEPInventoryEntry>* OutRemoved)
+                                                    TArray<FEPInventoryEntry>* OutRemoved,
+                                                    TSet<int32>& Doomed)
 {
-    // ★ 자식 목록을 먼저 뜬다 — 순회 중 배열이 바뀐다
-    TArray<int32> Children;
-    for (const FEPInventoryEntry& E : Entries.Items)
-        if (E.ParentEntryId == ParentId) Children.Add(E.EntryId);
+    // ★ 자식 목록을 **복사**한다. 재귀 내내 색인은 안 바뀌지만(구조 변경이 끝으로 갔다),
+    //   색인 안의 참조를 재귀 너머로 들고 있지 않는다는 규칙은 그대로 지킨다 (2026-10-07)
+    const TArray<int32> Children = Entries.EnsureIndex().ChildrenOf.FindRef(ParentId);
 
     for (int32 Id : Children)
-        RemoveEntryInternal(Id, OutRemoved, /*bIsRoot=*/false);  // ★ 자식은 Parent를 보존한다
+        RemoveEntryInternal(Id, OutRemoved, /*bIsRoot=*/false, Doomed);  // ★ 자식은 Parent를 보존한다
 }
 ```
 
@@ -755,7 +897,7 @@ RemoveEntry(Id, &Out, /*bIsRoot=*/false);   // 루트 정규화 생략 → AddSu
 | ①과 ③을 뒤바꾸면 | write-back이 `INDEX_NONE`을 향한다 | **write-back이 아예 안 불린다** |
 | 증상 | 눈에 보이는 오작동 | **잔탄이 조용히 사라진다** |
 
-**그래서 ①이 ②·③보다 앞이라는 것은 스타일이 아니라 계약이다.** `05_Loot_05_Equipment.md`의 순서 규칙(`:141`)도 근거 문장이 바뀐다 — *"`RemoveEntry`가 먼저 비우면"* 이 아니라 *"`RemoveSelf`가 먼저 돌면 대상을 못 찾는다"* 다.
+**그래서 ①이 ②·③보다 앞이라는 것은 스타일이 아니라 계약이다.** 2026-10-08(D-106)부터는 ③이 재귀 **밖**(`RemoveEntry` 끝)으로 나가 모든 노드의 ①이 제거보다 앞인 것이 **형태로** 보장된다 — 깨는 방법은 재귀 안에서 `RemoveSelf`를 부르는 것 하나다. `05_Loot_05_Equipment.md`의 순서 규칙(`:141`)도 근거 문장이 바뀐다 — *"`RemoveEntry`가 먼저 비우면"* 이 아니라 *"`RemoveSelf`가 먼저 돌면 대상을 못 찾는다"* 다.
 
 > **`UnequipWeapon`에 맡기지 않는 이유는 그대로다.** `UnequipWeapon`은 **다른 컴포넌트**(`UEPCombatComponent`)의 함수이고, 교체·사망 경로에서 제거 없이도 불린다. `RemoveEntry`가 그것을 믿을 근거는 없다.
 
@@ -767,7 +909,8 @@ RemoveEntry(Id, &Out, /*bIsRoot=*/false);   // 루트 정규화 생략 → AddSu
 |---|---|
 | ① write-back → ② 스냅샷 | **잔탄 소실.** 선두에서 뜬 값을 쓰면 write-back 전이라 만탄이 나간다 |
 | ② 루트를 먼저, `Parent = INDEX_NONE` **＋ `SlotId = NAME_None` ＋ `SortKey = 0`** | **`AddSubtree`가 못 읽는 배열** ＋ **옛 컨테이너의 키를 들고 가는 것** ＋ **검사 3을 우회한 슬롯 점유.** 아래 계약 |
-| ③ 자기 제거를 캐스케이드 **앞**에 | **자기 부모 사이클의 무한 재귀.** `X.Parent == X`인 데이터 오류에서 스택 오버플로 |
+| ⓪ 표시(`Doomed`)를 맨 **앞**에 (2026-10-08) | **사이클의 무한 재귀.** `X.Parent == X`인 데이터 오류에서 스택 오버플로. 옛 판본은 *"③ 자기 제거를 캐스케이드 앞에"* 로 막았다 |
+| ③ 물리적 제거는 **재귀가 끝난 뒤 한 번** (2026-10-08, D-106) | **노드마다 색인 재구축.** 재귀 도중에 지우면 다음 자식 조회가 매번 O(N)으로 다시 만든다. 그리고 모든 노드의 ①이 제거보다 앞이라는 것이 **형태로** 보장된다 |
 | ④ 캐스케이드 마지막 | 자식이 부모의 write-back 결과에 영향받지 않는다 |
 
 #### ★ `RemoveEntry` ↔ `AddSubtree` 계약
@@ -826,11 +969,14 @@ RemoveEntry(Id, &Out, /*bIsRoot=*/false);   // 루트 정규화 생략 → AddSu
 
 | 무엇 | 유일한 변경 지점 |
 |---|---|
-| 엔트리 추가 | `InsertEntry` — *"번호 발급·삽입·`MarkItemDirty`의 유일한 지점"* |
+| 엔트리 추가 | `InsertEntry` — *"번호 발급·삽입·`MarkItemDirty`의 유일한 지점"*. 몸통은 `AppendEntry`이고 `AddSubtree`만 몸통을 직접 부른다 (2026-10-08, D-106) |
 | `Charges` | `SetEntryCharges` — *"★ 유일한 쓰기 지점"* |
-| 배열에서 빼기 | `RemoveSelf` — *"배열에서 빼고 `MarkArrayDirty`"* |
+| 배열에서 빼기 | `RemoveSelf` — *"배열에서 빼고 `MarkArrayDirty`"*. 2026-10-08부터 번호 묶음을 받아 한 번에 뺀다 (D-106) |
 | `SortKey` | `AssignSortKey` — *"화면 순서를 고치는 유일한 지점"* (11차)<br>★ **`SwapEntries`(04-B)도 이걸 두 번 부른다** — `E.SortKey = Other.SortKey` 직접 대입 금지 |
 | **`ParentEntryId` + `SlotId`** | **← 여기가 비어 있었다** |
+| `State.Stats` (2026-10-07) | `SetEntryStat` — 여섯 번째. 소비자가 오기 전부터 자리를 둔다 (D-099) |
+
+> **★ 구조를 바꾸는 셋(`InsertEntry` · `RemoveSelf` · `MoveEntry`)은 색인도 무효화한다** (D-100, 03-A-부록). 쓰기 지점을 새로 만들면 이 표에 올리면서 *"색인이 담는 것을 바꾸는가"* 를 같이 본다.
 
 `SlotId`가 장착의 진실이 되면서 **장착·해제·드래그·부착·컨테이너 간 이동이 전부 같은 연산**이 됐다. 바뀌는 것이 두 필드뿐이기 때문이다.
 
@@ -932,7 +1078,7 @@ if (!bIsBodySlot && !NewSlotId.IsNone())
 >
 > > **Lyra는 슬롯 목록을 `UDeveloperSettings`에 넣지 않는다.** `ULyraDeveloperSettings`·`ULyraCosmeticDeveloperSettings`·`ULyraWeaponDebugSettings`가 **전부 `config=EditorPerProjectUserSettings`**(`LyraDeveloperSettings.h:39` 등)로 개발·디버그 전용이고, 게임플레이 구성은 `ULyraPawnData : UPrimaryDataAsset`(`LyraPawnData.h:24-53`)이 든다. **슬롯 개수조차 컴포넌트 필드다** — `ULyraQuickBarComponent::NumSlots`(`LyraQuickBarComponent.h:63-64`).
 
-**검사 6 — 사이클 검사는 "도달 불가 분기의 에러 처리"가 아니다.** `RemoveEntry`의 재귀에는 무한 재귀를 막는 장치가 없고, 안전한 이유가 이 문서에 명시돼 있다 — *"부모가 이미 배열에서 빠져 사이클이 성립하지 않는다"*(④). **그 문장은 "입력이 트리다"라는 전제 위에 서 있고, `MoveEntry`는 그 전제를 깰 수 있는 유일한 함수다.** `InsertEntry`는 새 노드만 만들고 `RemoveEntry`는 노드를 없앤다.
+**검사 6 — 사이클 검사는 "도달 불가 분기의 에러 처리"가 아니다.** `RemoveEntry`의 재귀가 사이클에서 멈추는 것은 **⓪의 표시** 덕이다(2026-10-08 — 옛 판본은 *"부모가 이미 배열에서 빠져 사이클이 성립하지 않는다"*(④)였다). 멈추기는 하지만 **사이클 데이터는 그 자체로 틀린 상태**다 — 표시가 막는 것은 스택 오버플로뿐이다. **그 문장은 "입력이 트리다"라는 전제 위에 서 있고, `MoveEntry`는 그 전제를 깰 수 있는 유일한 함수다.** `InsertEntry`는 새 노드만 만들고 `RemoveEntry`는 노드를 없앤다.
 
 ```cpp
 // 5줄. NewParent에서 위로 걸어 올라가 자기를 만나면 사이클이다
@@ -1034,22 +1180,20 @@ const int32 OldParent = Cur.ParentEntryId;
 //   부모를 먼저 바꾸면 자기 자신이 **옛 키를 든 채** 목적지의 형제로 잡힌다 —
 //   InsertEntry가 AddDefaulted 뒤에 발급하던 것과 **글자 그대로 같은 결함**이다
 const bool  bReparent = (NewParent != OldParent);
-const int32 NewKey    = bReparent ? KeySpace_NextAtEnd(NewParent) : 0;
+const int64 NewKey    = bReparent ? KeySpace_NextAtEnd(NewParent) : 0;
 
 FScopedInventoryNotify Guard(this);           // ★ MarkItemDirty를 직접 부르므로 가드가 필요하다 (03-7)
 
-for (FEPInventoryEntry& E : Entries.Items)
-{
-    if (E.EntryId != EntryId) continue;
+FEPInventoryEntry* E = Entries.FindEntryMutable(EntryId);   // ★ 배열 원소다 — 복사본에 쓸 문법이 없다 (03-A-부록)
+if (!E) return false;
 
-    E.ParentEntryId = NewParent;
-    E.SlotId        = NewSlotId;
-    Entries.MarkItemDirty(E);
+E->ParentEntryId = NewParent;
+E->SlotId        = NewSlotId;
+Entries.MarkItemDirty(*E);
+Entries.MarkIndexDirty();                           // ★ 부모 · 슬롯이 바뀌었다 (D-100). 손으로 부르는 유일한 곳 (D-113)
 
-    if (bReparent) AssignSortKey(EntryId, NewKey);   // 새 컨테이너 맨 뒤
-    return true;
-}
-return false;
+if (bReparent) AssignSortKey(EntryId, NewKey);      // 새 컨테이너 맨 뒤
+return true;
 ```
 
 > **★★ 순서를 바꾸면 키가 컨테이너 사이로 전염된다 (13차 검수).** `KeySpace_NextAtEnd`는 *"부모가 같은 것 전부"* 를 돌므로, 재부모를 먼저 하면 **방금 옮겨온 자기 자신을 옛 컨테이너의 키와 함께 센다.**
@@ -1117,22 +1261,20 @@ bool UEPInventoryComponent::MoveEntry(int32 EntryId, int32 NewParent, FName NewS
     //   ★★ 키를 **재부모 전에** 구한다 (함정 4x). 부모를 먼저 바꾸면
     //      자기 자신이 옛 키를 든 채 목적지의 형제로 잡힌다
     const bool  bReparent = (NewParent != Cur.ParentEntryId);
-    const int32 NewKey    = bReparent ? KeySpace_NextAtEnd(NewParent) : 0;
+    const int64 NewKey    = bReparent ? KeySpace_NextAtEnd(NewParent) : 0;
 
     FScopedInventoryNotify Guard(this);      // ★ MarkItemDirty를 직접 부른다 (03-7)
 
-    for (FEPInventoryEntry& E : Entries.Items)   // ★★ 참조다. Cur은 복사본이라 못 쓴다 (함정 4v)
-    {
-        if (E.EntryId != EntryId) continue;
+    FEPInventoryEntry* E = Entries.FindEntryMutable(EntryId);   // ★★ 배열 원소다. Cur은 복사본이라 못 쓴다 (함정 4v)
+    if (!E) return false;
 
-        E.ParentEntryId = NewParent;
-        E.SlotId        = NewSlotId;             // ★ 필드 둘만. 통째 대입 금지 (함정 4g)
-        Entries.MarkItemDirty(E);
+    E->ParentEntryId = NewParent;
+    E->SlotId        = NewSlotId;            // ★ 필드 둘만. 통째 대입 금지 (함정 4g)
+    Entries.MarkItemDirty(*E);
+    Entries.MarkIndexDirty();                // ★ 부모 · 슬롯이 바뀌었다 (D-100). 손으로 부르는 유일한 곳 (D-113)
 
-        if (bReparent) AssignSortKey(EntryId, NewKey);   // 새 컨테이너 맨 뒤
-        return true;
-    }
-    return false;
+    if (bReparent) AssignSortKey(EntryId, NewKey);   // 새 컨테이너 맨 뒤
+    return true;
 }
 ```
 
@@ -1146,7 +1288,7 @@ bool UEPInventoryComponent::MoveEntry(int32 EntryId, int32 NewParent, FName NewS
 | **키 계산이 재부모보다 앞** | 옛 컨테이너의 키가 목적지로 전염된다 (함정 4x) |
 | **쓰기가 검사 전부보다 뒤** | 한쪽만 바뀐 중간 상태가 남는다 (`05_Loot_04_InventoryUI.md` 함정 11b) |
 
-> **★ `Cur`을 두 번 쓰는 것에 주의한다.** 검사에서는 `Cur.ItemId` · `Cur.ParentEntryId`를 읽지만, **쓰기는 반드시 `Entries.Items`의 참조 `E`에 한다.** `Cur`에 쓰면 컴파일되고 `true`를 반환하는데 **배열은 그대로다** — 13차가 잡은 함정 4v가 정확히 이 함수에서 났다.
+> **★ `Cur`을 두 번 쓰는 것에 주의한다.** 검사에서는 `Cur.ItemId` · `Cur.ParentEntryId`를 읽지만, **쓰기는 반드시 `FindEntryMutable`이 준 배열 원소 `E`에 한다.** `Cur`에 쓰면 컴파일되고 `true`를 반환하는데 **배열은 그대로다** — 13차가 잡은 함정 4v가 정확히 이 함수에서 났다.
 
 > **★ 반환값을 버리지 않는다.** `EP.Inv.Move`가 이 `bool`을 로그로 찍어야 검사 0~6 중 무엇에 걸렸는지는 고사하고 **걸렸다는 사실**이 보인다 (03-9).
 
@@ -1193,25 +1335,38 @@ void UEPInventoryComponent::ReorderEntryInternal(int32 EntryId, int32 PrevEntryI
         if (PrevEntryId == EntryId)                            return;   // 자기 뒤로
     }
 
+    // ★ 결과가 지금 자리와 같으면 할 일이 없다 — MoveEntry 검사 0과 대칭 (12차 검수)
+    //   드래그 취소는 "도로 놓기"라 가장 흔하고, 그때마다 틈이 반으로 준다
+    // ★★ 키 계산보다 **앞**이다 (2026-10-07). 뒤에 두면 틈이 이미 고갈된 상태에서
+    //    제자리 드롭이 재정규화(형제 N개 dirty)를 먼저 돌리고 나서야 반환한다
+    {
+        const TArray<int32> Cur = GetSortedContents(Container);
+        const int32 MyIdx   = Cur.Find(EntryId);
+        const int32 CurPrev = (MyIdx <= 0) ? INDEX_NONE : Cur[MyIdx - 1];
+        if (CurPrev == PrevEntryId) return;
+    }
+
     // ★★ Prev는 "보이는 목록"에서 오지만(사용자 의도), 틈은 "부모 전체"에서 구한다 (12차 대기)
     //   GetSortedContents로 다음 키를 구하면 그 사이에 낀 슬롯 형제와 동률이 난다 — 아래 ★★
-    int32 PrevKey = KeySpace_Min(Container) - SortKeyStep;   // 맨 앞: 부모 전체의 최소보다 한 칸 앞
+    int64 PrevKey = KeySpace_Min(Container) - SortKeyStep;   // 맨 앞: 부모 전체의 최소보다 한 칸 앞
     if (PrevEntryId != INDEX_NONE && !KeyOf(PrevEntryId, PrevKey)) return;   // 위에서 존재는 확인했다
 
     // PrevKey보다 큰 것 중 가장 작은 키 — 자기 자신은 제외한다
     // ★★ 성패를 bool로 받는다. INDEX_NONE을 센티널로 쓰면 키 −1과 충돌한다 (13차, 함정 4w)
-    int32 NextKey = 0;
+    int64 NextKey = 0;
     const bool bTail = !KeySpace_NextAbove(Container, PrevKey, /*Exclude=*/EntryId, NextKey);
 
-    int32 NewKey;
+    int64 NewKey;
     if (PrevEntryId == INDEX_NONE) NewKey = PrevKey;                     // 맨 앞
     else if (bTail)                NewKey = PrevKey + SortKeyStep;       // 맨 뒤
-    else                           NewKey = PrevKey + (NextKey - PrevKey) / 2;   // 사이
+    else                                                                 // 사이
+        // ★ 차이를 uint64로 구한다 — 두 키가 양 끝에 있으면 int64 뺄셈이 넘친다 (2026-10-07)
+        NewKey = PrevKey + static_cast<int64>((static_cast<uint64>(NextKey) - static_cast<uint64>(PrevKey)) / 2);
 
     // ★★ 두 판정을 한 식에 묶지 않는다 (12차 검수). 성격이 다르다
     //   경계 = "자릿수가 없다"  /  고갈 = "틈이 없다"
-    const bool bOutOfRange = (NewKey <= MIN_int32 + SortKeyGuard)
-                          || (NewKey >= MAX_int32 - SortKeyGuard);
+    const bool bOutOfRange = (NewKey <= MIN_int64 + SortKeyGuard)
+                          || (NewKey >= MAX_int64 - SortKeyGuard);
 
     // ★★★ PrevEntryId != INDEX_NONE 을 빠뜨리면 맨 앞 드래그가 무한 재귀한다.
     //   맨 앞 분기는 설계상 NewKey == PrevKey 라서 고갈 판정을 적용하면 안 된다 (함정 4t)
@@ -1228,15 +1383,6 @@ void UEPInventoryComponent::ReorderEntryInternal(int32 EntryId, int32 PrevEntryI
         return;
     }
 
-    // ★ 결과가 지금 자리와 같으면 할 일이 없다 — MoveEntry 검사 0과 대칭 (12차 검수)
-    //   드래그 취소는 "도로 놓기"라 가장 흔하고, 그때마다 틈이 반으로 준다
-    {
-        const TArray<int32> Cur = GetSortedContents(Container);
-        const int32 MyIdx   = Cur.Find(EntryId);
-        const int32 CurPrev = (MyIdx <= 0) ? INDEX_NONE : Cur[MyIdx - 1];
-        if (CurPrev == PrevEntryId) return;
-    }
-
     AssignSortKey(EntryId, NewKey);
 }
 ```
@@ -1248,16 +1394,16 @@ void UEPInventoryComponent::ReorderEntryInternal(int32 EntryId, int32 PrevEntryI
 | | 값 범위 | `INDEX_NONE`을 센티널로 쓸 수 있나 |
 |---|---|---|
 | `EntryId` | **1부터** 단조 증가 | ✅ 0도 −1도 절대 안 나온다 |
-| `SortKey` | **음수를 포함한 `int32` 전체** | ❌ **−1이 도달 가능한 값이다** |
+| `SortKey` | **음수를 포함한 `int64` 전체** | ❌ **−1이 도달 가능한 값이다** |
 
-맨 앞 이동이 `KeySpace_Min - SortKeyStep`이라 키가 음수로 내려가고(함정 4r가 인정한 성질), **`(−65536, 0)` 구간에 연속으로 꽂으면 정확히 −1에 닿는다.**
+맨 앞 이동이 `KeySpace_Min - SortKeyStep`이라 키가 음수로 내려가고(함정 4r가 인정한 성질), **`(−2^32, 0)` 구간에 연속으로 꽂으면 정확히 −1에 닿는다.**
 
 ```
-−32768, −16384, −8192, −4096, −2048, −1024, −512, −256, −128, −64, −32, −16, −8, −4, −2, −1
-                                                                                      ↑ 16회째
+−2^31, −2^30, −2^29, …, −8, −4, −2, −1
+                                    ↑ 32회째   (옛 int32 · 1<<16에서는 16회째)
 ```
 
-**완료 조건 18의 ①(*"같은 틈에 16회"*)이 그 구간에서 돌면 만들어진다.**
+**완료 조건 18의 ①(*"같은 틈에 32회"*)이 그 구간에서 돌면 만들어진다.**
 
 키가 −1인 형제가 생기면 `KeySpace_NextAbove`가 그를 **찾아도** 호출자는 *"다음이 없다"* 로 읽는다 → `bTail = true` → `NewKey = PrevKey + SortKeyStep`. **바로 뒤에 놓으라고 했는데 한 칸 건너뛴 자리에 놓이고**, 거기 이미 키가 있으면 **동률**이 난다. 그리고 `bNoGap`이 `bTail`일 때 꺼지므로 **재정규화도 안 걸린다.**
 
@@ -1348,10 +1494,15 @@ void ReorderEntry(int32 EntryId, int32 NewIndex);      // ← 아니다
 ```cpp
 TArray<int32> UEPInventoryComponent::GetSortedContents(int32 Container) const
 {
+    // ★ 그 컨테이너의 형제만 돈다 — 엔트리 전체가 아니다 (2026-10-07, D-100)
     TArray<const FEPInventoryEntry*> Out;
-    for (const FEPInventoryEntry& E : Entries.Items)
-        if (E.ParentEntryId == Container && E.SlotId.IsNone())    // ★ 슬롯은 빠진다
-            Out.Add(&E);
+    const FEPInventoryIndex& Ix = Entries.EnsureIndex();
+    if (const TArray<int32>* Kids = Ix.ChildrenOf.Find(Container))
+        for (int32 Id : *Kids)
+        {
+            const FEPInventoryEntry& E = Entries.Items[Ix.IndexById[Id]];
+            if (E.SlotId.IsNone()) Out.Add(&E);                    // ★ 슬롯은 빠진다
+        }
 
     Out.Sort([](const FEPInventoryEntry& A, const FEPInventoryEntry& B)
     {
@@ -1415,14 +1566,17 @@ void UEPInventoryComponent::RenormalizeSortKeys(int32 Container)
 {
     // ★★ 부모가 같은 것 전부를 모은다 — 슬롯에 든 것도 포함 (11차 검수)
     //   GetSortedContents로 돌면 슬롯 형제의 키만 옛 값으로 남아 동률이 새로 생긴다
+    //   ★ 색인의 ChildrenOf가 정확히 "부모가 같은 것 전부"다 (2026-10-07, D-100)
+    //   ★ 아래 루프의 AssignSortKey는 구조를 안 바꾸므로(색인 무효화 없음) 포인터가 끝까지 유효하다
     TArray<const FEPInventoryEntry*> All;
-    for (const FEPInventoryEntry& E : Entries.Items)
-        if (E.ParentEntryId == Container) All.Add(&E);
+    const FEPInventoryIndex& Ix = Entries.EnsureIndex();
+    if (const TArray<int32>* Kids = Ix.ChildrenOf.Find(Container))
+        for (int32 Id : *Kids) All.Add(&Entries.Items[Ix.IndexById[Id]]);
 
     All.Sort([](const FEPInventoryEntry& A, const FEPInventoryEntry& B)
     { return A.SortKey != B.SortKey ? A.SortKey < B.SortKey : A.EntryId < B.EntryId; });
 
-    int32 K = 0;
+    int64 K = 0;
     for (const FEPInventoryEntry* E : All)
     {
         AssignSortKey(E->EntryId, K);   // 현재 순서를 유지한 채 간격만 다시 벌린다
@@ -1431,11 +1585,11 @@ void UEPInventoryComponent::RenormalizeSortKeys(int32 Container)
 }
 ```
 
-이 방식의 **정의상 반드시 도달하는 지점**이다 — 같은 틈에 연속으로 꽂으면 ~16회에서 `(Prev+Next)/2 == Prev`가 된다. 사이클 검사(검사 6)와 달리 *"데이터 오류에서만 도는 방어"* 가 아니라 **정상 조작으로 도달한다.**
+이 방식의 **정의상 반드시 도달하는 지점**이다 — 같은 틈에 연속으로 꽂으면 32회에서 `(Prev+Next)/2 == Prev`가 된다. 사이클 검사(검사 6)와 달리 *"데이터 오류에서만 도는 방어"* 가 아니라 **정상 조작으로 도달한다.**
 
 - **완료 조건으로 증명한다.** 안 넣으면 영원히 안 돌아 죽은 코드가 되고, 그때 처음 도는 날 순서가 무너진다
-- **비용은 여기서만 N개 dirty다.** 재정규화가 조밀 재번호와 같은 비용을 치르는 대신, **~16회에 한 번**만 치른다
-- **★ 재귀는 한 번만 돈다.** 재정규화 후 간격이 정확히 `Step`이라 이분이 반드시 성공하고 맨 앞/맨 뒤도 경계에서 멀어진다. **형제가 32767개를 넘으면 재정규화 자체가 넘치는데**(`Step × N > MAX_int32`) `ContainerCapacity`가 그보다 훨씬 작아 도달 불가다 — **스태시 용량을 정할 때 이것이 상한이다**(11차 검수)
+- **비용은 여기서만 N개 dirty다.** 재정규화가 조밀 재번호와 같은 비용을 치르는 대신, **같은 틈 32회에 한 번**만 치른다
+- **★ 재귀는 한 번만 돈다.** 재정규화 후 간격이 정확히 `Step`이라 이분이 반드시 성공하고 맨 앞/맨 뒤도 경계에서 멀어진다. **형제가 2^31개를 넘으면 재정규화 자체가 넘치는데**(`Step × N > MAX_int64`) `ContainerCapacity`가 그보다 훨씬 작아 도달 불가다 — **스태시 용량의 이론 상한이 이것이다**(11차 검수. 옛 `int32`에서는 32767개였다 — D-102)
 
 ---
 
@@ -1514,25 +1668,76 @@ Container->RemoveEntry(Id, &Sub)   →   MyInv->AddSubtree(INDEX_NONE, NAME_None
 
 > 지금 남은 위험은 성능도 확장성도 아니라 **코드로 강제 가능한 불변식을 규율에 맡기는 것**이다. 1인 프로젝트에서도 3개월 뒤에는 깨진다.
 
-### ★ 복제 조건은 `COND_OwnerOnly`
+### ★★ 가시성 — 컴포넌트 단위 `COND_NetGroup` (2026-10-07, D-101. 옛 프로퍼티 `COND_OwnerOnly`를 대체)
+
+**누구에게 보낼지를 프로퍼티가 아니라 컴포넌트가 정한다.** 프로퍼티는 전부 조건 없이 등록하고, 컴포넌트 자체가 `COND_NetGroup`이라 **그룹에 든 연결에만** 복제된다.
 
 ```cpp
 void UEPInventoryComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& Out) const
 {
     Super::GetLifetimeReplicatedProps(Out);
-    DOREPLIFETIME_CONDITION(UEPInventoryComponent, Entries,                 COND_OwnerOnly);
-    DOREPLIFETIME_CONDITION(UEPInventoryComponent, MaxSlots,                COND_OwnerOnly);
-    DOREPLIFETIME_CONDITION(UEPInventoryComponent, ActiveHotbarIndex,       COND_OwnerOnly);
+    // ★ 조건이 없다 — 걸러내는 것은 컴포넌트다 (헤더의 GetReplicationCondition)
+    //   COND_NetGroup은 프로퍼티에 쓸 수 없다 (UnrealNetwork.cpp:47 checkf)
+    DOREPLIFETIME(UEPInventoryComponent, Entries);
+    DOREPLIFETIME(UEPInventoryComponent, MaxSlots);
+    DOREPLIFETIME(UEPInventoryComponent, ActiveHotbarIndex);
+}
+
+// #include "Net/Subsystems/NetworkSubsystem.h"
+// #include "Net/Core/Misc/NetConditionGroupManager.h"
+void UEPInventoryComponent::BeginPlay()
+{
+    Super::BeginPlay();
+    if (!GetOwner()->HasAuthority()) return;
+
+    // ★★ 이 플래그가 없으면 GetReplicationCondition이 무시되고(ActorComponent.h:639)
+    //    프로퍼티가 조건 없이 '모두에게' 간다 — 남의 가방이 전부 보인다.
+    //    새는 쪽이 아니라 안 가는 쪽으로 실패시킨다 (fail closed)
+    if (!ensureMsgf(GetOwner()->IsUsingRegisteredSubObjectList(),
+            TEXT("[Inventory] %s: bReplicateUsingRegisteredSubObjectList가 꺼져 있다 — 복제를 끈다"),
+            *GetNameSafe(GetOwner())))
+    {
+        SetIsReplicated(false);
+        return;
+    }
+
+    // 플레이어의 가방 = 엔진의 특수 그룹. 엔진이 COND_OwnerOnly로 판정한다 (DataChannel.cpp:4136-4138)
+    if (UNetworkSubsystem* Net = GetWorld()->GetSubsystem<UNetworkSubsystem>())
+        Net->GetNetConditionGroupManager().RegisterSubObjectInGroup(this, UE::Net::NetGroupOwner);
+}
+
+void UEPInventoryComponent::EndPlay(const EEndPlayReason::Type Reason)
+{
+    // ★ 그룹 관리자는 FObjectKey 맵이라 지우지 않으면 죽은 키가 남는다
+    if (GetOwner()->HasAuthority())
+        if (UNetworkSubsystem* Net = GetWorld()->GetSubsystem<UNetworkSubsystem>())
+            Net->GetNetConditionGroupManager().UnregisterSubObjectFromAllGroups(this);
+    Super::EndPlay(Reason);
 }
 ```
 
-조건 없이 복제하면 **모든 클라이언트가 모든 플레이어의 인벤토리를 받는다.** 패킷만 봐도 상대 소지품을 아는 치트가 되고, 8인 매치면 대역폭도 8배다. GAME.md의 "정보 은폐" 기조와 정면으로 어긋난다. 프로젝트 관례와도 일치한다 — `PlayerState::Kills` / `Extracted`가 이미 `COND_OwnerOnly`다.
+```cpp
+// AEPCharacter 생성자 — ★ 이 한 줄이 위 전체의 전제다
+bReplicateUsingRegisteredSubObjectList = true;   // 엔진 기본값은 false (ActorComponent.cpp:108)
+```
 
-> 나중에 "시체 루팅"이 생기면 남의 인벤토리를 봐야 하는데, 그때 **조건을 푸는 게 아니라** 시체 액터가 자기 인벤토리를 별도로 노출하는 방식으로 간다. 살아있는 플레이어의 가방은 끝까지 소유자 전용이다.
+> **프로젝트에 `ReplicateSubObjects` 재정의가 없어** 이 플래그를 켜도 충돌하는 코드가 없다. 켜면 캐릭터의 다른 복제 컴포넌트(`UEPCombatComponent` 등)도 등록 목록으로 복제되는데, 그쪽은 `GetReplicationCondition()`을 재정의하지 않으므로 기본값 `COND_None`(= 지금과 같음)이다.
+
+**왜 프로퍼티 `COND_OwnerOnly`가 아닌가.** 그 조건은 **소유 연결이 있는 액터**에서만 뜻이 있다. 같은 컴포넌트를 월드 상자 · 시체 · 차량(§7-1, 사망 드랍 §8 미정 #4)에 달면 소유 연결이 없어 **아무에게도 안 간다** — 그날 복제 조건을 고쳐야 했다. 컴포넌트 단위 그룹이면:
+
+| 소유자 | 등록할 그룹 | 언제 |
+|---|---|---|
+| 플레이어 | `UE::Net::NetGroupOwner` | **지금** (위 `BeginPlay`) |
+| 상자 · 시체 | 컴포넌트 고유 그룹 + 여는 사람의 PC를 `IncludeInNetConditionGroup` / 닫으면 `RemoveFromNetConditionGroup` (`PlayerController.h:1668-1671`) | §7-1 |
+| 팀원 공유(기획에 오면) | 팀 그룹을 **하나 더** 등록 — 그룹은 여럿을 동시에 가질 수 있다(`NetConditionGroupManager.h:46-47`) | 그때 |
+
+**뒤의 둘은 전부 추가다** — 위 코드는 한 글자도 안 바뀐다. 레거시 복제(`DataChannel.cpp:4128-4148`)와 Iris(`ReplicationSystem.cpp:130`) 둘 다 이 그룹을 지원한다.
+
+조건 없이 복제하면 **모든 클라이언트가 모든 플레이어의 인벤토리를 받는다.** 패킷만 봐도 상대 소지품을 아는 치트가 되고, 8인 매치면 대역폭도 8배다. GAME.md의 "정보 은폐" 기조와 정면으로 어긋난다 — **그래서 플래그가 빠졌을 때 새지 않고 끊기게** 만든다.
 
 `MaxSlots`도 복제한다 — UI가 `UsedSlots / MaxSlots` 게이지를 그려야 한다.
 
-> **`State`를 소유 클라에 복제해도 되는 이유:** `COND_OwnerOnly`라 자기 가방뿐이다. 남의 잔탄이 새어나가는 지점은 **바닥 픽업**이고 거기서 막았다 (Step 01). 그리고 이 복제 덕분에 **가방 속 두 번째 소총의 잔탄을 UI에 표시할 수 있다** — 서버 전용 인스턴스 방식에서는 불가능했던 것이다.
+> **`State`를 소유 클라에 복제해도 되는 이유:** 소유자 그룹이라 자기 가방뿐이다. `ItemUid`는 그 안에서도 `NotReplicated`라 안 간다. 남의 잔탄이 새어나가는 지점은 **바닥 픽업**이고 거기서 막았다 (Step 01). 그리고 이 복제 덕분에 **가방 속 두 번째 소총의 잔탄을 UI에 표시할 수 있다** — 서버 전용 인스턴스 방식에서는 불가능했던 것이다.
 
 ### ★ 엔트리 포인터를 밖으로 내보내지 않는다
 
@@ -1544,7 +1749,7 @@ void UEPInventoryComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>
 
 ### 부착 위치는 Character
 
-`AEPCharacter` 생성자에 `CombatComponent`/`RewindComponent` 옆으로 추가한다.
+`AEPCharacter` 생성자에 `CombatComponent`/`RewindComponent` 옆으로 추가한다. **같은 생성자에 `bReplicateUsingRegisteredSubObjectList = true;`** — 빠뜨리면 인벤토리가 아무에게도 복제되지 않는다(위 "가시성" 절의 fail closed).
 
 타르코프식은 **사망 시 소지품 손실**이 규칙이므로(GAME.md 코어 루프) Character와 수명을 같이하는 것이 규칙과 일치한다. PlayerState에 두면 사망 시 명시적으로 비워야 하고 "비우는 걸 깜빡하는" 버그의 자리가 생긴다.
 
@@ -1563,9 +1768,23 @@ int32 UEPInventoryComponent::AddItem(int32 Container, FName ItemId,
     const FEPItemData* Data = Defs() ? Defs()->FindData(ItemId) : nullptr;
     if (!Data) return INDEX_NONE;
 
+    // ★★ 정체 검사는 합치기 **앞**이다 (2026-10-08, D-104)
+    //   합치기는 InsertEntry에 닿지 않고 성공을 돌려준다. 여기서 안 보면 정체 없는 State나
+    //   이미 가진 ItemUid의 사본이 **수량만 올리고** 아무 진단도 없다
+    //   정상적인 합치기(들어오는 정체가 이 컴포넌트에 없다)는 통과한다 — 받는 쪽 정체가 남는다(D-098)
+    if (!CheckIdentity(ItemId, InState)) return INDEX_NONE;
+
     // ★ 균질 아이템은 합친다. 칸이 안 늘어나므로 칸 검사보다 앞에 온다
     if (Data->bFungible)
     {
+        // ★★ 균질 아이템은 Stats를 갖지 않는다 (2026-10-08, D-108)
+        //   합치기는 들어온 State에서 Charges만 더하고 Stats는 진단 없이 버린다
+        //   처음 생기는 균질 엔트리도, 합쳐지는 균질 엔트리도 이 분기를 지난다
+        //   (AddSubtree도 원소가 하나면 여기에 위임한다 — 03-4). CheckIdentity와 같은 자리·같은 형태
+        if (!ensureMsgf(InState.Stats.IsEmpty(),
+                TEXT("[Inventory] 균질 아이템이 Stats를 가졌다 (%s)"), *ItemId.ToString()))
+            return INDEX_NONE;
+
         const int32 Id = FindFungibleEntryId(Container, ItemId);   // ★★ 컨테이너 안에서만
         if (Id != INDEX_NONE)
         {
@@ -1583,43 +1802,66 @@ int32 UEPInventoryComponent::AddItem(int32 Container, FName ItemId,
 int32 UEPInventoryComponent::InsertEntry(int32 Parent, FName ItemId,
                                          const FEPItemState& State, FName SlotId)
 {
-    FScopedInventoryNotify Guard(this);
+    // ★★ 정체 검사 (2026-10-07, D-098). 번호를 발급하기 **전**이다 — 거절해도 번호를 안 태운다 (발급은 리스트 Append, D-114)
+    //   AddItem이 이미 봤지만 여기서도 본다 — InsertEntry로 들어오는 문이 하나라도 늘면 그쪽이 빠뜨린다
+    if (!CheckIdentity(ItemId, State)) return INDEX_NONE;
 
-    const int32 NewId = NextEntryId++;       // ★ 참조보다 먼저 뜬다
+    FScopedInventoryNotify Guard(this);      // ★ 키 계산이 재정규화(쓰기)를 부를 수 있다 — 가드가 그 앞이다
 
     // ★★ 키를 **배열에 넣기 전에** 구한다 (13차, 함정 4x)
     //   먼저 AddDefaulted하면 그 원소(SortKey=0)가 자기 키 공간의 형제로 잡혀
     //   "빈 컨테이너면 0" 분기가 죽고, 형제 키가 전부 음수인 컨테이너에서 최대가 0이 된다
     // ★ SortKey는 여기서 발급한다 — 형제 맨 뒤. 호출자가 정하지 않는다 (11차)
     //   ★★ 슬롯 여부로 갈리지 않는다. 슬롯에 든 것도 키를 갖는다 — 아래 "키 공간" 절
-    //   AddSubtree만 예외다. 거기서는 스냅샷의 키를 그대로 쓴다 (03-4)
-    const int32 NewKey = KeySpace_NextAtEnd(Parent);
+    //   AddSubtree만 예외다. 거기서는 스냅샷의 키를 AppendEntry에 바로 넘긴다 (03-4)
+    const int64 NewKey = KeySpace_NextAtEnd(Parent);
 
-    FEPInventoryEntry& E = Entries.Items.AddDefaulted_GetRef();
-    E.EntryId       = NewId;
-    E.ParentEntryId = Parent;
-    E.SlotId        = SlotId;
-    E.ItemId        = ItemId;
-    E.State         = State;                 // ★ 값 복사. 잔탄이 여기서 보존된다
-    E.SortKey       = NewKey;
+    return AppendEntry(Parent, ItemId, State, SlotId, NewKey);
+}
 
-    Entries.MarkItemDirty(E);
-    return NewId;                            // ★ E.EntryId가 아니라 미리 뜬 값
+// ★★ InsertEntry의 몸통 (2026-10-08, D-106). **색인을 읽지 않는다** — 그게 이 함수가 따로 있는 이유다
+//   AddSubtree가 원소마다 InsertEntry를 부르면 정체 검사·키 계산이 매번 색인을 읽고, 직전 원소의
+//   MarkIndexDirty 때문에 매번 O(N)으로 다시 만든다. 검사와 키를 미리 끝낸 쪽은 이것만 부른다
+int32 UEPInventoryComponent::AppendEntry(int32 Parent, FName ItemId, const FEPItemState& State,
+                                         FName SlotId, int64 SortKey)
+{
+    FScopedInventoryNotify Guard(this);      // ★ 리스트는 알림을 모른다 — 가드는 여기 남는다 (D-114)
+    // 번호 발급 · 추가 · MarkItemDirty · 색인 무효화 — 리스트 Append (2026-10-11, D-113 · D-114, 03-A-부록)
+    return Entries.Append(Parent, ItemId, State, SlotId, SortKey);
+}
+
+// ★ 정체 검사 두 줄 (D-098 · D-104). 부르는 곳: AddItem(합치기 앞) · InsertEntry
+//   ① 정체 없는 아이템 = MakeItemState를 안 지나고 손으로 만든 State다. 발급 지점이 하나라는 계약 위반
+//   ② 이미 있는 정체 = 값 복사로 같은 아이템이 둘이 되려는 순간이다 (dupe)
+bool UEPInventoryComponent::CheckIdentity(FName ItemId, const FEPItemState& State) const
+{
+    if (!ensureMsgf(State.ItemUid.IsValid(),
+            TEXT("[Inventory] ItemUid 없는 State: %s — MakeItemState를 지나지 않았다"), *ItemId.ToString()))
+        return false;
+    if (!ensureMsgf(!Entries.EnsureIndex().IdByUid.Contains(State.ItemUid),
+            TEXT("[Inventory] ItemUid 중복: %s (%s)"), *ItemId.ToString(), *State.ItemUid.ToString()))
+        return false;
+    return true;
 }
 
 // ★★ 키 공간은 "부모가 같은 것 전부"다 — 슬롯 여부를 보지 않는다 (11차 검수)
 //   GetSortedContents를 쓰면 안 된다. 그건 "그릴 것"을 고르는 함수이지 키 공간이 아니다
-int32 UEPInventoryComponent::KeySpace_NextAtEnd(int32 Container)
+//   ★ 색인의 ChildrenOf가 정확히 "부모가 같은 것 전부"다 (슬롯 포함) — 배열 전체를 돌지 않는다
+int64 UEPInventoryComponent::KeySpace_NextAtEnd(int32 Container)
 {
-    int32 Max = 0; bool bAny = false;
-    for (const FEPInventoryEntry& E : Entries.Items)
-        if (E.ParentEntryId == Container)
-        { Max = bAny ? FMath::Max(Max, E.SortKey) : E.SortKey; bAny = true; }
+    int64 Max = 0; bool bAny = false;
+    const FEPInventoryIndex& Ix = Entries.EnsureIndex();
+    if (const TArray<int32>* Kids = Ix.ChildrenOf.Find(Container))
+        for (int32 Id : *Kids)
+        {
+            const int64 K = Entries.Items[Ix.IndexById[Id]].SortKey;
+            Max = bAny ? FMath::Max(Max, K) : K; bAny = true;
+        }
 
     if (!bAny) return 0;
 
     // ★ 유일한 발급 지점이므로 상한 가드도 여기 하나면 된다 (함정 4q)
-    if (Max > MAX_int32 - SortKeyGuard)
+    if (Max > MAX_int64 - SortKeyGuard)
     {
         RenormalizeSortKeys(Container);          // 0, Step, 2*Step... 으로 다시 깐다
         return KeySpace_NextAtEnd(Container);        // 한 번만 재귀한다 — 아래 ★
@@ -1637,7 +1879,7 @@ bool UEPInventoryComponent::CanFit(int32 Container, FName ItemId) const
 
 > **칸 판정을 `AddItem`에 인라인으로 다시 쓰지 않는다.** `CanFit`은 `AddSubtree`(03-4)와 상호작용 프롬프트도 쓰므로 판정식이 세 곳에 흩어지면 반드시 어긋난다.
 
-> **가드가 있으면 알림이 `return` 뒤에 나가므로 `E`가 댕글링할 창이 없다.** 그래도 값을 미리 뜨는 형태는 유지한다 — 나중에 누가 가드를 빼도 안전하다.
+> **가드가 있으면 알림이 `return` 뒤에 나가므로 `E`가 댕글링할 창이 없다.** 그래도 리스트 `Append`(03-A-부록)는 값을 미리 뜨는 형태를 유지한다 — 나중에 누가 가드를 빼도 안전하다.
 
 ### ★★ `FindFungibleEntryId`에 컨테이너 인자가 없으면 돈이 컨테이너를 탈출한다
 
@@ -1650,24 +1892,11 @@ bool UEPInventoryComponent::CanFit(int32 Container, FName ItemId) const
 > **완료 조건 5("가방이 꽉 차도 현금·탄약은 들어간다")는 그대로 성립한다.** 03-4의 본체 → 배낭 2단계가 커버한다 — 본체 조회 실패 → 본체 `CanFit` 실패 → 배낭 조회 성공 → 합산.
 
 ```cpp
+// ★ 합산은 EnsureIndex가 재구축할 때 한 번 한다 (2026-10-07, D-100) — 여기서는 읽기만
+//   "슬롯에 든 것은 칸을 안 먹는다"와 "DT에 없으면 ensure"는 그 함수 안에 있다 (03-A-부록)
 int32 UEPInventoryComponent::GetUsedSlots(int32 Container) const
 {
-    const UEPItemDefinitionSubsystem* D = Defs();
-    if (!D) return 0;
-
-    int32 Sum = 0;
-    for (const FEPInventoryEntry& E : Entries.Items)
-    {
-        if (E.ParentEntryId != Container) continue;
-        if (!E.SlotId.IsNone())             continue;   // ★ 슬롯에 든 것은 칸을 안 먹는다
-                                                        //   이 한 줄이 "칸을 먹는다"의 정의 전체다
-
-        const FEPItemData* Row = D->FindData(E.ItemId);
-        if (!ensureMsgf(Row, TEXT("[Inventory] DT에 없는 ItemId: %s"), *E.ItemId.ToString()))
-            continue;                                   // ★ 아래 참조
-        Sum += Row->SlotSize;
-    }
-    return Sum;
+    return Entries.EnsureIndex().UsedSlotsOf.FindRef(Container);   // 없으면 0 — 빈 컨테이너다
 }
 
 int32 UEPInventoryComponent::GetCapacity(int32 Container) const
@@ -1757,15 +1986,20 @@ check(GetOwner()->HasAuthority());                    // ❌ Shipping에서도 �
 
 `CLAUDE.md §Conventions`와 기존 코드가 전부 early return이다. 인벤토리만 다른 방식을 쓸 이유가 없다.
 
-### `UsedSlots`를 캐시하지 않는다
+### ★ `UsedSlots`는 색인의 일부다 — 고쳐 쓰는 캐시가 아니다 (2026-10-07, D-100이 옛 "캐시하지 않는다"를 대체)
 
-엔트리가 20~30개고 조회가 `TMap` 룩업이라 **수백 나노초**다. 캐시하면 **추가·제거·복제 수신 세 경로를 전부 갱신해야 하고**, 하나만 빠져도 "가방이 안 찼는데 가득 찼다"가 된다. 그 버그가 압도적으로 비싸다.
+**옛 판본은 *"엔트리가 20~30개라 매번 세도 수백 나노초"* 를 근거로 캐시를 금지했다.** 그 전제가 빠졌다 — 스태시 · 시체 루팅에서 N은 수천이고, 선형 조회가 겹치면 O(N²)이 된다(재정규화가 형제마다 `AssignSortKey`, UI가 컨테이너마다 `GetUsedSlots`).
 
-**클라이언트도 같은 함수를 쓴다.** `COND_OwnerOnly`로 엔트리 전부를 받고 `SlotSize`는 DT 조회로 나오므로 복제할 이유가 없다.
+**금지 사유 둘은 형태를 바꾸면 사라진다.**
 
-> **성능이 걱정되면 캐시가 아니라 폴링을 없앤다.** UI는 수신 1회당 1회 오는 콜백으로 갱신하므로(03-7) 애초에 매 틱 부르지 않는다.
+| 옛 사유 | 왜 이제 성립하지 않나 |
+|---|---|
+| *"추가 · 제거 · 복제 수신 세 경로를 전부 갱신해야 하고 하나만 빠져도 틀린다"* | **갱신하지 않는다. 무효화만 한다.** 무효화 지점은 단일 쓰기 지점 표에 묶인 셋(`InsertEntry` · `RemoveSelf` · `MoveEntry`) ＋ 클라 `PostReplicatedReceive` 하나이고, 그 표는 이미 성실히 관리된다(03-7) |
+| *"부모 없는 자식이 먼저 도착하면 캐시를 어떻게 하나"* | **통째로 다시 만든다.** 도착 순서와 무관하다 — 다음 수신이 무효화하고 다음 조회가 처음부터 다시 센다 |
 
-> **★ 복제 순서 방어가 필요 없는 이유도 여기 있다.** 자식이 부모보다 먼저 도착하면 `GetUsedSlots(INDEX_NONE)`이 그 자식을 안 세고(`ParentEntryId != INDEX_NONE`), 배낭 구획은 아예 안 그려진다(`GetEntryInSlot(INDEX_NONE, "Back")`이 아직 `INDEX_NONE`). **잠깐 안 보이다가 다음 수신에서 저절로 맞는다.** 모든 파생값을 매 갱신마다 처음부터 다시 계산하기 때문이고, 캐시했다면 "부모 없는 자식이 도착했을 때 캐시를 어떻게 하나"가 진짜 문제가 됐다. **순서 방어 코드를 넣지 마라.**
+**클라이언트도 같은 함수를 쓴다.** 엔트리 전부를 받고 `SlotSize`는 DT 조회로 나오므로 복제할 이유가 없다. 색인은 진실이 아니라 **파생**이다.
+
+> **★ 복제 순서 방어가 필요 없는 이유는 그대로다.** 자식이 부모보다 먼저 도착하면 재구축된 색인에서 `UsedSlotsOf[INDEX_NONE]`이 그 자식을 안 세고, 배낭 구획은 아예 안 그려진다(`GetEntryInSlot(INDEX_NONE, "Back")`이 아직 `INDEX_NONE`). **잠깐 안 보이다가 다음 수신에서 저절로 맞는다.** 색인이 매 수신마다 처음부터 다시 만들어지기 때문이다. **순서 방어 코드를 넣지 마라.**
 
 ### ★ 균질 아이템 합치기 — 스택이 아니다
 
@@ -1775,12 +2009,14 @@ check(GetOwner()->HasAuthority());                    // ❌ Shipping에서도 �
 |---|---|---|
 | 현금뭉치 | ✅ | 10,000원 두 뭉치를 구별할 이유가 없다 |
 | 탄약상자 | ✅ | 탄종은 `ItemId`가 이미 가른다 (`AmmoBox_545` / `_762`) |
-| 무기 | ❌ | `Durability`와 부착물 자식을 갖는다 |
+| 무기 | ❌ | 내구도 같은 `Stats`와 부착물 자식을 갖는다 |
 | 탄창 | ❌ | 미정 #1이 `AmmoType`을 붙일 수 있다 |
 
 **스택의 부담이 하나도 안 따라오는 이유는 칸 수가 `Charges`와 무관하기 때문이다.** `SlotSize × Quantity` 계산도, 부분 획득도, 병합 순서 규칙도 성립하지 않는다. 합칠 대상은 최대 하나다.
 
 **부수 이득:** 가방이 꽉 차도 **돈과 탄약은 항상 들어간다** — 부분 획득을 없애며 잃은 완충 장치가 여기서 복원된다.
+
+> **★ 합치면 정체 하나가 사라진다 (2026-10-07, D-098).** `AddItem`이 `AddEntryCharges(Id, …)`로 끝나므로 **받는 엔트리의 `ItemUid`가 남고 들어온 쪽(`InState.ItemUid`)은 버려진다.** *"이 개체를 없애고 기존 개체의 숫자를 올린다"* 가 합치기의 정의이므로 맞는 동작이다. 복제(dupe) 감사 로그가 생기면 **여기가 "정체가 소멸하는" 정상 지점**이라 감사가 이 경로를 알아야 한다 — 로그 한 줄을 붙일 자리가 여기 하나다. 분할이 생기면 반대로 **새 아이템이 생기는 경로**이므로 새 `ItemUid`가 필요하다 — 발급을 `MakeItemState` 하나에 둔다는 규칙과 어떻게 맞출지는 분할이 기획에 들어올 때 정한다(지금 이름이 없다).
 
 ### ★ 쓰기 지점을 하나로 — `Set`이 진짜고 `Add`는 위임이다
 
@@ -1789,14 +2025,13 @@ void UEPInventoryComponent::SetEntryCharges(int32 EntryId, int32 NewCharges)
 {
     if (!GetOwner()->HasAuthority()) return;
 
-    for (FEPInventoryEntry& E : Entries.Items)
-        if (E.EntryId == EntryId)
-        {
-            FScopedInventoryNotify Guard(this);
-            E.State.Charges = FMath::Max(0, NewCharges);   // ★ 클램프는 여기 한 곳
-            Entries.MarkItemDirty(E);                      // ★ MarkItemDirty도 여기 한 곳
-            return;
-        }
+    FEPInventoryEntry* E = Entries.FindEntryMutable(EntryId);   // ★ 배열 원소다 (03-A-부록)
+    if (!E) return;
+
+    FScopedInventoryNotify Guard(this);
+    E->State.Charges = FMath::Max(0, NewCharges);      // ★ 클램프는 여기 한 곳
+    Entries.MarkItemDirty(*E);                         // ★ MarkItemDirty도 여기 한 곳
+    // 색인은 무효화하지 않는다 — Charges는 색인에 없다
 }
 
 void UEPInventoryComponent::AddEntryCharges(int32 EntryId, int32 Delta)
@@ -1819,7 +2054,7 @@ void UEPInventoryComponent::AddEntryCharges(int32 EntryId, int32 Delta)
 - **`ConsumeCharges(Id, N)`는 만들지 않는다.** `AddEntryCharges(Id, -N)`이다 — 이쪽은 진짜로 부호만 다르다
 - **`SetEntryCharges`가 public인 것이 03-2의 규칙 위반이 아니다.** 금지한 것은 **원시 엔트리를 내보내는 것**이고, 그 금지의 목적이 "수정은 API로만"이므로 API가 있어야 성립한다
 
-> **`bMergeable`이 아니라 `bFungible`인 이유:** "합쳐도 되는가"는 결과고 "구별할 근거가 없다"가 원인이다. 이 이름을 쓰면 **"균질 아이템은 `Durability`를 쓰지 않는다"** 가 불변식으로 따라와서, *합칠 때 내구도는 어떻게 하나*라는 질문이 아예 발생하지 않는다.
+> **`bMergeable`이 아니라 `bFungible`인 이유:** "합쳐도 되는가"는 결과고 "구별할 근거가 없다"가 원인이다. 이 이름을 쓰면 **"균질 아이템은 `Stats`를 갖지 않는다"** 가 불변식으로 따라와서, *합칠 때 내구도는 어떻게 하나*라는 질문이 아예 발생하지 않는다. `AddItem`의 `bFungible` 분기가 검사한다(D-108).
 
 > **스택이 없어 사라진 것:** 병합 순서 규칙, `MaxStack` 단위 분할, 부분 삽입 반환값, 고아 인스턴스 방지를 위한 "슬롯 확보 후 생성" 순서.
 
@@ -1839,46 +2074,137 @@ void UEPInventoryComponent::AddEntryCharges(int32 EntryId, int32 Delta)
 | `FindFungibleEntryId` | `AddItem` | 현금이 합쳐지지 않고 엔트리가 계속 는다 |
 | `GetEntryInSlot` | `CanPlaceInSlot` 검사 4 · `GetEquippedBackpack` | `return 0`이면 **0번 엔트리가 모든 슬롯을 채운 것으로 보인다** |
 | `GetEquippedEntryId` | Step 05 · `RemoveEntryInternal` ① | — |
-| `RemoveSelf` | `RemoveEntryInternal` ③ | **아무것도 안 지워진다** (03-B) |
+| `RemoveSelf` | `RemoveEntry` ③ — 재귀가 끝난 뒤 한 번 (D-106) | **아무것도 안 지워진다** (03-B) |
 | `AssignSortKey` | `InsertEntry`(간접) · `RenormalizeSortKeys` · `ReorderEntryInternal` | **순서가 안 바뀐다.** 완료 조건 16~19가 전부 죽는다 |
 | `KeySpace_Min` · `KeySpace_NextAbove` · `KeyOf` | `ReorderEntryInternal` | 같은 위 |
+| **`EnsureIndex`** (2026-10-07. 2026-10-11부터 리스트, D-113) | **위 전부** | 모든 조회가 빈 결과 — 아무것도 안 되는데 조용하다 |
+| **`FindEntryPtr` · `FindEntryMutable`** (2026-10-07. 2026-10-11부터 리스트, D-113) | 쓰기 지점 전부 · `FindEntry` | 같은 위 |
+| **`SetEntryStat` · `GetEntryStat`** (2026-10-07) | **지금은 없다** — 소비자가 오는 단계 | — (호출자 0. 스키마 때문에 지금 둔다, D-099) |
 
 ---
 
-### 조회 셋 — `Entries.Items`를 한 번 돈다
+### ★★ 파생 색인 — `Entries.Items`를 직접 도는 유일한 함수 (2026-10-07, D-100)
+
+**아래 모든 조회는 이 함수가 만든 색인을 지난다.** 배열을 처음부터 끝까지 도는 곳은 여기 하나다.
+
+**2026-10-11부터 리스트의 함수다 (D-113).** 본문은 같다. 달라진 것은 둘 — `Entries.` 접두어가 빠지고, 서브시스템을 컴포넌트의 private `Defs()`가 아니라 `Owner`로 얻는다.
+
+```cpp
+const FEPInventoryIndex& FEPInventoryList::EnsureIndex() const
+{
+    if (!bIndexDirty) return Index;
+
+    Index.IndexById.Reset();
+    Index.ChildrenOf.Reset();
+    Index.IdByUid.Reset();
+    Index.UsedSlotsOf.Reset();
+
+    // ★ Owner로 얻는다 — 컴포넌트의 private Defs()에 기대면 friend가 다시 필요하다 (D-113)
+    //   Owner는 컴포넌트 생성자가 채운다(03-2). 없으면 옛 Defs()가 null일 때와 같다 — 아래 ensure가 운다
+    const UEPItemDefinitionSubsystem* D = Owner ? UEPItemDefinitionSubsystem::Get(Owner.Get()) : nullptr;
+    for (int32 i = 0; i < Items.Num(); ++i)
+    {
+        const FEPInventoryEntry& E = Items[i];
+        Index.IndexById.Add(E.EntryId, i);
+        Index.ChildrenOf.FindOrAdd(E.ParentEntryId).Add(E.EntryId);   // ★ 슬롯에 든 것도 넣는다 — 키 공간이다
+        if (E.State.ItemUid.IsValid())                                 // 클라는 Uid가 0이다 (NotReplicated)
+            Index.IdByUid.Add(E.State.ItemUid, E.EntryId);
+
+        // ★ "칸을 먹는다"의 정의 전체가 이 두 줄이다 — 슬롯에 든 것은 안 먹는다
+        if (!E.SlotId.IsNone()) continue;
+        const FEPItemData* Row = D ? D->FindData(E.ItemId) : nullptr;
+        if (!ensureMsgf(Row, TEXT("[Inventory] DT에 없는 ItemId: %s"), *E.ItemId.ToString()))
+            continue;                                                  // ★ 03-3 "FindData() null" 참조
+        Index.UsedSlotsOf.FindOrAdd(E.ParentEntryId) += Row->SlotSize;
+    }
+
+    bIndexDirty = false;
+    return Index;
+}
+```
+
+**무효화하는 곳은 넷뿐이다.** 색인이 담는 것(위치 · 부모 · 슬롯 · 정체 · 칸)을 바꾸는 곳만이다. **2026-10-11부터 셋은 리스트가 스스로 하고, 손으로 부르는 곳은 `MoveEntry` 하나다 (D-113).**
+
+| 무효화한다 | 누가 | 무효화하지 않는다 |
+|---|---|---|
+| 원소가 는다 — `InsertEntry` · `AddSubtree`의 `AppendEntry` | **리스트 `Append`가 스스로** | `AssignSortKey` — 키는 색인에 없다 |
+| 원소가 준다 ＋ **`RemoveAtSwap`이 인덱스를 옮긴다** — `RemoveSelf` | **리스트 `RemoveAll`이 스스로** | `SetEntryCharges` — 칸과 무관하다 |
+| **클라** 수신 — 클라의 유일한 변경 경로 (03-7) | **리스트 `PostReplicatedReceive`가 스스로** | `SetEntryStat` — 같다 |
+| 부모 · 슬롯이 바뀐다 — `MoveEntry` | **컴포넌트가 손으로** `Entries.MarkIndexDirty()` | |
+
+> **★ 첫 열이 단일 쓰기 지점 표(03-2)의 부분집합이다.** 새 규칙이 아니라 이미 지키는 표에 한 줄씩 붙인 것이다. 쓰기 지점을 새로 만들면 그 표에 올리면서 이 열도 같이 본다. **원소를 더하거나 빼는 쓰기 지점은 리스트의 `Append` · `RemoveAll`을 지나므로 무효화를 빠뜨릴 문법이 없다.** 남는 위험은 필드로 구조를 바꾸는 쓰기(지금은 `MoveEntry`)뿐이다.
+
+> **★ 통째로 다시 만든다 — 고쳐 쓰지 않는다.** `RemoveAtSwap`이 마지막 원소를 빈자리로 옮기므로 증분 갱신을 하려면 *"옮겨진 원소의 인덱스를 고친다"* 는 규칙이 생기고, 그 규칙이 곧 옛 판본이 캐시를 금지한 사유다. 재구축은 O(N) 한 번이다.
+>
+> **★★ 단, "무효화 사이에 조회가 없을 때"만 한 번이다** (2026-10-08, D-106이 옛 문장 *"한 조작 안에서 무효화가 여러 번 나도 다음 조회 때 한 번만 돈다"* 를 대체한다). 넣기 · 지우기 사이마다 색인을 읽으면 **매번** 다시 만든다 — 원소 K개짜리 서브트리면 O(K·N)이다. 그래서 서브트리를 다루는 둘은 **일괄 경로**다.
+>
+> | | 색인을 읽는 곳 | 구조를 바꾸는 곳 |
+> |---|---|---|
+> | `AddSubtree` (03-B) | 넣기 전 검사 · 루트 키 — **루프 앞 한 번** | 루프 안 `AppendEntry` — **색인을 안 읽는다** |
+> | `RemoveEntry` | 재귀(존재 · 장착 · 스냅샷 · 자식) — **표시만 하므로 색인이 안 낡는다** | 재귀 뒤 `RemoveSelf(Doomed)` **한 번** |
+>
+> **새 쓰기 경로를 만들 때 이 표를 본다.** 루프 안에서 *"읽고 → 바꾸고 → 읽고"* 가 되면 그 경로가 O(K·N)이다.
+
+> **★ `mutable`인 이유.** 조회 함수는 `const`이고 색인은 관찰 가능한 상태가 아니다 — `FindEntry`가 색인을 만들든 말든 돌려주는 값은 같다. **2026-10-11부터 `mutable`은 리스트의 `Index` · `bIndexDirty`에 붙는다. 컴포넌트에는 없다** (03-1 "const 규칙").
+
+---
+
+### 내부 접근 둘 — 쓰기 지점이 배열 원소에 닿는 유일한 통로
+
+```cpp
+// 리스트의 멤버다 (2026-10-11, D-113). 선언은 03-1 리스트 블록
+// ★ 컴포넌트 밖으로 내보내지 않는다 — 다음 구조 변경(Append · RemoveAll · MoveEntry)까지만 유효하다
+const FEPInventoryEntry* FEPInventoryList::FindEntryPtr(int32 EntryId) const
+{
+    const int32* Idx = EnsureIndex().IndexById.Find(EntryId);
+    return Idx ? &Items[*Idx] : nullptr;
+}
+
+FEPInventoryEntry* FEPInventoryList::FindEntryMutable(int32 EntryId)
+{
+    const int32* Idx = EnsureIndex().IndexById.Find(EntryId);
+    return Idx ? &Items[*Idx] : nullptr;
+}
+```
+
+> **★ public인데 새지 않는 이유.** 리스트는 컴포넌트의 protected 멤버 `Entries`로만 존재한다. 밖에서 이 두 함수에 닿을 길은 컴포넌트가 리스트를 내보낼 때뿐이고, 컴포넌트는 `GetEntries()`로 **const 배열**만 내보낸다(03-2).
+
+> **★★ 함정 4v가 형태로 막힌다.** 13차의 사고는 *"`FindEntry`의 복사본에 썼다"* 였다. 쓰기 지점이 전부 `FindEntryMutable`로 원소를 잡으면 **복사본에 쓸 문법이 없다** — 포인터가 배열 원소를 가리키기 때문이다. 옛 판본이 쓰기 지점마다 `for (FEPInventoryEntry& E : Entries.Items)`를 반복한 것이 이 한 함수로 모인다.
+
+> **★ 들고 있다가 구조를 바꾸지 않는다.** `FindEntryMutable`로 잡은 뒤 `InsertEntry`·`RemoveSelf`를 부르면 배열이 재할당되거나 원소가 옮겨질 수 있다. 쓰기 지점 안에서 **잡고 → 필드 몇 개 쓰고 → `MarkItemDirty` → 끝** 이 전부다.
+
+---
+
+### 조회 셋 — 색인 한 번
 
 ```cpp
 // 값 복사로 돌려준다. 배열 원소의 포인터를 밖으로 내보내지 않는다 (03-2)
 bool UEPInventoryComponent::FindEntry(int32 EntryId, FEPInventoryEntry& Out) const
 {
-    for (const FEPInventoryEntry& E : Entries.Items)
-    {
-        if (E.EntryId != EntryId) continue;
-        Out = E;
-        return true;
-    }
-    return false;
+    const FEPInventoryEntry* E = Entries.FindEntryPtr(EntryId);
+    if (!E) return false;
+    Out = *E;
+    return true;
 }
 
 // 존재만 묻는다. 조작된 요청을 거르는 검사 1의 전부다
 bool UEPInventoryComponent::ContainsEntry(int32 EntryId) const
 {
-    for (const FEPInventoryEntry& E : Entries.Items)
-        if (E.EntryId == EntryId) return true;
-    return false;
+    return Entries.EnsureIndex().IndexById.Contains(EntryId);
 }
 
 // 같은 컨테이너 안의 같은 ItemId. ★★ Container 인자가 이 함수의 핵심이다
 int32 UEPInventoryComponent::FindFungibleEntryId(int32 Container, FName ItemId) const
 {
-    for (const FEPInventoryEntry& E : Entries.Items)
-        if (E.ParentEntryId == Container && E.ItemId == ItemId)
-            return E.EntryId;
+    const FEPInventoryIndex& Ix = Entries.EnsureIndex();
+    if (const TArray<int32>* Kids = Ix.ChildrenOf.Find(Container))
+        for (int32 Id : *Kids)
+            if (Entries.Items[Ix.IndexById[Id]].ItemId == ItemId) return Id;
     return INDEX_NONE;
 }
 ```
 
-> **★ `FindEntry`가 `bool` ＋ out 파라미터인 이유.** 엔트리를 포인터로 돌려주면 **호출자가 그것을 들고 있다가 배열이 재할당된 뒤에 쓴다.** `RemoveSelf`가 `RemoveAtSwap`을 하므로 그 순간이 실재한다. 그리고 **13차의 함정 4v가 정확히 이 함수 때문에 났다** — `FindEntry`는 **복사본**을 주므로 그 결과에 쓰면 컴파일되고 `true`를 반환하는데 배열은 안 바뀐다. **쓰려면 `for (FEPInventoryEntry& E : Entries.Items)`로 참조를 잡아야 한다.**
+> **★ `FindEntry`가 `bool` ＋ out 파라미터인 이유.** 엔트리를 포인터로 돌려주면 **호출자가 그것을 들고 있다가 배열이 재할당된 뒤에 쓴다.** `RemoveSelf`가 `RemoveAtSwap`을 하므로 그 순간이 실재한다. 그리고 **13차의 함정 4v가 정확히 이 함수 때문에 났다** — `FindEntry`는 **복사본**을 주므로 그 결과에 쓰면 컴파일되고 `true`를 반환하는데 배열은 안 바뀐다. **쓰려면 `FindEntryMutable`(위)로 잡는다.**
 
 > **★ `ContainsEntry`를 `FindEntry`로 대신하지 않는다.** `FEPInventoryEntry` 한 벌을 복사하는 비용이 붙고, 무엇보다 **버려질 out 변수를 호출부마다 선언하게 된다** — 검사 1이 그 모양이면 읽는 사람이 *"저 값을 쓰나?"* 를 매번 확인한다.
 
@@ -1895,9 +2221,10 @@ int32 UEPInventoryComponent::GetEntryInSlot(int32 Parent, FName SlotId) const
 {
     if (SlotId.IsNone()) return INDEX_NONE;      // ★ 수납은 슬롯이 아니다 — 첫 수납품을 돌려주면 안 된다
 
-    for (const FEPInventoryEntry& E : Entries.Items)
-        if (E.ParentEntryId == Parent && E.SlotId == SlotId)
-            return E.EntryId;
+    const FEPInventoryIndex& Ix = Entries.EnsureIndex();
+    if (const TArray<int32>* Kids = Ix.ChildrenOf.Find(Parent))
+        for (int32 Id : *Kids)
+            if (Entries.Items[Ix.IndexById[Id]].SlotId == SlotId) return Id;
     return INDEX_NONE;
 }
 
@@ -1919,98 +2246,168 @@ int32 UEPInventoryComponent::GetEquippedEntryId() const
 
 ---
 
-### 쓰기 둘 — 가드가 여기 붙는다
+### 쓰기 셋 — 가드와 무효화가 여기 붙는다
 
 ```cpp
-// 배열에서 빼고 MarkArrayDirty. 제거의 유일한 물리적 지점이다
-void UEPInventoryComponent::RemoveSelf(int32 EntryId)
+// 제거의 유일한 물리적 지점. 가드 + 리스트 RemoveAll 한 줄이다 (2026-10-11, D-113)
+// ★★ 한 번에 여럿을 지운다 — RemoveEntry가 서브트리 전체를 표시한 뒤 한 번 부른다 (2026-10-08, D-106)
+void UEPInventoryComponent::RemoveSelf(const TSet<int32>& Ids)
 {
-    FScopedInventoryNotify Guard(this);           // ★ 단일 쓰기 지점 (03-7)
-
-    for (int32 i = 0; i < Entries.Items.Num(); ++i)
-    {
-        if (Entries.Items[i].EntryId != EntryId) continue;
-
-        Entries.Items.RemoveAtSwap(i);            // ★ 순서는 SortKey가 들므로 Swap이어도 된다
-        Entries.MarkArrayDirty();                 // ★ MarkItemDirty가 아니다 — 항목이 사라졌다
-        return;
-    }
+    FScopedInventoryNotify Guard(this);           // ★ 단일 쓰기 지점 (03-7). 리스트는 알림을 모른다
+    Entries.RemoveAll(Ids);
 }
 
-// SortKey를 고치는 유일한 지점. 배열 원소의 참조를 잡는다
-void UEPInventoryComponent::AssignSortKey(int32 EntryId, int32 NewKey)
+// SortKey를 고치는 유일한 지점
+void UEPInventoryComponent::AssignSortKey(int32 EntryId, int64 NewKey)
 {
+    FEPInventoryEntry* E = Entries.FindEntryMutable(EntryId);   // ★★ 배열 원소다. 복사본이 아니다 (함정 4v)
+    if (!E || E->SortKey == NewKey) return;             // ★ 값이 같으면 델타를 안 보낸다 (함정 4u와 같은 취지)
+
     FScopedInventoryNotify Guard(this);           // ★ 단일 쓰기 지점 (03-7)
+    E->SortKey = NewKey;
+    Entries.MarkItemDirty(*E);
+    // ★ 색인은 무효화하지 않는다 — 키는 색인에 없다
+}
 
-    for (FEPInventoryEntry& E : Entries.Items)    // ★★ 참조다. FindEntry는 복사본이라 안 된다 (함정 4v)
-    {
-        if (E.EntryId != EntryId) continue;
-        if (E.SortKey == NewKey) return;          // ★ 값이 같으면 델타를 안 보낸다 (함정 4u와 같은 취지)
+// 종류별 수치의 유일한 쓰기 지점 (2026-10-07, D-099). 없으면 추가, 있으면 덮어쓴다
+// ★ 찾고 고치는 것은 FEPItemState::SetStat이 한다 (2026-10-11, D-113, 00-1). 여기는 권한 · 가드 · dirty
+void UEPInventoryComponent::SetEntryStat(int32 EntryId, FGameplayTag Tag, int32 Value)
+{
+    if (!GetOwner()->HasAuthority() || !Tag.IsValid()) return;
 
-        E.SortKey = NewKey;
-        Entries.MarkItemDirty(E);
-        return;
-    }
+    FEPInventoryEntry* E = Entries.FindEntryMutable(EntryId);
+    if (!E) return;
+
+    FScopedInventoryNotify Guard(this);
+    if (E->State.SetStat(Tag, Value))             // ★ 값이 같으면 false — 델타를 안 보낸다
+        Entries.MarkItemDirty(*E);
+    // ★ 색인은 무효화하지 않는다 — 수치는 색인에 없다
+}
+
+bool UEPInventoryComponent::GetEntryStat(int32 EntryId, FGameplayTag Tag, int32& OutValue) const
+{
+    const FEPInventoryEntry* E = Entries.FindEntryPtr(EntryId);
+    const FEPItemStat* S = E ? E->State.FindStat(Tag) : nullptr;
+    if (!S) return false;
+    OutValue = S->Value;
+    return true;
 }
 ```
 
-> **★★ `RemoveSelf`가 `MarkArrayDirty`인 것이 `MarkItemDirty`와 갈리는 유일한 자리다.** 나머지 넷은 **살아 있는 항목의 필드**를 고치므로 `MarkItemDirty(E)`이고, 여기만 **항목이 배열에서 사라진다.** 바꿔 쓰면 **삭제가 클라에 안 간다** — 서버에서는 없어졌는데 클라 화면에는 남아 있고, 그 항목을 클릭하면 `ContainsEntry`가 거짓이라 조용히 실패한다.
+> **★ 옛 본문과 동작이 같다.** 같은 값이면 가드만 세웠다 나가고(그때도 가드 소멸 때 `Broadcast`가 한 번 나갔다 — 03-7 "값이 안 바뀌어도 한 번 더 쏘는 경우"), 다른 값이면 바꾸고 `MarkItemDirty`다. 달라진 것은 찾기 · 고치기 코드가 `FEPItemState`로 간 것뿐이다.
 
-> **★ `RemoveAtSwap`을 써도 되는 이유는 11차가 만든 것이다.** 배열 순서에 의미가 없어졌기 때문이다 — 표시 순서는 `SortKey`가 들고 `GetSortedContents`가 정렬한다. **10차까지는 이 줄이 `RemoveAt`이어야 했다.** 그리고 `FastArraySerializer.h:54`가 애초에 수신 측 배열 순서를 보장하지 않으므로, **`RemoveAt`으로 바꿔도 얻는 것이 없다.**
+#### 리스트의 구조 변경 둘 (2026-10-11, D-113 · D-114)
 
-> **★ `AssignSortKey`의 `E.SortKey == NewKey` 조기 반환.** `RenormalizeSortKeys`가 N개를 전부 다시 깔 때 **대부분이 이미 같은 값**인 경우가 흔하고(재정규화 직후 또 부르면 전부 같다), 그때 무의미한 `MarkItemDirty` N개가 나간다. 12차가 `ReorderEntry`에 넣은 조기 반환(함정 4u)과 같은 취지다.
+**옛 `AppendEntry` 몸통과 옛 `RemoveSelf` 본문이 그대로 여기로 왔다.** 달라진 것은 `Entries.` 접두어가 빠지고 알림 가드가 컴포넌트에 남은 것이다.
 
-> **★ 가드가 둘 다에 있어야 한다.** `RemoveEntry` 하나가 배낭과 그 안 아이템 다섯을 지우면 `RemoveSelf`가 여섯 번 돌고, 가드가 없으면 **`Broadcast`가 여섯 번 나간다.** 03-7이 *"수신 1회당 1회"* 를 세운 것과 같은 이유를 서버 쪽에서 지키는 장치다.
+```cpp
+// 번호 발급 · 추가 · MarkItemDirty · 색인 무효화. 부르는 곳은 컴포넌트 AppendEntry 하나다
+int32 FEPInventoryList::Append(int32 Parent, FName ItemId, const FEPItemState& State,
+                               FName SlotId, int64 SortKey)
+{
+    const int32 NewId = NextEntryId++;       // ★ 참조보다 먼저 뜬다 (D-114)
+
+    FEPInventoryEntry& E = Items.AddDefaulted_GetRef();
+    E.EntryId       = NewId;
+    E.ParentEntryId = Parent;
+    E.SlotId        = SlotId;
+    E.ItemId        = ItemId;
+    E.State         = State;                 // ★ 값 복사. 잔탄 · 정체가 여기서 보존된다
+    E.SortKey       = SortKey;
+
+    MarkItemDirty(E);
+    MarkIndexDirty();                        // ★ 구조가 바뀌었다 (D-100). 깃발 하나라 여러 번 세워도 싸다
+    return NewId;                            // ★ E.EntryId가 아니라 미리 뜬 값
+}
+
+// 위치를 모아 큰 것부터 지우고 MarkArrayDirty · 색인 무효화. 부르는 곳은 컴포넌트 RemoveSelf 하나다
+void FEPInventoryList::RemoveAll(const TSet<int32>& Ids)
+{
+    // 색인은 여기서 **한 번** 읽는다 — 지우기 시작하면 낡는다
+    TArray<int32> At;
+    At.Reserve(Ids.Num());
+    {
+        const FEPInventoryIndex& Ix = EnsureIndex();
+        for (int32 Id : Ids)
+            if (const int32* Idx = Ix.IndexById.Find(Id)) At.Add(*Idx);
+    }
+    if (At.Num() == 0) return;
+
+    // ★★ 큰 위치부터 지운다. RemoveAtSwap은 **마지막 원소**를 빈자리로 옮긴다(Array.h:2185).
+    //   큰 것부터면 옮겨 오는 원소는 늘 "지우지 않을 것"이고, 아직 안 지운 작은 위치는 안 움직인다.
+    //   작은 것부터 지우면 뒤쪽의 지울 원소가 앞으로 옮겨 와 위치표가 틀린다 — 남의 엔트리가 지워진다
+    At.Sort(TGreater<int32>());
+
+    for (int32 Idx : At)
+        Items.RemoveAtSwap(Idx);             // ★ 순서는 SortKey가 들므로 Swap이어도 된다
+    MarkArrayDirty();                        // ★ MarkItemDirty가 아니다 — 항목이 사라졌다
+    MarkIndexDirty();                        // ★ 원소가 줄고, 남은 원소의 위치가 옮겨졌다
+}
+```
+
+> **★ 옛 `RemoveSelf`와 다른 점 하나 — 지울 것이 없어도 가드가 선다.** 옛 본문은 위치가 0개면 가드 전에 돌아갔다. 지금은 `RemoveSelf`가 가드를 먼저 세운다. **동작 차이는 없다** — 부르는 곳이 `RemoveEntry` 하나이고 그 함수가 이미 바깥 가드를 들고 있어 `Broadcast`는 어느 쪽이든 한 번이다.
+
+> **★★ `Append` · `RemoveAll`을 컴포넌트의 다른 함수에서 부르지 않는다** (함정 11f). 가드를 안 지나 서버 쪽 알림이 빠지고, `Append`면 정체 검사 · 키 계산도 건너뛴다. 서브트리를 넣는 `AddSubtree`(03-B)도 리스트가 아니라 `AppendEntry`를 부른다.
+
+> **★★ `RemoveSelf`가 `MarkArrayDirty`인 것이 `MarkItemDirty`와 갈리는 유일한 자리다.** 나머지는 **살아 있는 항목의 필드**를 고치므로 `MarkItemDirty(E)`이고, 여기만 **항목이 배열에서 사라진다.** 바꿔 쓰면 **삭제가 클라에 안 간다** — 서버에서는 없어졌는데 클라 화면에는 남아 있고, 그 항목을 클릭하면 `ContainsEntry`가 거짓이라 조용히 실패한다.
+
+> **★ `RemoveAtSwap`을 써도 되는 이유는 11차가 만든 것이다.** 배열 순서에 의미가 없어졌기 때문이다 — 표시 순서는 `SortKey`가 들고 `GetSortedContents`가 정렬한다. **10차까지는 이 줄이 `RemoveAt`이어야 했다.** 그리고 `FastArraySerializer.h:54`가 애초에 수신 측 배열 순서를 보장하지 않으므로, **`RemoveAt`으로 바꿔도 얻는 것이 없다.** Iris로 가면 오히려 **반드시** `RemoveAtSwap`이어야 한다 — Epic 답변: *"In Iris, RemoveAtSwap should always be used to remove items from a fast array"* (D-103).
+
+> **★ `AssignSortKey`의 `E->SortKey == NewKey` 조기 반환.** `RenormalizeSortKeys`가 N개를 전부 다시 깔 때 **대부분이 이미 같은 값**인 경우가 흔하고(재정규화 직후 또 부르면 전부 같다), 그때 무의미한 `MarkItemDirty` N개가 나간다. 12차가 `ReorderEntry`에 넣은 조기 반환(함정 4u)과 같은 취지다.
+
+> **★ `SetEntryStat`이 단일 쓰기 지점 표의 여섯 번째다.** 가드 · `MarkItemDirty`가 여기 한 곳에 있어 소비자(방어구 · 무기 마모)가 와도 **빠뜨릴 문법이 없다.** 지금 호출자는 0이다 — 필드를 지금 두는 이유가 **스키마**이고(D-099), 쓰기 함수를 같이 두는 이유는 *"원시 엔트리를 밖으로 내보내지 않는다"* 가 쓰기 경로를 요구하기 때문이다.
+
+> **★ 가드가 쓰기 지점마다 있어야 한다** (위 셋 · `AppendEntry` 모두). `AddSubtree` 하나가 배낭과 그 안 아이템 다섯을 넣으면 `AppendEntry`가 여섯 번 돌고, 가드가 없으면 **`Broadcast`가 여섯 번 나간다.** (제거는 2026-10-08부터 `RemoveSelf` 한 번이지만, 가드는 여전히 `RemoveEntry` 바깥 가드와 겹쳐 하나로 묶는다.) 03-7이 *"수신 1회당 1회"* 를 세운 것과 같은 이유를 서버 쪽에서 지키는 장치다.
 
 ---
 
 ### 키 공간 셋 — **부모 전체**를 본다
 
-**`GetSortedContents`가 아니다** (함정 4q). 표시 목록은 슬롯을 거르지만 **키 공간은 슬롯에 든 형제의 키도 세야 한다** — 안 그러면 꽂았다 뺀 아이템과 동률이 난다.
+**`GetSortedContents`가 아니다** (함정 4q). 표시 목록은 슬롯을 거르지만 **키 공간은 슬롯에 든 형제의 키도 세야 한다** — 안 그러면 꽂았다 뺀 아이템과 동률이 난다. **색인의 `ChildrenOf`가 정확히 "부모가 같은 것 전부"다**(슬롯 포함).
 
 ```cpp
 // 부모 전체의 최소 키. 비면 0
 // ★ 실패 센티널이 필요 없다 — 호출부(ReorderEntryInternal)에 자기 자신이 있어 절대 안 빈다
-int32 UEPInventoryComponent::KeySpace_Min(int32 Container) const
+int64 UEPInventoryComponent::KeySpace_Min(int32 Container) const
 {
-    int32 Min = 0; bool bAny = false;
-    for (const FEPInventoryEntry& E : Entries.Items)
-    {
-        if (E.ParentEntryId != Container) continue;   // ★ SlotId를 보지 않는다 (함정 4q)
-        Min  = bAny ? FMath::Min(Min, E.SortKey) : E.SortKey;
-        bAny = true;
-    }
+    int64 Min = 0; bool bAny = false;
+    const FEPInventoryIndex& Ix = Entries.EnsureIndex();
+    if (const TArray<int32>* Kids = Ix.ChildrenOf.Find(Container))   // ★ SlotId를 보지 않는다 (함정 4q)
+        for (int32 Id : *Kids)
+        {
+            const int64 K = Entries.Items[Ix.IndexById[Id]].SortKey;
+            Min  = bAny ? FMath::Min(Min, K) : K;
+            bAny = true;
+        }
     return bAny ? Min : 0;
 }
 
 // Key보다 큰 키 중 최소. Exclude는 세지 않는다(옮기는 중인 자기 자신)
 // 반환: 찾았으면 true. ★ INDEX_NONE을 센티널로 쓰지 않는다 — SortKey는 −1도 유효하다 (13차, 함정 4w)
 bool UEPInventoryComponent::KeySpace_NextAbove(
-    int32 Container, int32 Key, int32 Exclude, int32& OutKey) const
+    int32 Container, int64 Key, int32 Exclude, int64& OutKey) const
 {
     bool bAny = false;
-    for (const FEPInventoryEntry& E : Entries.Items)
-    {
-        if (E.ParentEntryId != Container) continue;   // ★ 여기도 SlotId를 안 본다
-        if (E.EntryId == Exclude)          continue;
-        if (E.SortKey <= Key)              continue;
-
-        OutKey = bAny ? FMath::Min(OutKey, E.SortKey) : E.SortKey;
-        bAny   = true;
-    }
+    const FEPInventoryIndex& Ix = Entries.EnsureIndex();
+    if (const TArray<int32>* Kids = Ix.ChildrenOf.Find(Container))   // ★ 여기도 SlotId를 안 본다
+        for (int32 Id : *Kids)
+        {
+            if (Id == Exclude) continue;
+            const int64 K = Entries.Items[Ix.IndexById[Id]].SortKey;
+            if (K <= Key) continue;
+            OutKey = bAny ? FMath::Min(OutKey, K) : K;
+            bAny   = true;
+        }
     return bAny;
 }
 
 // 그 엔트리의 키. 없으면 false — 0을 돌려주지 않는다 (0은 재정규화 직후 첫 형제의 키다)
-bool UEPInventoryComponent::KeyOf(int32 EntryId, int32& OutKey) const
+bool UEPInventoryComponent::KeyOf(int32 EntryId, int64& OutKey) const
 {
-    for (const FEPInventoryEntry& E : Entries.Items)
-    {
-        if (E.EntryId != EntryId) continue;
-        OutKey = E.SortKey;
-        return true;
-    }
-    return false;
+    const FEPInventoryEntry* E = Entries.FindEntryPtr(EntryId);
+    if (!E) return false;
+    OutKey = E->SortKey;            // ★ SortKey다. EntryId가 아니다 (03-A 코드 버그 — 03 STATUS)
+    return true;
 }
 ```
 
@@ -2024,7 +2421,7 @@ bool UEPInventoryComponent::KeyOf(int32 EntryId, int32& OutKey) const
 
 > **★ `KeySpace_Min`만 `bool`이 아닌 이유.** 유일한 호출부가 `ReorderEntryInternal`이고 거기서는 **옮기는 엔트리 자신이 그 컨테이너에 있다** — 배열이 비는 경우가 없다. 나머지 둘은 *"없음"* 이 **정상 결과**다(맨 뒤로 옮기면 위에 아무도 없다). **`KeyOf`가 `bool`인 것은 다르다** — 거기서 *"없음"* 은 조작된 요청이고, `0`을 돌려주면 **재정규화 직후 첫 형제의 자리**로 조용히 간다(13차).
 
-> **★ 넷 다 O(N) 순회다.** 엔트리가 수십 개 수준이고 호출 빈도가 조작 단위라 캐시하지 않는다 — `GetUsedSlots`를 캐시하지 않는 것과 같은 판정(03-3)이고, 캐시하면 *"부모 없는 자식이 도착했을 때 캐시를 어떻게 하나"* 가 진짜 문제가 된다.
+> **★ 비용은 형제 수에 비례한다 — 엔트리 전체가 아니다** (2026-10-07). 옛 판본은 *"넷 다 O(N) 순회다. 캐시하지 않는다"* 였다. 색인(D-100)으로 `KeySpace_*`는 **그 컨테이너의 형제 수**만 돌고, `KeyOf`·`FindEntry`는 O(1)이다. 스태시 수천 칸에서 재정규화가 O(N²)에서 O(N)으로 내려온다.
 
 ---
 
@@ -2041,7 +2438,12 @@ bool UEPInventoryComponent::KeyOf(int32 EntryId, int32& OutKey) const
 void FEPInventoryList::PostReplicatedReceive(const FFastArraySerializer::FPostReplicatedReceiveParameters&)
 {
     // ★★ Owner는 TObjectPtr<UEPInventoryComponent>다 (15차, 03-2). 캐스트가 없다.
-    if (Owner) Owner->OnInventoryChanged.Broadcast();
+    // ★★ 색인 무효화가 Broadcast보다 **앞**이다 (2026-10-07, D-100). 클라의 유일한 변경 경로이고,
+    //    구독자(UI)가 곧바로 GetSortedContents · GetUsedSlots를 부른다 — 뒤에 두면 옛 색인을 읽는다
+    // ★ 자기 함수다 — friend가 필요 없다 (2026-10-11, D-113). 색인은 리스트의 것이라 Owner 검사보다도 앞이다
+    MarkIndexDirty();
+    if (!Owner) return;
+    Owner->OnInventoryChanged.Broadcast();         // public 델리게이트 — 이 줄에는 원래 friend가 필요 없었다
 }
 ```
 
@@ -2077,7 +2479,7 @@ struct FScopedInventoryNotify        // 진입 ++ / 이탈 --
 
 ```
 초안의 가드 목록 :  AddItem · AddSubtree · RemoveEntry · SetEntryCharges
-단일 쓰기 지점   :  InsertEntry · SetEntryCharges · RemoveSelf · AssignSortKey · MoveEntry
+단일 쓰기 지점   :  InsertEntry · SetEntryCharges · RemoveSelf · AssignSortKey · MoveEntry · SetEntryStat (2026-10-07)
 ```
 
 **아래가 정확히 "`MarkItemDirty` / `MarkArrayDirty`를 부르는 함수 전부"다.** 그리고 그 표는 이미 성실히 관리된다 — 9차가 `MoveEntry`를, 11차가 `AssignSortKey`를 올렸고 *"`SwapEntries`(04-B)도 이걸 두 번 부른다"* 까지 적혀 있다.
@@ -2086,12 +2488,12 @@ struct FScopedInventoryNotify        // 진입 ++ / 이탈 --
 
 | 층 | 어디 | 빠뜨리면 |
 |---|---|---|
-| **㉡ 재진입·필수** | **단일 쓰기 지점 다섯** — `InsertEntry` · `SetEntryCharges` · `RemoveSelf` · `AssignSortKey` · `MoveEntry` | **알림이 안 간다** |
+| **㉡ 재진입·필수** | **단일 쓰기 지점 여섯** — `InsertEntry` · `SetEntryCharges` · `RemoveSelf` · `AssignSortKey` · `MoveEntry` · `SetEntryStat`(2026-10-07) | **알림이 안 간다** |
 | ㉠ 배칭·선택 | 공개 진입점 — `AddItem` · `AddSubtree` · `RemoveEntry` · `ReorderEntry` | 알림이 여러 번 간다 (**무해**) |
 
 - **`ReorderEntry`는 가드가 없어도 된다** — `AssignSortKey`가 갖는다
 - **`MoveEntry`는 필요하다** — `MarkItemDirty`를 직접 부른다
-- **`SwapEntries`(04-B) · ⓐ의 재장전(§7-4) · §7-3 부착물은 자동으로 옳다** — 전부 다섯을 경유한다
+- **`SwapEntries`(04-B) · ⓐ의 재장전(§7-4) · §7-3 부착물은 자동으로 옳다** — 전부 여섯을 경유한다
 - **새 규칙이 0개다.** 지킬 표가 하나로 합쳐진다
 
 > **가드가 지키는 것의 크기를 정확히 적어둔다.** 클라 UI는 `PostReplicatedReceive`로 받으므로(가드와 무관) **서버 쪽 `Broadcast`의 소비자는 리슨서버 호스트 / PIE 화면뿐**이다. 배낭 하나 버릴 때 12회 `Broadcast` = 20칸 그리드 재생성 12회라 **㉠은 실측하면 비용이 아니다.** 가드를 유지하는 이유는 ㉠이 아니라 **㉡** 이다 — `RenormalizeSortKeys`가 `Entries.Items` 포인터를 들고 도는 자리가 실재한다.
@@ -2158,25 +2560,29 @@ struct FScopedInventoryNotify        // 진입 ++ / 이탈 --
 
 ## 03-9. ★ 검증 커맨드 — 이 단계에만 없었다
 
-Step 00에는 `EP.Item.State`/`EP.Item.Dump`가, Step 01에는 `EP.Loot.RollTable`/`EP.Loot.Respawn`이 있는데 **배낭·서브트리·칸 합산·`bFungible`이 전부 몰린 Step 03에만 커맨드가 없었다.** UI는 Step 04라 완료 조건 19개 중 13개를 확인할 방법이 없다.
+Step 00에는 `EP.Item.State`/`EP.Item.Dump`가, Step 01에는 `EP.Loot.RollTable`/`EP.Loot.Respawn`이 있는데 **배낭·서브트리·칸 합산·`bFungible`이 전부 몰린 Step 03에만 커맨드가 없었다.** UI는 Step 04라 완료 조건 20개 중 대부분을 확인할 방법이 없다.
 
 ```
 > EPInvDump                                # ★ 명령을 친 창에서 로컬 실행된다 (아래)
-  EntryId  Parent  SlotId  ItemId          Charges  SlotSize  SortKey
-  1        -1      Torso   Shirt_Basic     0        11              0   ← 슬롯. 칸을 안 먹는다
-  2        -1      Legs    Pants_Basic     0         6          65536
-  3        -1      Back    Backpack_B      0        10         131072
-  4         1      -       Bandage         1         1              0
-  5         3      -       Weapon_AK74    30         5              0   ← 부모가 달라 겹쳐도 된다
-  ---
-  Body : 0 / 10(테스트값, 최종 0)   Torso(1) : 1 / 10   Legs(2) : 0 / 5   Back(3) : 5 / 8
-  NextEntryId = 6                                                        ← ★
-  ※ 부모별로 묶고 그 안에서 SortKey 순으로 찍는다 (13차)
+  EntryId  Parent  SlotId  ItemId          Charges               SortKey  Uid
+  1        -1      Torso   Shirt_Basic     0                           0  -    ← 슬롯. 칸을 안 먹는다
+  2        -1      Legs    Pants_Basic     0                  4294967296  -
+  3        -1      Back    Backpack_B      0                  8589934592  -
+  4         1      -       Bandage         1                           0  -
+  5         3      -       Weapon_AK74    30                           0  -    ← 부모가 달라 겹쳐도 된다
+  Body : 0 / 10                            ← GetCapacity(INDEX_NONE). 테스트값, 최종 0
+  Shirt_Basic(1) : 1 / 10   Pants_Basic(2) : 0 / 5   Backpack_B(3) : 5 / 8
+  ※ 부모별로 묶고, 슬롯을 먼저, 그 안에서 SortKey 순으로 찍는다 (13차)
     SortKey는 형제 스코프라 전역 정렬은 뜻이 없다. 배열 순서로 찍으면 순서 버그가 Dump에 안 보인다
+  ※ Uid는 클라에서 '-'다 — 복제하지 않는다 (D-098). 보려면 EPInvDumpServer
+  ※ NextEntryId · SlotSize 열은 없다 — 아래 "public API만 쓴다"
+
+> EPInvDumpServer                          # ★ 서버에서 돈다. 같은 표에 Uid가 찍힌다 (로그는 서버 쪽)
+  1        -1      Torso   Shirt_Basic     0                           0  Xr3kQ…
 
 > EPInvDumpAll                             # 명령을 친 창의 월드에 있는 모든 인벤토리 컴포넌트
   Pawn_0 (내 폰)   Entries=5
-  Pawn_1           Entries=0                ← 0이면 COND_OwnerOnly 통과
+  Pawn_1           Entries=0                ← 0이면 가시성(소유자 그룹) 통과
 
 > EPInvAdd <ItemId> [Container]             # 서버로 라우팅. Container 기본 -1(본체) (13차)
 > EPInvDrop <EntryId>                       # 서버로 라우팅
@@ -2197,9 +2603,9 @@ Step 00에는 `EP.Item.State`/`EP.Item.Dump`가, Step 01에는 `EP.Loot.RollTabl
 
 **`UEPInventoryComponent.cpp`에 넣지 않는다.** 게임플레이 클래스에 `#if !(UE_BUILD_SHIPPING || UE_BUILD_TEST)` 블록이 200줄 붙고, **커맨드가 private을 못 봐서 `friend`를 하나 더 만들고 싶어진다.** 커맨드는 public API만 써야 한다 — 그게 *"03-A의 계약이 닫혔다"* 를 증명하는 방식이기 때문이다.
 
-#### 뼈대 — `UCheatManagerExtension` 하나에 여섯 (16차 개정)
+#### 뼈대 — `UCheatManagerExtension` 하나에 일곱 (16차 개정 · 2026-10-07에 `EPInvDumpServer` 추가)
 
-**13차까지 여기 있던 `FAutoConsoleCommandWithWorldAndArgs` 뼈대는 폐기됐다.** `Play As Client` PIE에서 권한을 못 얻기 때문이다 — 근거·대체 형태·**여섯 개의 전체 본문**이 전부 아래 「그런데 `Play As Client`에서 서버 권한을 못 얻는다」 절에 한 벌로 있다.
+**13차까지 여기 있던 `FAutoConsoleCommandWithWorldAndArgs` 뼈대는 폐기됐다.** `Play As Client` PIE에서 권한을 못 얻기 때문이다 — 근거·대체 형태·**전체 본문**이 전부 아래 「그런데 `Play As Client`에서 서버 권한을 못 얻는다」 절에 한 벌로 있다.
 
 폐기된 것: `FindInv` 헬퍼 · `[PlayerIndex]` 인자 · `NM_Client` 조기 반환 · `ECVF_Cheat` · `FCString::Atoi` 인자 파싱. 남는 것은 **반환값 로그**와 **`Dump` 둘을 클라 로컬로 두는 계약**뿐이다.
 
@@ -2209,7 +2615,9 @@ Step 00에는 `EP.Item.State`/`EP.Item.Dump`가, Step 01에는 `EP.Loot.RollTabl
 >
 > **★ 단 `ReorderEntry`는 `void`다** (`EPInventoryComponent.h:202`). *"정상 클라에서는 실패할 수 없는 연산"* 이라 반환값이 없는 것이 설계다 — 16차에 확인했고, 그 전 판본이 `bool`이라고 적었던 것은 틀렸다. `EPInvReorder`는 호출 사실만 찍고 **결과는 `EPInvDump`의 `SortKey` 열로 본다.**
 
-> **★ `BlueprintAuthorityOnly`를 붙이지 않는 것은 `Dump` 둘뿐이다.** `EPInvDump`/`EPInvDumpAll`은 **명령을 친 창에서 로컬로 돌아야 의미가 있다** — `COND_OwnerOnly`가 제대로 걸렸는지(다른 폰의 `Entries`가 0인지)는 클라에서만 확인된다. 나머지 넷(`Add`/`Drop`/`Reorder`/`Move`)은 상태를 바꾸므로 지정자를 붙여 서버로 보낸다. **`NM_Client` 조기 반환은 이제 필요 없다** — 엔진이 로컬 실행 자체를 막는다(`CheatManager.cpp:130`).
+> **★ 덤프를 컴포넌트 RPC(`Server_DumpToLog` 같은)로 만들지 않는다** (2026-10-11). 서버 덤프는 `BlueprintAuthorityOnly` 치트 하나로 충분하고, 컴포넌트에 `UFUNCTION`을 두면 Shipping 가드를 걸 수 없다 — UHT가 `#if !UE_BUILD_SHIPPING` 안의 `UFUNCTION`을 거절한다(`UhtHeaderFileParser.cs:715`). 치트는 Shipping에서 CheatManager가 아예 안 생겨(`PlayerController.cpp:1155-1171`) 불릴 경로가 없다.
+
+> **★ `BlueprintAuthorityOnly`를 붙이지 않는 것은 `Dump` 둘뿐이다.** `EPInvDump`/`EPInvDumpAll`은 **명령을 친 창에서 로컬로 돌아야 의미가 있다** — 가시성(소유자 그룹, D-101)이 제대로 걸렸는지(다른 폰의 `Entries`가 0인지)는 클라에서만 확인된다. 나머지 넷(`Add`/`Drop`/`Reorder`/`Move`)은 상태를 바꾸므로 지정자를 붙여 서버로 보낸다. **`EPInvDumpServer`는 조회인데도 지정자를 붙인다** — 보려는 것(`ItemUid`)이 서버에만 있기 때문이다 (2026-10-07). **`NM_Client` 조기 반환은 이제 필요 없다** — 엔진이 로컬 실행 자체를 막는다(`CheatManager.cpp:130`).
 
 > **★ 커맨드는 RPC를 안 지난다.** `EP.Inv.Move`가 `Server_MoveEntry`가 아니라 **내부 `MoveEntry`를 직접** 부른다 — `EP.Inv.Reorder`→`ReorderEntry`와 같은 형태이고, **14차가 `Server_EquipBackpack`을 없앤 근거가 이것**이다(03-2). 커맨드를 첫 호출자로 세면 RPC 표면을 소비자 없이 여는 셈이 된다.
 
@@ -2246,6 +2654,7 @@ Step 00에는 `EP.Item.State`/`EP.Item.Dump`가, Step 01에는 `EP.Loot.RollTabl
 | 커맨드 | 권한 | 이유 |
 |---|---|---|
 | `Dump` / `DumpAll` | **클라 로컬** | 순수 조회. Step 00의 `EP.Item.State`와 같은 구분 |
+| `DumpServer` (2026-10-07) | 서버 | 조회지만 `ItemUid`가 서버에만 있다 |
 | `Add` / `Drop` / `Reorder` / `Move` | 서버 | 상태를 바꾼다 |
 
 ### ★★ 그런데 `Play As Client`에서 **서버 권한을 못 얻는다** — 형태를 바꾼다 (16차 신설)
@@ -2285,7 +2694,7 @@ if ((Function != nullptr) && Function->HasAnyFunctionFlags(FUNC_BlueprintAuthori
 | 수정 | `Public/Core/EPPlayerController.h` · `.cpp` | `AddCheats` 오버라이드 **한 개** |
 | 폐기 | `Private/Inventory/EPInventoryDebugCommands.cpp` | 여섯이 전부 옮겨간다 |
 
-**Step 00·01의 `EP.Item.*`·`EP.Loot.*`는 그대로 둔다.** 그것들은 서브시스템·월드 조회라 권한이 필요 없다. 바뀌는 것은 **폰의 컴포넌트를 건드리는 Step 03의 여섯뿐**이다.
+**Step 00·01의 `EP.Item.*`·`EP.Loot.*`는 그대로 둔다.** 그것들은 서브시스템·월드 조회라 권한이 필요 없다. 바뀌는 것은 **폰의 컴포넌트를 건드리는 Step 03의 일곱뿐**이다.
 
 #### 헤더
 
@@ -2309,6 +2718,9 @@ public:
 	// ── 조회. 로컬에서 돈다 (클라의 복제본을 본다) ──
 	UFUNCTION(Exec) void EPInvDump();
 	UFUNCTION(Exec) void EPInvDumpAll();
+
+	// ── 조회. 서버에서 돈다 — ItemUid는 복제되지 않아 클라 Dump에는 안 보인다 (2026-10-07, D-098) ──
+	UFUNCTION(Exec, BlueprintAuthorityOnly) void EPInvDumpServer();
 
 	// ── 변경. BlueprintAuthorityOnly가 서버로 보낸다 ──
 	UFUNCTION(Exec, BlueprintAuthorityOnly) void EPInvAdd(const FString& ItemId, int32 Container = -1);
@@ -2369,7 +2781,7 @@ void AEPPlayerController::AddCheats(bool bForce)
 
 **`CheatClass`가 비어 있어도 안 생긴다**(`:1160`). `APlayerController::CheatClass`의 기본값이 `UCheatManager`라 보통은 문제없지만, BP에서 비웠다면 여기서 조용히 끝난다.
 
-#### 본문 — 여섯 전부 (권한 분기가 사라진다)
+#### 본문 — 일곱 전부 (권한 분기가 사라진다)
 
 ```cpp
 // Private/Inventory/EPInventoryCheats.cpp
@@ -2406,9 +2818,14 @@ UEPInventoryComponent* UEPInventoryCheats::GetInv() const
 
 // ── 조회. 친 창에서 로컬로 돈다 ──────────────────────────────────────
 
-void UEPInventoryCheats::EPInvDump()
+// ★ 본문은 하나다. 어느 쪽 월드에서 도느냐만 다르다 (2026-10-07)
+static void DumpInventory(const UEPInventoryComponent* Inv);
+
+void UEPInventoryCheats::EPInvDump()       { DumpInventory(GetInv()); }   // 클라 복제본. Uid 열은 '-'
+void UEPInventoryCheats::EPInvDumpServer() { DumpInventory(GetInv()); }   // 서버. Uid가 보인다 — 로그는 서버 쪽에 찍힌다
+
+static void DumpInventory(const UEPInventoryComponent* Inv)
 {
-	const UEPInventoryComponent* Inv = GetInv();
 	if (!Inv) return;
 
 	// ★ 배열 순서로 찍지 않는다 — 그러면 순서 버그가 Dump에 안 보인다 (13차)
@@ -2422,13 +2839,15 @@ void UEPInventoryCheats::EPInvDump()
 		return A.SortKey < B.SortKey;
 	});
 
-	UE_LOG(LogTemp, Log, TEXT("EntryId  Parent  SlotId  ItemId  Charges  SortKey"));
+	UE_LOG(LogTemp, Log, TEXT("EntryId  Parent  SlotId  ItemId  Charges  SortKey  Uid"));
 	for (const FEPInventoryEntry& E : Rows)
 	{
-		UE_LOG(LogTemp, Log, TEXT("%7d %7d  %-8s %-16s %7d %8d"),
+		// ★ SortKey는 int64다 (D-102) — %d로 찍으면 상위 32비트가 잘린다
+		UE_LOG(LogTemp, Log, TEXT("%7d %7d  %-8s %-16s %7d %20lld  %s"),
 			E.EntryId, E.ParentEntryId,
 			E.SlotId.IsNone() ? TEXT("-") : *E.SlotId.ToString(),
-			*E.ItemId.ToString(), E.State.Charges, E.SortKey);
+			*E.ItemId.ToString(), E.State.Charges, (long long)E.SortKey,
+			E.State.ItemUid.IsValid() ? *E.State.ItemUid.ToString(EGuidFormats::Short) : TEXT("-"));
 	}
 
 	// 컨테이너마다 독립 풀이 열렸는지 — 본체 + 용량이 있는 엔트리 전부
@@ -2450,7 +2869,7 @@ void UEPInventoryCheats::EPInvDumpAll()
 	UWorld* World = GetWorld();                                  // CheatManager.h:77
 	if (!World) return;
 
-	// ★ 반드시 '친 창'의 월드다. 서버로 보내면 다 보이므로 COND_OwnerOnly 검증이 무의미해진다
+	// ★ 반드시 '친 창'의 월드다. 서버로 보내면 다 보이므로 가시성 검증이 무의미해진다
 	for (TActorIterator<AEPCharacter> It(World); It; ++It)
 	{
 		const UEPInventoryComponent* Inv = It->GetInventoryComponent();
@@ -2509,7 +2928,7 @@ void UEPInventoryCheats::EPInvMove(int32 EntryId, int32 NewParent, const FString
 
 **`if (World->GetNetMode() == NM_Client) return;` 가드가 전부 없어진다.** 변경 넷은 **서버에서만 실행된다** — 클라에서 친 것은 `ProcessConsoleExec`이 가로채 `ServerExec`로 보내고 로컬 실행은 하지 않는다(`CheatManager.cpp:130` `return true`). 반대로 `EPInvDump`/`EPInvDumpAll`은 지정자가 없으므로 **친 창에서 그대로 돈다.**
 
-**여섯 다 public API만 쓴다.** `friend`를 하나도 더 만들지 않는 것이 *"03-A의 계약이 닫혔다"* 를 증명하는 방식이다 — 그래서 `NextEntryId`(private)와 `MaxSlots`(protected)는 직접 못 읽고, 각각 **`EntryId` 열**과 **`GetCapacity(INDEX_NONE)`** 로 대신한다.
+**일곱 다 public API만 쓴다.** `friend`를 하나도 더 만들지 않는 것이 *"03-A의 계약이 닫혔다"* 를 증명하는 방식이다 — 그래서 `NextEntryId`(private)와 `MaxSlots`(protected)는 직접 못 읽고, 각각 **`EntryId` 열**과 **`GetCapacity(INDEX_NONE)`** 로 대신한다.
 
 > **★ 반환값 로그는 그대로 필수다.** 오히려 더 중요해진다 — 클라에서 쳤을 때 `UE_LOG`는 **서버 쪽에 찍힌다.** PIE 단일 프로세스면 같은 Output Log에 섞여 보이지만, 별도 프로세스로 띄우면 서버 창을 봐야 한다. `ClientMessage`로 돌려받고 싶으면 `ServerExecRPC_Implementation`(`PlayerController.cpp:1882`)이 `ConsoleCommand`의 **반환 문자열**만 보내므로 로그 대신 `Ar.Logf` 형태로 바꿔야 하는데 — **지금은 필요 없다.**
 
@@ -2521,7 +2940,7 @@ void UEPInventoryCheats::EPInvMove(int32 EntryId, int32 NewParent, const FString
 | **셰이핑 없음** | `UE_WITH_CHEAT_MANAGER`가 `!UE_BUILD_SHIPPING`. 기존 `#if !(UE_BUILD_SHIPPING \|\| UE_BUILD_TEST)`보다 **약하다**(Test 빌드에서 살아 있다). 검증 도구로는 그게 낫다 |
 | **`ECVF_Cheat` 개념이 없다** | 콘솔 오브젝트가 아니므로 해당 플래그가 없다. 대신 위 컴파일 가드가 그 역할을 한다 |
 
-### ★ `COND_OwnerOnly` 검증은 **어느 창에서 치느냐**로 한다 — `[PlayerIndex]`가 사라진다 (16차 개정)
+### ★ 가시성 검증은 **어느 창에서 치느냐**로 한다 — `[PlayerIndex]`가 사라진다 (16차 개정)
 
 §10이 *"리슨서버 호스트가 아니라 클라이언트 쪽에서 확인"* 을 원칙으로 세웠다. **13차까지의 답은 `[PlayerIndex]` 인자였다** — 서버 커맨드가 호스트 인벤토리만 채우면 `DumpAll`의 `Entries=0`이 *"복제가 막혔다"* 가 아니라 *"애초에 아무것도 안 넣었다"* 를 보여줄 뿐이라, **검증이 통째로 위양성이 되기** 때문이다.
 
@@ -2539,29 +2958,16 @@ void UEPInventoryCheats::EPInvMove(int32 EntryId, int32 NewParent, const FString
 ```
 PIE 창 2 (클라 A) 콘솔> EPInvAdd Bandage       # 서버로 라우팅 → 클라 A에게 들어간다
 PIE 창 2 콘솔>          EPInvDump              # 로컬. Bandage가 보인다
-PIE 창 3 (클라 B) 콘솔> EPInvDumpAll           # 로컬. A의 폰이 Entries=0 이면 COND_OwnerOnly 통과
+PIE 창 3 (클라 B) 콘솔> EPInvDumpAll           # 로컬. A의 폰이 Entries=0 이면 가시성 통과 (D-101)
 ```
 
 > **`DumpAll`을 서버로 보내면 안 되는 이유가 여기서 분명해진다.** `BlueprintAuthorityOnly`를 붙이는 순간 서버에서 돌고, 서버는 **원래 다 보이므로** `Entries=0`이 영영 안 나온다. **검증이 조용히 무의미해진다** — `Dump` 둘에 그 지정자를 붙이지 않는 것이 계약이다.
 
-### ★ `NextEntryId`는 클라에서 거짓말한다 — `[server-only]`로 찍는다
+### ★ `NextEntryId`는 찍지 않는다 — 완료 조건은 `EntryId` 열로 닫힌다
 
-`NextEntryId`는 서버 전용(03-2)이라 클라는 초기값 `1`을 본다. 그런데 `Dump`는 클라 허용이다.
+`NextEntryId`는 private(서버 전용, 2026-10-11부터 리스트 — 03-1, D-114)이고 커맨드는 public API만 쓴다(위). **찍을 수단이 없고, 필요도 없다.** *"재번호되지 않는다"* 는 **`EntryId` 열만으로 증명된다** — 셋 넣고 2번을 버린 뒤 하나 더 넣어 `1, 3, 4`가 나오면 끝이다.
 
-**프로젝트가 이 문제를 이미 한 번 풀었다.**
-
-```cpp
-// EPLootDebugCommands.cpp:120-124  (EP.Loot.List)
-const bool bAuthority = World->GetNetMode() != NM_Client;
-UE_LOG(LogTemp, Log, TEXT("Idx, ItemId, Location, Charges%s, Claimed"),
-    bAuthority ? TEXT("") : TEXT("[server-only]"));
-```
-
-같은 형태로 클라에서는 `NextEntryId = [server-only]`를 찍고 값을 내지 않는다.
-
-> **완료 조건은 그 열 없이도 닫힌다.** *"재번호되지 않는다"* 는 **`EntryId` 열만으로 증명된다** — 셋 넣고 2번을 버린 뒤 하나 더 넣어 `1, 3, 4`가 나오면 끝이다. `NextEntryId`는 확인의 **편의**이지 증거가 아니다.
-
-`#if !(UE_BUILD_SHIPPING || UE_BUILD_TEST)` 가드. SSR 디버그와 동일한 패턴이다.
+> 16차 이전 판본은 여기서 `[server-only]` 표기(`EPLootDebugCommands.cpp:120-124`의 `EP.Loot.List`와 같은 형태)와 `#if !(UE_BUILD_SHIPPING || UE_BUILD_TEST)` 가드를 적었다. **둘 다 16차 CheatManager 형태에서 없어졌다** — 가드는 `UE_WITH_CHEAT_MANAGER`(위)이고, 서버에서만 보이는 값(`ItemUid`)은 `EPInvDumpServer`로 본다.
 
 **각 열이 완료 조건을 직접 증명한다.**
 
@@ -2570,10 +2976,10 @@ UE_LOG(LogTemp, Log, TEXT("Idx, ItemId, Location, Charges%s, Claimed"),
 | `Parent` | 되줍기 후 재매핑(03-4), 고아 없음(03-5) |
 | `Charges` | 값 복사가 도는가 |
 | `EntryId` | **재번호 없음.** 셋 넣고 2번을 버린 뒤 하나 더 넣었을 때 `1, 3, 4`면 통과. `2`가 재사용됐거나 목록이 `1,2,3`으로 밀렸으면 즉시 보인다 |
-| `NextEntryId` | 위를 **서버에서 한눈에** 확인 (클라에서는 `[server-only]`) |
-| `Torso(N) : x / y` · `Back(N) : x / y` | 착용 컨테이너마다 **독립 풀**이 열린다 (배낭 자동 착용 포함) |
+| `Uid` (`EPInvDumpServer`) | **정체가 따라간다.** 다른 컨테이너로 옮겨도(`EPInvMove`) 같은 값이고, 엔트리마다 다르다 (D-098) |
+| `Shirt_Basic(N) : x / y` · `Backpack_B(N) : x / y` | 착용 컨테이너마다 **독립 풀**이 열린다 (배낭 자동 착용 포함) |
 | `EP.Inv.Move` 후의 `Parent` · `SlotId` · `SortKey` | **완료 조건 15·17.** 다른 컨테이너로 옮기면 맨 뒤(4m), 핫바에 꽂았다 빼면 원래 자리(4q) |
-| `DumpAll`의 `Entries=0` | **`COND_OwnerOnly`.** 패킷 캡처도 UI도 필요 없다 |
+| `DumpAll`의 `Entries=0` | **가시성(소유자 그룹, D-101).** 패킷 캡처도 UI도 필요 없다 |
 
 > **시나리오 자동화(`EP.Inv.Stress` 같은 것)는 넣지 않는다.** 검증할 대상보다 검증 도구가 커진다. 위 출력이면 손으로 세 번 눌러 확인된다.
 
@@ -2585,11 +2991,11 @@ UE_LOG(LogTemp, Log, TEXT("Idx, ItemId, Location, Charges%s, Claimed"),
 
 | # | 함정 | 증상 | 대응 |
 |---|---|---|---|
-| 1 | `COND_OwnerOnly` 누락 | 남의 가방이 전부 복제됨 (치트) | 03-2 |
+| 1 | **가시성 배선 누락** (D-101) | 셋이 증상이 다르다. ① **`GetReplicationCondition` 재정의 누락** → 기본값 `COND_None`이고 프로퍼티도 조건이 없어 **남의 가방이 전부 복제된다(치트)** ② **소유 액터의 `bReplicateUsingRegisteredSubObjectList` 누락** → 재정의가 무시돼 ①과 같다. **`BeginPlay`가 복제를 끄고 `ensure`를 울려 새지 않고 끊기게** 만든다 ③ **`NetGroupOwner` 등록 누락** → 어느 그룹에도 없어 **주인에게도 안 간다** — 서버는 정상인데 클라 `Dump`가 비어 있다 | 03-2 "가시성" ★★ |
 | 2 | `EntryId` 없이 배열 인덱스 사용 | 줍고 버릴 때마다 목록 순서가 튀고, 경쟁 시 엉뚱한 아이템을 버림 | 03-1 |
 | **3b** | **캐스케이드가 자기 자신만 장착/컨테이너 검사** | 착용 컨테이너 안에 든 것들이 write-back·정리 없이 사라진다. **9차 확정으로 "배낭 속 무기 장착"은 표현 불가능해졌지만**(장착＝`ParentEntryId == INDEX_NONE`) 계약은 그대로다 — 핫바 5~0이 컨테이너 안 아이템을 들 수 있게 되면 원래 모양이 되살아난다 (`EquipmentSlots.md` §10 미정 #7) | 캐스케이드가 `RemoveEntry` 재귀 (03-2) ★★ |
 | **3d** | **`Entries.Owner = this` 누락** | 서버는 정상인데 **클라 UI가 영원히 갱신 안 됨.** 원인이 UI/복제로 보인다 | 생성자 (03-2) ★★ |
-| 3e | 순회하며 자식 제거 | `RemoveAtSwap`이라 인덱스가 튀어 **일부 자식을 건너뛴다.** "가끔 고아가 남는다" | 자식 목록을 먼저 뜬다 (03-2) |
+| 3i | 순회하며 자식 제거 | `RemoveAtSwap`이라 인덱스가 튀어 **일부 자식을 건너뛴다.** "가끔 고아가 남는다" | 자식 목록을 먼저 뜬다 (03-2) |
 | **3g** | **`bIsRoot`를 public 시그니처에 둠** | 밖에서 `false`를 넘기면 루트 정규화가 생략돼 `AddSubtree`가 루트를 못 찾는다. **증상이 3c와 같다** | `RemoveEntryInternal` private (03-2) |
 | 4 | `MarkItemDirty` 누락 | 서버만 맞고 클라 갱신 안 됨 | 원시 엔트리 비노출 + `AddEntryCharges()` / `InsertEntry()` (03-2) |
 | 4c | **`FindData()` null을 조용히 넘김** | 그 아이템이 칸을 0으로 먹어 **가방이 무한대**가 된다. 무증상 | `ensure` + 경고 (03-3) |
@@ -2604,15 +3010,15 @@ UE_LOG(LogTemp, Log, TEXT("Idx, ItemId, Location, Charges%s, Claimed"),
 | **4l** | **`MoveEntry`에 제자리 거절(검사 0)이 없음** | 목적지가 지금 자리와 같으면 검사 5의 `CanFit`이 **자기 크기를 두 번 센다.** *"가방이 좀 차면 제자리 이동이 실패한다"* — 널널하면 되므로 **재현 조건이 용량**이다 | 검사 0 (03-2). Step 04가 안 부르게 됐어도 `Server_MoveEntry`는 열려 있다 |
 | **4m** | **`MoveEntry`가 부모 변경 시 `SortKey`를 재발급하지 않음** | 옛 컨테이너의 키를 들고 가서 **목적지 맨 뒤가 아니라 엉뚱한 자리에 꽂힌다.** 두 컨테이너의 키 범위가 겹치는 것이 정상이라 거의 항상 나지만 *"가끔 이상한 자리"* 로 인지된다 | 검사 통과 후 `AssignSortKey(Id, KeySpace_NextAtEnd(NewParent))` (03-2) ★★ |
 | **4n** | **스냅샷에서 자식 `SortKey`까지 버림** (루트와 같이 0으로) | 배낭을 버렸다 주우면 **내용물 순서가 뒤섞인다.** `AddSubtree`가 `In` 배열 순서를 따르는데 그건 `Entries.Items` 순회 결과라 **화면 순서가 아니다.** 아이템이 두세 개면 안 보인다 | `bIsRoot`일 때만 `SortKey = 0` (03-2 ②) ＋ `AddSubtree`가 자식 키 복원 (03-4) ★★ |
-| **4o** | **재정규화를 안 넣음** | 같은 틈에 ~16회 꽂으면 `(Prev+Next)/2 == Prev`가 되어 **두 아이템이 같은 키를 갖는다.** 그 뒤로는 클라·서버가 다른 순서를 그린다(`FastArraySerializer.h:54`). **정상 조작으로 도달하는 지점**이라 사이클 검사와 달리 "도달 불가 방어"가 아니다 | `RenormalizeSortKeys` (03-2) ＋ **완료 조건 16** ★★ |
+| **4o** | **재정규화를 안 넣음** | 같은 틈에 32회 꽂으면 `(Prev+Next)/2 == Prev`가 되어 **두 아이템이 같은 키를 갖는다.** 그 뒤로는 클라·서버가 다른 순서를 그린다(`FastArraySerializer.h:54`). **정상 조작으로 도달하는 지점**이라 사이클 검사와 달리 "도달 불가 방어"가 아니다 | `RenormalizeSortKeys` (03-2) ＋ **완료 조건 18 ①** ★★ |
 | **4p** | **슬롯에 든 엔트리의 키를 0으로 밀어둠** | 초안이 그랬다. 빼는 순간 **맨 앞에 꽂히고**, 그 전에 발급된 키와 **동률**이 난다(4q와 같은 뿌리) | 슬롯 여부로 갈리지 않는다 — `InsertEntry`도 `MoveEntry`도 **부모만** 본다 (03-2, 11차 검수) |
 | **4q** | **★ 키 공간을 `GetSortedContents`로 구함** (슬롯을 거른 채) | **정상 플레이에서 동률이 난다** — 무기를 핫바에 꽂고(키가 표시에서 빠짐) 뭘 줍고(같은 키 발급) 무기를 뺀다. 크래시는 아니고 **손으로 맞춰둔 배치가 조금씩 무너진다.** 그리고 *"겹칠 문법이 없다"* 는 서술 때문에 `AssignSortKey`부터 뒤지게 된다 | `KeySpace_NextAtEnd`·`RenormalizeSortKeys`가 **부모만** 본다 (03-2) ★★ |
 | **4r** | **★ 재정규화를 이분 고갈에만 검** | 맨 앞(`-Step`)·맨 뒤(`+Step`)가 **무한 증감**이다. `int32` 오버플로가 나면 부호가 뒤집혀 **맨 앞으로 보낸 것이 맨 뒤에 나타나고, 재정규화가 안 걸리므로 영구적**이다. `KeySpace_NextAtEnd`는 **줍기마다** 최대 키를 Step만큼 올려 스태시(5단계)에서 누적된다 | 세 분기 공통 경계 가드 ＋ `KeySpace_NextAtEnd` 안의 가드 (03-2) ★★ |
 | **4s** | **★ `ReorderEntry`가 틈을 `GetSortedContents`에서 구함** | **4q와 같은 뿌리인데 11차 검수가 놓쳤다.** 보이는 두 이웃 사이에 **슬롯 형제가 끼어 있으면** 중점이 그 키와 겹친다 — 붕대 0 / AK 65536(슬롯) / 구급상자 131072에서 *"붕대 뒤"* 가 정확히 65536이다. 세 분기 전부 해당 | `Prev`는 보이는 목록, **틈은 부모 전체** (03-2) ★★ |
 | **4t** | **★★ 재정규화 가드에서 `PrevEntryId != INDEX_NONE`을 뺌** | 맨 앞 분기는 설계상 `NewKey == PrevKey`라 고갈 조건이 **항상 참**이다. 재정규화해도 같은 조건이 다시 참 → **무한 재귀 → 전용 서버 프로세스 종료.** **아이템 2개 이상인 컨테이너에서 하나를 맨 앞으로 끌면 즉사한다** — 가장 흔한 정리 동작이다 | 경계(`bOutOfRange`)와 고갈(`bNoGap`)을 **분리** ＋ `ReorderEntryInternal(bRetry)` ＋ `ensure` (03-2) ★★ |
-| **4u** | **제자리 드롭에 조기 반환 없음** | 드래그 취소는 *"도로 놓기"* 라 가장 흔한데, 매번 새 중점이 계산돼 `MarkItemDirty`가 나간다. **틈이 매번 반으로 줄어** 16번이면 재정규화가 돈다 — 사용자는 아무것도 안 바꿨는데 | `CurPrev == PrevEntryId`면 `return` (03-2). `MoveEntry` 검사 0과 대칭 |
+| **4u** | **제자리 드롭에 조기 반환 없음** | 드래그 취소는 *"도로 놓기"* 라 가장 흔한데, 매번 새 중점이 계산돼 `MarkItemDirty`가 나간다. **틈이 매번 반으로 줄어** 32번이면 재정규화가 돈다 — 사용자는 아무것도 안 바꿨는데 | `CurPrev == PrevEntryId`면 `return` (03-2). `MoveEntry` 검사 0과 대칭 |
 | **4v** | **★★ `MoveEntry`가 `FindEntry`의 복사본에 씀** | `FindEntry`는 값 복사다(03-2). 바로 위 검사 6이 `FEPInventoryEntry E;`로 같은 이름의 지역 복사본을 만들어 놓아 **그대로 이어 붙이면 마지막으로 방문한 조상의 복사본에 쓴다.** 컴파일되고 **`true`를 반환하는데 배열은 그대로다** — 장착·배낭 매기가 통째로 무동작. **그리고 무해하지도 않다**: `MarkItemDirty`가 `MarkArrayDirty`를 부르고(`FastArraySerializer.h:441-454`) 복사본은 `ReplicationID == INDEX_NONE`이라 **매 호출 `IDCounter`를 소진하며 전체 델타 재스캔이 돈다.** 프로파일러에 직렬화가 잡혀 *"복제는 도는데 값이 안 온다"* 로 읽히고 **복제 쪽을 판다** | 배열 원소의 **참조**를 잡는다. `SetEntryCharges`가 이미 그 형태다 (03-2) ★★ |
-| **4w** | **★★ `SortKey` 함수가 `INDEX_NONE`을 실패 센티널로 씀** | `EntryId`는 1부터라 안전하지만 **`SortKey`는 −1도 0도 유효한 값이다.** 맨 앞 이동이 키를 음수로 내리고 `(−65536, 0)`에 16회 꽂으면 **정확히 −1**이 나온다(완료 조건 18 ①의 경로). 그 형제를 `KeySpace_NextAbove`가 찾아도 호출자가 *"없다"* 로 읽어 **한 칸 건너뛴 자리에 놓이고 재정규화도 안 걸린다** | 성패를 `bool`로, 값을 out 파라미터로 (03-2) ★★ |
+| **4w** | **★★ `SortKey` 함수가 `INDEX_NONE`을 실패 센티널로 씀** | `EntryId`는 1부터라 안전하지만 **`SortKey`는 −1도 0도 유효한 값이다.** 맨 앞 이동이 키를 음수로 내리고 `(−2^32, 0)`에 32회 꽂으면 **정확히 −1**이 나온다(완료 조건 18 ①의 경로). 그 형제를 `KeySpace_NextAbove`가 찾아도 호출자가 *"없다"* 로 읽어 **한 칸 건너뛴 자리에 놓이고 재정규화도 안 걸린다** | 성패를 `bool`로, 값을 out 파라미터로 (03-2) ★★ |
 | **4x** | **★★ 키를 배열 상태를 바꾼 *뒤에* 구한다 — `InsertEntry`와 `MoveEntry` 둘 다** | **`InsertEntry`:** 아직 값이 안 들어간 자기 자신(`SortKey=0`)이 키 공간의 형제로 잡혀 *"빈 컨테이너면 0"* 분기가 **죽고**, 키가 전부 음수인 컨테이너에서 최대가 0이 된다. **`MoveEntry`(13차 답변):** 재부모를 먼저 하면 **옛 컨테이너의 키를 든 자기 자신**을 목적지의 형제로 센다 — 순서(맨 뒤)는 지켜지지만 **키가 컨테이너 사이로 전염되고**(본체 1,000,000 → 배낭에서 1,065,536) 재정규화 빈도가 이유 없이 오른다. 둘 다 **명세와 코드가 다른 동작을 말하게 된다** | 키를 **배열 상태를 바꾸기 전에** 구한다 — `InsertEntry`는 `AddDefaulted` 전(03-3), `MoveEntry`는 재부모 전(03-2) ★★ |
 | **4z** | **★★ 루트 스냅샷이 `SlotId`를 보존** | `AddSubtree`가 `MoveEntry`의 정합(검사 3)·중복(검사 4) 검사를 **우회해 슬롯을 채운다.** 배낭 안에 되주우면 함정 4i 상태가 되고, 이미 배낭을 매고 있으면 `"Back"` 슬롯에 엔트리가 둘이 되어 **유령 배낭**이 남는다. 게다가 `In.Num()==1`이면 `AddItem`으로 빠져 **빈 배낭은 안 매지고 내용물이 든 배낭만 매진다** | `bIsRoot`일 때 `SlotId = NAME_None` (03-2 ②) ★★ |
 | 6 | `UsedSlots`를 필드로 캐시 | 추가·제거·복제 수신 중 하나만 빠져도 "안 찼는데 가득 찼다" | 매번 계산 (03-3) |
@@ -2621,16 +3027,23 @@ UE_LOG(LogTemp, Log, TEXT("Idx, ItemId, Location, Charges%s, Claimed"),
 | 7 | 칸 여유 판정에 엔트리 **개수**를 씀 | `SlotSize`가 큰 무기를 무제한으로 넣게 됨 | `Σ SlotSize` (03-3) |
 | 8 | 엔트리 포인터를 밖으로 반환 | 배열 재할당 후 댕글링. Step 00의 `FEPItemData*`와 같은 문제 | `FindEntry`는 값 복사 (03-2) |
 | 8b | 알림 뒤에 `E.EntryId`를 읽음 | 구독자가 배열을 재할당하면 댕글링 | 값을 미리 뜬다 (03-3) |
-| 9 | `DropCooldown`을 클라에서만 검사 | 버리자마자 재획득 가능 | Step 02의 4단계 필수 |
 | **3e** | **`MoveEntry` 검사 3의 설명 블록을 그대로 인라인으로 침** | 검사 3이 두 번 돌아 무해해 보이는데, `CanPlaceInSlot`을 안 부르게 되어 **검사 2·4가 통째로 빠진다.** 증상은 *"조준경이 달린 총에 조준경이 또 달린다"*(§7-3에서 처음 보인다) — A-2가 되살아난 것이다. 변수 이름이 `NewParent`/`NewSlotId`면 설명용이다 | `MoveEntry`는 한 줄(`CanPlaceInSlot`)만 (03-2) ★★ |
 | **9f** | **`Server_*`에 `UFUNCTION` 매크로 없음 / `CanMutateInventory()` 없음** | 매크로가 없으면 **RPC가 아니라 로컬 함수**라 클라에서 불러도 서버는 모른다. 게이트가 없으면 **죽은 뒤에도 인벤토리가 바뀐다** — 사망 시 드랍(§8 미정 #4)이 오면 경쟁이 된다. **옛 `Server_EquipBackpack`이 실제로 둘 다 빠뜨린 채 코드에 들어갔다**(14차에 함수 자체가 없어졌다) | Step 03의 대상은 `Server_DropItem` 하나. 04-B에서 Move·Swap·Reorder 셋이 는다 (03-2) |
 | 10 | `ClearLoot`이 버린 아이템까지 삭제 | `EP.Loot.Respawn` 시 플레이어 소지품이 사라짐 | Step 01의 `SpawnedPickups` 약참조 — **여기서 처음 검증 가능** |
 | **10b** | **`SlotId != None`인 자식을 용량으로 셈** | 부착물이 칸을 먹는다 | `GetUsedSlots`가 건너뛴다. **§7-3은 용량이 아니라 슬롯 스키마로 제한한다** (03-3) |
-| **3g** | **`CanPlaceInSlot`의 부착 슬롯 갈래(`GetWeaponDefOf`·`AttachmentSlots`)를 지금 침** | **컴파일되지 않는다** — 함수도 필드도 없고 `DT_Items`에 부착 슬롯 행이 0개다. 만들면 소비자 없는 필드 둘 ＋ 함수 하나가 생긴다(CLAUDE.md §2 *"상상한 확장점"*). **지금은 *"`BodySlots`에 없으면 거절"* 이 정확한 판정이다** | else 갈래는 §7-3에서. `return false` 한 줄을 벌리는 것이 전부 (03-2) |
+| **3j** | **`CanPlaceInSlot`의 부착 슬롯 갈래(`GetWeaponDefOf`·`AttachmentSlots`)를 지금 침** | **컴파일되지 않는다** — 함수도 필드도 없고 `DT_Items`에 부착 슬롯 행이 0개다. 만들면 소비자 없는 필드 둘 ＋ 함수 하나가 생긴다(CLAUDE.md §2 *"상상한 확장점"*). **지금은 *"`BodySlots`에 없으면 거절"* 이 정확한 판정이다** | else 갈래는 §7-3에서. `return false` 한 줄을 벌리는 것이 전부 (03-2) |
 | **10d** | **★★ `AddSubtree`가 슬롯 배치 검증을 안 한다** | `MoveEntry`의 검사 2(자격)·3(정합)·4(중복)를 하나도 안 지나면서 **public이고 `SlotId`를 받는다.** 지금은 유일한 호출자(`TryAutoEquip`)가 미리 확인해 통과하지만, **§7-3 부착이 두 번째 호출자로 예고돼 있고**(`AddSubtree(총Id, "Optic", …)`) 그쪽은 확인하지 않는다 — **함정 4z가 막은 우회 경로가 문법 그대로 되살아난다.** *"호출자가 보증하는 계약은 호출자가 늘면 깨진다"* | `CanPlaceInSlot(Parent, SlotId, ItemId)`을 뽑아 `MoveEntry`·`AddSubtree`가 같이 부른다 (03-2) ★★ |
 | **10e** | **★ `SlotSize`에 하한이 없다** | 기본값이 1일 뿐이고 `ClampMin`도 `IsDataValid` 검사도 없다. **본체가 0칸이 되면** `CanFit`이 `0 + 0 <= 0` → **참**이라 `SlotSize = 0`인 아이템만 0칸 본체에 무한히 들어가고, `GetInsertionOrder`의 맨 앞이 본체라 **컨테이너에는 절대 안 들어간다.** 크래시도 경고도 없이 *"이 아이템만 가방에 안 들어간다"* | `IsDataValid`에 `SlotSize >= 1` (`05_Loot_00_ItemCore.md`). **컨테이너 깊이 증명이 쓰는 전제이기도 하다** |
+| **11** | **★★ 색인 무효화 누락** (2026-10-07, D-100) | 구조를 바꾸는 쓰기 지점(`InsertEntry` · `RemoveSelf` · `MoveEntry`) 하나가 `MarkIndexDirty`를 빠뜨리면 **옛 색인을 읽는다**(2026-10-11부터 원소 추가 · 제거 · 수신은 리스트가 스스로 하므로 손으로 부르는 곳은 `MoveEntry` 하나다, D-113). 방금 넣은 아이템이 `FindEntry`에 없고, 옮긴 아이템의 칸이 옛 컨테이너에 계산되며, `RemoveAtSwap` 뒤에는 **엉뚱한 원소를 가리킨다.** 컴파일되고 대개 다음 조작에서 우연히 맞는다 | 무효화는 넷뿐이다 — 03-A-부록 표. 쓰기 지점을 새로 만들면 그 표를 같이 본다 ★★ |
+| **11b** | **클라 `PostReplicatedReceive`에서 무효화를 `Broadcast` 뒤에** | 구독자(UI)가 곧바로 `GetSortedContents`를 불러 **한 수신 늦은 목록**을 그린다. 다음 수신에서 맞으므로 *"UI가 가끔 한 박자 늦다"* 로 보인다 | 무효화 → `Broadcast` 순서 (03-7) |
+| **11c** | **`ChildrenOf`를 참조로 들고 구조 변경** | 구조 변경이 색인을 무효화하고 다음 조회가 맵을 다시 만든다 — 들고 있던 배열이 **댕글링**이다 | `RemoveChildrenRecursive`는 **복사**한다 (03-2). 2026-10-08부터 재귀 안에는 구조 변경이 없지만 규칙은 그대로 |
+| **11d** | **★★ 루프 안에서 "읽고 → 바꾸고 → 읽고"** (2026-10-08, D-106) | 바꿀 때마다 무효화되고 다음 읽기가 O(N)으로 다시 만든다 — 서브트리 K개면 **O(K·N)**. 기능은 맞아서 **프로파일러 말고는 증상이 없다** | 서브트리 경로는 일괄이다 — `AddSubtree`는 루프 안에서 `AppendEntry`만, `RemoveEntry`는 표시 후 `RemoveSelf` 한 번 (03-A-부록 표) |
+| **11f** | **리스트 `Append` · `RemoveAll`을 가드 밖에서 직접 부름** (2026-10-11, D-113) | 배열 · 색인 · 복제는 맞는데 **알림 가드를 안 지나** 서버 쪽 `Broadcast`가 빠진다 — 리슨 호스트 · PIE 화면만 안 바뀐다. `Append`면 정체 검사 · 키 계산도 건너뛴다 | 부르는 곳은 `AppendEntry` · `RemoveSelf` 하나씩 (03-1 경계 표 · 03-A-부록) |
+| **11e** | **`RemoveSelf`가 작은 위치부터 지움** (2026-10-08) | `RemoveAtSwap`이 마지막 원소를 빈자리로 옮기므로, 뒤쪽의 지울 원소가 앞으로 와 위치표가 틀린다 — **남의 엔트리가 지워지고 지울 것이 남는다.** 형제가 적으면 우연히 맞는다 | 위치를 **큰 것부터** 정렬한다 (03-A-부록) |
+| **12** | **`MakeItemState`를 안 지난 `State` / 같은 `ItemUid`를 두 번 넣음** (2026-10-07, D-098) | `CheckIdentity`가 **`ensure` 후 거절**한다(`AddItem` 합치기 앞 · `InsertEntry` · `AddSubtree` 넣기 전 검사 — D-104) — 줍기 · 지급이 실패로 보인다. 손으로 `FEPItemState`를 만들었거나(정체 0), 값 복사로 같은 아이템을 하나 더 만들려 한 것이다(dupe) | 발급 지점은 `MakeItemState` 하나 (`05_Loot_00_ItemCore.md` 00-6) |
+| **12b** | **`SortKey`를 `%d`로 찍음** (D-102) | `int64`라 상위 32비트가 잘려 `Dump`의 순서 열이 **거짓말한다** — 키가 `Step`의 배수라 하위 32비트는 대개 0이다 | `%lld` ＋ `(long long)` 캐스트 (03-9) |
 
-> **★★ 표시가 붙은 것 중 넷은 정상 플레이에서 반드시 나오고 증상이 원인을 가린다 — 4k(잔탄이 조용히 사라짐) · 4q(배치가 조금씩 무너짐) · 4v(장착이 무동작인데 `true`) · 4y(등이 비었는데 못 맨다).**
+> **★★ 표시가 붙은 것 중 넷은 정상 플레이에서 반드시 나오고 증상이 원인을 가린다 — 4k(잔탄이 조용히 사라짐) · 4q(배치가 조금씩 무너짐) · 4v(장착이 무동작인데 `true`) · 4y(등이 비었는데 못 맨다 — 03-B 표).**
 >
 > **3b는 시나리오가 아니라 계약으로 남아 있다** — 9차 확정으로 *"배낭 속 무기 장착"* 은 표현 불가능해졌지만(장착 ＝ `ParentEntryId == INDEX_NONE`), ① 착용 컨테이너 안에 또 컨테이너가 들어가는 구조가 그대로 있고 ② 핫바 5~0이 컨테이너 안 아이템을 들 수 있게 되면 같은 모양이 되살아난다 (`EquipmentSlots.md` §10 미정 #7).
 
@@ -2661,6 +3074,10 @@ UE_LOG(LogTemp, Log, TEXT("Idx, ItemId, Location, Charges%s, Claimed"),
 
 | 날짜 | 무엇 |
 |---|---|
+| 2026-10-07 (확장성 재검토 — 사용자 승인, `05_Loot_DECISIONS.md` D-098~D-103) | 기준은 *"큰 게임 · 아이템이 적다고 가정하지 않는다 · 나중에 고치지 않는다"*. **① 정체 `State.ItemUid`** — `EntryId`는 손잡이, `ItemUid`가 정체. `InsertEntry`가 정체 없음 · 중복을 거절한다(함정 12). **② 파생 색인 `FIndex`** — 모든 조회가 `EnsureIndex`를 지나고, 구조를 바꾸는 쓰기 셋 ＋ 클라 `PostReplicatedReceive`가 무효화만 한다. 옛 *"`UsedSlots`를 캐시하지 않는다"* · *"넷 다 O(N)"* 을 대체한다(함정 11 · 11b · 11c). 쓰기 지점이 `FindEntryMutable`로 원소를 잡아 **함정 4v가 형태로 막힌다.** **③ 가시성** — 프로퍼티 `COND_OwnerOnly` → 컴포넌트 `COND_NetGroup` ＋ `NetGroupOwner`, 캐릭터에 `bReplicateUsingRegisteredSubObjectList`. 플래그가 빠지면 새지 않고 끊긴다(함정 1). **④ `SortKey`는 `int64` · `1 << 32`** — 고갈 32회, 경계까지 2,147,483,644회. 예시 숫자는 옛 간격 기준으로 둔다. **⑤ `SetEntryStat`** — 단일 쓰기 지점 여섯 번째. **⑥ `EPInvDumpServer`** — `ItemUid`가 서버에만 있다. 완료 조건 21. **함께 고친 것:** `ReorderEntry`의 제자리 판정을 키 계산 앞으로(고갈 상태의 제자리 드롭이 재정규화부터 돌렸다) · 중점 계산을 `uint64` 차이로 · 체크포인트 절의 *"파일을 쪼개지 않는다"* · 완료 조건 13·16의 소속(체크포인트 표가 03-B로 적고 있었다) · 03-9 출력 예시와 `[server-only]` 절(16차 코드와 달랐다) · 함정 번호 중복(3e → 3i, 두 번째 3g → 3j) · 함정 9(03-B 몫)를 A 표에서 뺐다 |
+| 2026-10-08 (Codex 반박 검토 — `review-verifier` 확인, 사용자 승인, `05_Loot_DECISIONS.md` D-104~D-107) | **① 정체 검사를 `CheckIdentity`로 빼고 `AddItem`이 합치기 앞에서 부른다**(D-104) — 합치기가 `InsertEntry`에 안 닿아 정체 없는 `State` · 이미 가진 `ItemUid`가 수량만 올리고 있었다. **② 서브트리 일괄 경로**(D-106) — `InsertEntry`의 몸통을 `AppendEntry`(색인을 안 읽는다)로 떼고, `RemoveEntry`는 재귀에서 `Doomed`에 표시만 하고 끝에서 `RemoveSelf(Doomed)` 한 번. `RemoveSelf`는 위치를 큰 것부터 지운다. 옛 *"무효화가 여러 번 나도 한 번만 돈다"* 는 무효화 사이에 조회가 없을 때만 맞았다(함정 11d · 11e). 사이클 방지는 *"③ 자기 제거를 앞에"* 에서 *"⓪ 표시를 앞에"* 로 바뀌었다 |
+| 2026-10-08 (보충 — 설계 세션 판정, `05_Loot_DECISIONS.md` D-108) | **`AddItem`의 `bFungible` 분기 맨 앞에 `Stats` 비어 있음 검사를 넣었다.** 합치기는 들어온 `State`에서 `Charges`만 더해 `Stats`가 진단 없이 사라지고 있었다 — D-063이 적은 *"균질인데 구분 가능한 상태"* 그 경우다. 옛 불변식 *"균질 아이템은 `Durability`를 쓰지 않는다"* 는 D-099로 필드가 없어진 뒤 남은 문장이라 *"`Stats`를 갖지 않는다"* 로 넓혔다. `SetEntryStat` · `IsDataValid`에는 넣지 않는다(D-108 버린 대안) |
+| 2026-10-11 (03-A 완료 뒤 이동 — 사용자 승인, `05_Loot_DECISIONS.md` D-113 · D-114) | **색인 · 원소 접근 · 번호 발급기를 `FEPInventoryList`로 옮겼다. 동작은 같다.** 컴포넌트 안 `FIndex` → 리스트 밖 `FEPInventoryIndex`. `EnsureIndex` · `MarkIndexDirty` · `FindEntryPtr` · `FindEntryMutable` · `NextEntryId`는 리스트 멤버이고 `mutable`도 거기 붙는다. 원소를 더하고 빼는 것은 리스트 `Append`(번호 발급 포함) · `RemoveAll`이 dirty 표시와 색인 무효화를 같이 하고, 컴포넌트 `AppendEntry` · `RemoveSelf`는 가드 + 호출 한 줄이다. 손으로 무효화하는 곳은 `MoveEntry` 하나. 수신 콜백이 자기 `MarkIndexDirty`를 불러 **`friend struct FEPInventoryList`가 없어졌다**(무효화를 `Owner` 검사보다 앞으로). 수치 찾기 · 쓰기의 데이터 부분은 `FEPItemState::FindStat` · `SetStat`(`05_Loot_00_ItemCore.md` 00-1). `KeySpace_*` · `KeyOf`는 컴포넌트에 남는다. 03-1에 경계 절과 이동 검증(새 PIE 표 없음 — 03-A 통과 항목이 회귀 기준, `EPInvDumpServer` 전후 비교). 함정 11f |
 | 2026-08-28 (16차-b) | **옛 `FAutoConsoleCommand` 뼈대가 새 절과 함께 남아 모순이었다** — 폐기하고 포인터로 바꿨다. 그리고 **여섯 중 `EPInvMove` 하나만 본문이 있었다**(15차의 열 함수 누락과 같은 실수) — 여섯 전부를 한 벌로 넣었다. 문서가 `ReorderEntry`를 `bool`이라고 적었던 것도 고쳤다 — **`void`다**(`EPInventoryComponent.h:202`, *"정상 클라에서는 실패할 수 없는 연산"*). `Dump`는 `NextEntryId`(private)·`MaxSlots`(protected)를 못 읽으므로 `EntryId` 열과 `GetCapacity(INDEX_NONE)`으로 대신한다 — **public API만 쓴다는 계약을 깨지 않는다** |
 | 2026-08-28 (16차) | **03-9의 커맨드를 `UCheatManagerExtension`으로 바꿨다.** `Play As Client` PIE에서 콘솔 오브젝트(`FAutoConsoleCommand`)는 **클라 월드에서 돌아 권한이 없고**, `ServerExec`로도 못 넘긴다 — 서버 쪽 exec 체인(`Player.cpp:126-157`)에 콘솔 매니저가 없다(`UnrealEngine.cpp:5415`가 유일한 처리 지점). `UFUNCTION(Exec, BlueprintAuthorityOnly)`는 엔진이 `ServerExec`로 자동 라우팅한다(`CheatManager.cpp:95-131`). **부수 효과로 `[PlayerIndex]` 인자 넷과 `FindInv` 헬퍼가 사라진다** — 서버의 `GetPlayerController()`가 명령을 친 창의 PC다. 전제 둘: `AEPPlayerController::AddCheats`에서 `Super::AddCheats(true)` 강제(클라엔 `GetAuthGameMode()`가 없어 기본으론 CheatManager가 안 생긴다, `PlayerController.cpp:1166`), 등록은 CDO 생성자의 `RegisterForOnCheatManagerCreated`이되 **Lyra의 `WITH_SERVER_CODE` 가드는 뺀다**(클라에 확장이 없으면 라우팅 검사가 실패). 이름에 점을 못 써 `EP.Inv.Move` → `EPInvMove`. `Dump` 둘에 `BlueprintAuthorityOnly`를 붙이면 `COND_OwnerOnly` 검증이 조용히 무의미해진다 |
 | 2026-08-26 (15차) | **`MoveEntry`의 조립된 전체 본문을 넣었다** — 검사 0·1·5는 표에만 있고 코드가 없었고, 검사 6과 쓰기 블록은 각자 다른 절에 있어 **구현자가 다섯 군데를 꿰매야 했다.** 순서 계약 다섯을 표로 명시(검사 0 < 4 · 검사 0 < 5 · 검사 6 < 쓰기 · 키 계산 < 재부모 · 쓰기 < 모든 검사) |

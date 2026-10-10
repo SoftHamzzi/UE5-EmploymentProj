@@ -89,6 +89,7 @@ AEPCharacter::AEPCharacter(const FObjectInitializer& ObjectInitializer)
 	Movement->GetNavAgentPropertiesRef().bCanCrouch = true;
 	
 	InteractionComponent = CreateDefaultSubobject<UEPInteractionComponent>(TEXT("InteractionComponent"));
+	bReplicateUsingRegisteredSubObjectList = true;
 	
 }
 

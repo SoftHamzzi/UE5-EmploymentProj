@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "GameplayTagContainer.h"
 #include "Engine/EngineTypes.h"
 #include "EPTypes.generated.h"
 
@@ -74,16 +75,61 @@ struct FEPHitboxSnapshot
 };
 
 USTRUCT(BlueprintType)
+struct FEPItemStat {
+	GENERATED_BODY()
+	
+	UPROPERTY(BlueprintReadOnly, Category = "Item")
+	FGameplayTag Tag;
+	
+	UPROPERTY(BlueprintReadOnly, Category = "Item")
+	int32 Value = 0;
+};
+
+USTRUCT(BlueprintType)
 struct FEPItemState
 {
 	GENERATED_BODY()
 	
+	UPROPERTY(NotReplicated, BlueprintReadOnly, Category = "Item")
+	FGuid ItemUid;
+	
 	UPROPERTY(BlueprintReadWrite, Category = "Item")
 	int32 Charges = 0;
 	
-	UPROPERTY(BlueprintReadWrite, Category = "Item")
-	float Durability = 100.0f;
+	UPROPERTY(BlueprintReadOnly, Category = "Item")
+	TArray<FEPItemStat> Stats;
+
+	// 이 태그의 수치를 찾는다.
+	//   Tag      : 찾을 수치 태그
+	//   OutValue : 찾았을 때만 채워진다
+	// 반환 : 찾았는가 (값 0과 '없음'을 구분하려고 bool+out이다)
+	bool FindStat(FGameplayTag Tag, int32& OutValue) const
+	{
+		const FEPItemStat* Stat = Stats.FindByPredicate(
+			[&](const FEPItemStat& S){ return Tag == S.Tag; });
+		if (!Stat) return false;
+		OutValue = Stat->Value;
+		return true;
+	}
+
+	// 이 태그의 수치를 쓴다. 없으면 새로 넣는다. 권한 · 알림 · dirty는 호출자(컴포넌트) 몫이다.
+	// 반환 : 값이 실제로 바뀌었는가. 같은 값이면 false
+	bool SetStat(FGameplayTag Tag, int32 Value)
+	{
+		FEPItemStat* Stat = Stats.FindByPredicate(
+			[&](const FEPItemStat& S){ return Tag == S.Tag; });
+		if (Stat)
+		{
+			if (Stat->Value == Value) return false;
+			Stat->Value = Value;
+			return true;
+		}
+		Stats.Add({Tag, Value});
+		return true;
+	}
 };
+
+
 
 UENUM(BlueprintType)
 enum class EEPBallisticType : uint8

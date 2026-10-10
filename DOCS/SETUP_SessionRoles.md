@@ -376,3 +376,10 @@ DOCS/
 - 수정: `description: "…"`(여러 줄 큰따옴표)를 `description: |` 블록으로 바꾸고 두 칸 들여썼다. 문구는 바꾸지 않았다. `unreal-engine-researcher.md`는 한 줄 문자열(`\n` 이스케이프)이라 원래 통과한다.
 - 결과: `claude plugin validate .claude/agents` 통과. 새 세션 Agent 목록 확인은 남음.
 - 지난 검증이 실제로 무엇으로 됐나: `review-verifier.md`는 2026-09-04(`c226355`)에 들어왔고 그때부터 로드되지 않았다. 남아 있는 세션 기록 5개(2026-03~)에 `review-verifier` 호출은 **0건**이다(Agent 호출은 `general-purpose` 4건 — 3월 웹 조사, `Explore` 1건뿐). Loot 리뷰 2~16차(2026-07~08)는 에이전트가 생기기 전이다. 즉 **지금까지 "검증"은 전부 메인 세션이 직접 소스를 대조한 것**이고, 독립 에이전트 검증을 거친 Review는 없다. 지운 세션 기록은 확인할 수 없다.
+
+### 2026-10-04 — `/session-start`·`/handoff` 철회
+- 사용자 결정: 역할별 세션 운영을 중단하고 이전 "STATUS 앵커 방식"으로 돌아간다. 당분간 사용자가 직접 관리한다.
+- 철회 전 점검에서 드러난 문제: ① `/handoff`는 영역 STATUS 위쪽 칸만 덮어써서 아래 진행 상황이 낡은 채 남았다(`05_Loot_STATUS.md` 03-A "골격만" 줄) ② Step 인자(`03A`)와 실제 파일(`05_Loot_03_Inventory_A_Core.md`, 공용 `05_Loot_03_Inventory_STATUS.md`, Polish는 `Polish/<작업>/` 안)의 매핑 규칙이 없었다 ③ 03-A처럼 코드가 가이드보다 먼저 있는 Step은 "리뷰 = 가이드 채점" 역할에 들어갈 자리가 없었다 ④ "다음 행동"이 하나라 병행 작업(03A 리뷰 + 03B 개발)이 한 칸에 섞였다 ⑤ 영역이 없거나 여럿인 세션은 남길 곳이 없었다 ⑥ Polish 작업 문서의 `상태:` 줄이 서술형이라 관문 값으로 읽히지 않았다.
+- 삭제: `.claude/skills/session-start`, `.claude/skills/handoff`, Codex 사본 `.agents/skills/session-start`·`handoff`(untracked).
+- 되돌림: `SESSION.md`(STATUS 앵커 방식, 새 이름 반영), `CLAUDE.md` 작업 방식 두 줄, 두 영역 STATUS의 인수인계 칸 → "다음 할 일" 목록 + 세션 시작 템플릿.
+- 유지: 이름 규칙(4-2), DECISIONS 분리(4-3), Design `상태:` 관문, `Guide/`·가이드 레벨·자기 점검(4-7), `.claude/rules/`, Codex 사용처. 역할에 붙어 있던 규칙은 "세션" 표현만 빼고 남겼다(`ROADMAP.md` §6, `rules/notes-docs.md`).

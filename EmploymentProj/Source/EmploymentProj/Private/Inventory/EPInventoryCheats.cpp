@@ -23,35 +23,49 @@ UEPInventoryCheats::UEPInventoryCheats()
 #endif
 }
 
-void UEPInventoryCheats::EPInvDump()
+// 본문은 하나다. 어느 쪽 월드에서 도느냐만 다르다. 클라 복제본은 Uid 열이 '-'다(복제하지 않는다, D-098).
+static void DumpInventory(const UEPInventoryComponent* Inv)
 {
-	const UEPInventoryComponent* Inv = GetInv();
 	if (!Inv) return;
-	
+
+	const bool bAuth = Inv->GetOwner()->HasAuthority();
+	const TCHAR* Side = bAuth ? TEXT("[Server]") : TEXT("[Client]");
+
 	TArray<FEPInventoryEntry> Rows = Inv->GetEntries();
 	Rows.StableSort([](const FEPInventoryEntry& A, const FEPInventoryEntry& B)
 	{
-		if(A.ParentEntryId != B.ParentEntryId) return A.ParentEntryId < B.ParentEntryId;
+		if (A.ParentEntryId != B.ParentEntryId) return A.ParentEntryId < B.ParentEntryId;
 		const bool bASlot = !A.SlotId.IsNone(), bBSlot = !B.SlotId.IsNone();
 		if (bASlot != bBSlot) return bASlot;
 		return A.SortKey < B.SortKey;
 	});
-	
-	UE_LOG(LogTemp, Log, TEXT("EntryId Parent SlotId ItemId Charges SortKey"));
+
+	UE_LOG(LogTemp, Log, TEXT("%s EntryId Parent SlotId ItemId Charges SortKey Uid"), Side);
 	for (const FEPInventoryEntry& E : Rows)
 	{
-		UE_LOG(LogTemp, Log, TEXT("%d %d %s %s %d %d"), E.EntryId, E.ParentEntryId, *E.SlotId.ToString(), *E.ItemId.ToString(), E.State.Charges, E.SortKey);
+		UE_LOG(LogTemp, Log, TEXT("%s %d %d %s %s %d %lld %s"), Side, E.EntryId, E.ParentEntryId,
+			*E.SlotId.ToString(), *E.ItemId.ToString(), E.State.Charges, E.SortKey,
+			bAuth ? *E.State.ItemUid.ToString() : TEXT("-"));
 	}
-	
-	UE_LOG(LogTemp, Log, TEXT("Body : %d / %d"),
-		Inv->GetUsedSlots(INDEX_NONE), Inv->GetCapacity(INDEX_NONE));
+
+	UE_LOG(LogTemp, Log, TEXT("%s Body : %d / %d"), Side, Inv->GetUsedSlots(INDEX_NONE), Inv->GetCapacity(INDEX_NONE));
 	for (const FEPInventoryEntry& E : Rows)
 	{
 		const int32 Cap = Inv->GetCapacity(E.EntryId);
 		if (Cap <= 0) continue;
-		UE_LOG(LogTemp, Log, TEXT("%s(%d) : %d / %d"),
+		UE_LOG(LogTemp, Log, TEXT("%s %s(%d) : %d / %d"), Side,
 			*E.ItemId.ToString(), E.EntryId, Inv->GetUsedSlots(E.EntryId), Cap);
 	}
+}
+
+void UEPInventoryCheats::EPInvDump()
+{
+	DumpInventory(GetInv());
+}
+
+void UEPInventoryCheats::EPInvDumpServer()
+{
+	DumpInventory(GetInv());
 }
 
 void UEPInventoryCheats::EPInvDumpAll()

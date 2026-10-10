@@ -11,7 +11,8 @@
 
 **완료 조건**
 
-- [ ] `EP.Item.State Weapon_AK74_HitScan` → `Charges=30 Durability=100` (무기 오버라이드 경로)
+- [ ] `EP.Item.State Weapon_AK74_HitScan` → `Charges=30 Stats=0` (무기 오버라이드 경로)
+- [ ] **같은 커맨드를 두 번 치면 `Uid`가 매번 다르고 0이 아니다** — `MakeItemState`가 발급한다 (2026-10-07, D-098)
 - [ ] `EP.Item.State AmmoBox_545` → `Charges=100` (기본 클래스 + `InitialCharges` 경로)
 - [ ] `EP.Item.State Resume` → `Charges=0` (기본값 그대로)
 - [ ] `EP.Item.Dump` → `DataCache=9  Definitions=9`
@@ -45,11 +46,31 @@ return FPrimaryAssetId(TEXT("WeaponDef"), GetFName());   // ← 서브클래스�
 ## 00-1. `FEPItemState` — 개체 상태는 값 타입이다
 
 ```cpp
-// EPTypes.h (또는 EPItemData.h 옆)
+// EPTypes.h
+#include "GameplayTagContainer.h"     // FGameplayTag — GameplayTags 모듈은 Build.cs에 이미 있다
+
+// 종류별 수치 하나. 태그가 이름이다 (2026-10-07, D-099)
+USTRUCT(BlueprintType)
+struct FEPItemStat
+{
+    GENERATED_BODY()
+
+    UPROPERTY(BlueprintReadOnly, Category = "Item")
+    FGameplayTag Tag;                 // 예: Item.Stat.Durability (0~10000 = 0.00~100.00%)
+
+    UPROPERTY(BlueprintReadOnly, Category = "Item")
+    int32 Value = 0;
+};
+
 USTRUCT(BlueprintType)
 struct FEPItemState
 {
     GENERATED_BODY()
+
+    // ★ 아이템의 정체. MakeItemState(00-6)가 한 번 발급하고 값 복사로 따라간다 (D-098)
+    //   복제하지 않는다 — 클라는 EntryId로 가리킬 뿐 정체가 필요 없다
+    UPROPERTY(NotReplicated, BlueprintReadOnly, Category = "Item")
+    FGuid ItemUid;
 
     // 이 개체가 담고 있는 소모 단위
     //   무기      : 장전된 발수        탄약상자 : 남은 발수
@@ -57,12 +78,65 @@ struct FEPItemState
     UPROPERTY(BlueprintReadWrite, Category = "Item")
     int32 Charges = 0;
 
-    UPROPERTY(BlueprintReadWrite, Category = "Item")
-    float Durability = 100.f;
+    // 그 밖의 종류별 수치. ★ 지금은 비어 있다 — 채우는 것은 소비자(방어구 · 무기 마모)의 단계다
+    UPROPERTY(BlueprintReadOnly, Category = "Item")
+    TArray<FEPItemStat> Stats;
 };
 ```
 
 `Outer`도, 핸들도, 소유 서브시스템도, 수명 관리도 없다. 인벤토리 엔트리(Step 03)와 픽업(Step 01)에 **값으로 내장**되고, 이관은 대입 한 줄이다.
+
+> **★ 위 블록을 옮겨 적을 때 지킬 넷 (2026-10-09 — 작성 중 코드에서 어긋난 것)**
+>
+> | # | 지킬 것 | 어기면 |
+> |---|---|---|
+> | 1 | **`FEPItemStat`을 `FEPItemState`보다 위에** 둔다 | `TArray<FEPItemStat> Stats`가 아직 선언되지 않은 타입을 써서 **컴파일 에러**. 전방 선언으로는 안 된다 — `TArray`의 원소는 완전한 타입이어야 한다 |
+> | 2 | `#include "GameplayTagContainer.h"`를 **`EPTypes.generated.h`보다 위에** 넣는다 | 다른 헤더를 타고 우연히 들어오는 동안만 컴파일된다. `.generated.h`는 언제나 마지막 include다(UHT 규칙) |
+> | 3 | `int32 Value = 0;` — 초기값을 준다 | `FEPItemStat()`으로 만든 원소의 `Value`가 쓰레기값이다. 수치는 세이브 · 복제를 타므로 그 값이 그대로 퍼진다 |
+> | 4 | **`Charges`만 `BlueprintReadWrite`**, `ItemUid` · `Stats` · `Tag` · `Value`는 `BlueprintReadOnly` | 컴파일은 된다. 대신 블루프린트가 정체와 수치를 직접 쓸 수 있어 **쓰기 지점이 하나라는 규칙**(정체는 `MakeItemState` 발급 하나 — D-098, 수치는 `SetEntryStat` 하나 — D-099)에 구멍이 난다 |
+
+> ### ★ 2026-10-11 추가 — 수치 찾기 · 쓰기의 데이터 부분 (D-113)
+>
+> 03-A가 끝난 뒤 인벤토리 컴포넌트의 `SetEntryStat` · `GetEntryStat`에서 **`Stats` 배열만 만지는 부분**을 여기로 옮긴다. 위 `FEPItemState` 안에 둘을 더한다.
+>
+> ```cpp
+> // FEPItemState 안 (EPTypes.h) — 2026-10-11, D-113
+> // 태그로 수치 하나를 찾는다. 없으면 nullptr. ★ 돌려준 포인터는 Stats가 바뀌기 전까지만 유효하다
+> const FEPItemStat* FindStat(FGameplayTag Tag) const
+> {
+>     return Stats.FindByPredicate([&](const FEPItemStat& S) { return S.Tag == Tag; });
+> }
+>
+> // 없으면 추가, 있으면 덮어쓴다. 반환: 값이 바뀌었는가 — 같은 값이면 false
+> bool SetStat(FGameplayTag Tag, int32 Value)
+> {
+>     for (FEPItemStat& S : Stats)
+>     {
+>         if (S.Tag != Tag) continue;
+>         if (S.Value == Value) return false;
+>         S.Value = Value;
+>         return true;
+>     }
+>     FEPItemStat& New = Stats.AddDefaulted_GetRef();
+>     New.Tag   = Tag;
+>     New.Value = Value;
+>     return true;
+> }
+> ```
+>
+> - **권한 · 태그 유효성 · `MarkItemDirty` · 알림은 여기 없다.** 그건 컴포넌트 `SetEntryStat`의 일이다(`05_Loot_03_Inventory_A_Core.md` 03-A-부록). 이 둘은 배열만 본다.
+> - **위 표 4번(쓰기 지점이 하나)이 안 깨지는 이유:** 인벤토리 안에 살아 있는 엔트리는 밖으로 나가지 않으므로(03-2) 그 `State`에 `SetStat`을 부를 길은 여전히 `SetEntryStat` 하나다. 배열 밖의 값(넣기 전 `State`, 픽업 `Payload`)에는 직접 써도 된다 — dirty를 표시할 대상이 아직 없다.
+> - **`UFUNCTION`이 아니다.** 블루프린트에 열지 않는다 — 표 4번과 같은 이유다.
+
+> ### ★ 2026-10-07 개정 — `Durability`를 없애고 `ItemUid` · `Stats`를 넣는다 (D-098 · D-099)
+>
+> **`Durability` → `Stats`의 `Item.Stat.Durability`.** 고정 필드로 가면 종류가 늘 때마다(방어구 판 · 열쇠 횟수 · 의료품 잔량) **엔트리 · 세이브 · 복제 스키마가 바뀐다.** 태그 + 정수 배열이면 스키마가 그대로다. 지금 `Durability`를 읽는 곳이 `EP.Item.State` 로그 한 줄뿐이라(`EPItemDefinitionSubsystem.cpp:212-213`) **바꾸는 비용이 지금이 최저다.** 정수인 이유는 `SortKey`가 `double`을 버린 것과 같다 — 비교가 정확하고 세이브 · DB 왕복이 안전하다.
+>
+> **`Stats`가 `FInstancedStruct`가 아닌 이유:** 그 경로는 `NetSerialize`라 **안쪽 프로퍼티 델타를 잃는다.** `TArray<USTRUCT>`는 FastArray의 내부 struct 델타가 원소 단위로 보낸다(`FastArraySerializer.h:218-219`). 수치가 아닌 데이터(무작위 옵션 · 각인)가 오면 그때 `FInstancedStruct Extra`를 **추가**한다(D-095).
+>
+> **`ItemUid`가 `NotReplicated`여도 되는 이유:** 이 구조체가 실리는 곳은 인벤토리 엔트리(FastArray 원소)와 픽업의 서버 전용 `Payload`다. 둘 다 서버가 정체를 들고 있으면 충분하다.
+>
+> **태그(`Item.Stat.*`)는 지금 선언하지 않는다.** 읽는 코드가 0이다. 소비자가 오는 단계에서 `EPNativeGameplayTags.h`에 넣는다.
 
 > **필드 이름이 `Ammo`가 아닌 이유:** 같은 값을 탄약상자·현금뭉치·소모품이 공유한다. 특히 **스택이 없으므로 돈을 인벤토리 아이템으로 두려면 현금뭉치 하나가 금액을 들고 있어야** 하고(안 그러면 10,000원이 엔트리 10,000개가 된다), 그 필드가 `Ammo`면 안 된다.
 
@@ -303,11 +377,11 @@ Public/Data/EPWeaponInstance.h    Private/Data/EPWeaponInstance.cpp
 | 기존 | 행선지 |
 |---|---|
 | `UEPWeaponInstance::CurrentAmmo` | `FEPItemState::Charges` |
-| `UEPWeaponInstance::Durability` | `FEPItemState::Durability` |
+| `UEPWeaponInstance::Durability` | `FEPItemState::Stats`의 `Item.Stat.Durability` (2026-10-07, D-099) |
 | `UEPItemInstance::ItemId` | `FEPInventoryEntry::ItemId` / `AEPPickup::ItemId` |
 | `UEPItemInstance::CachedDefinition` | `UEPItemDefinitionSubsystem::FindDefinition(ItemId)` — O(1) 조회라 캐시할 이유가 없다 |
 | `UEPItemInstance::Quantity` | **없어진다.** 스택이 없다 (§4-1) |
-| `UEPItemInstance::InstanceId` (FGuid) | **없어진다.** 읽는 코드가 없고, DB 영구 식별자는 저장 시점에 발급한다 |
+| `UEPItemInstance::InstanceId` (FGuid) | **`FEPItemState::ItemUid`로 다시 산다** (2026-10-07, D-098). 발급은 `MakeItemState`(00-6) |
 | `UEPItemInstance::SchemaVersion` | **없어진다.** 아이템이 아니라 **세이브 포맷의 속성**이다 — `USaveGame`/DB 행 봉투에 하나만 둔다 |
 | `UEPItemInstance::IsSupportedForNetworking()` | **없어진다.** 복제할 UObject 자체가 없다 |
 | `static CreateInstance()` / `CreateWeaponInstance()` | Definition의 `InitState()` (00-2) |
@@ -609,9 +683,15 @@ bool UEPItemDefinitionSubsystem::MakeItemState(FName ItemId, FEPItemState& OutSt
         return false;
     }
     Def->InitState(*Row, OutState);      // ★ Row와 Definition을 둘 다 여기서 들고 있다
+
+    // ★ 정체는 여기서만 발급한다 (2026-10-07, D-098). InitState 뒤에 둔다 —
+    //   재정의한 InitState가 무엇을 하든 마지막에 덮인다
+    OutState.ItemUid = FGuid::NewGuid();
     return true;
 }
 ```
+
+> **★ `ItemUid`를 virtual `InitState`에서 발급하지 않는다.** 재정의하는 쪽(`UEPWeaponDefinition::InitState` 등)이 `Super`를 안 부르면 그 종류만 정체가 0이다. **아이템이 세상에 처음 생기는 경로(스포너 · `StartingEquipment` · 치트)가 전부 이 함수를 지나므로** 여기가 유일한 발급 지점이다. 이미 있는 아이템을 옮길 때(버리기 · 줍기 · 컨테이너 이동)는 이 함수를 부르지 않는다 — **값 복사로 같은 정체가 따라간다.**
 
 > **`InitState`가 `FEPItemData`를 받는 비용이 여기서 0인 이유** — 이 함수가 유일한 호출부이고 조회를 이미 둘 다 한다. 그래서 `InitialCharges`를 DT로 옮기는 데 드는 것이 **인자 하나**뿐이다 (00-2).
 
@@ -744,7 +824,7 @@ public:
 ```cpp
 // #if !(UE_BUILD_SHIPPING || UE_BUILD_TEST) 가드 — SSR 디버그와 동일
 
-EP.Item.State <ItemId>   // MakeItemState() 결과를 출력 (Charges / Durability / SlotSize)
+EP.Item.State <ItemId>   // MakeItemState() 결과를 출력 (Uid / Charges / Stats 개수 / SlotSize)
 EP.Item.Dump             // DataCache 행 수 / DefinitionCache 상주 수
 ```
 
@@ -799,9 +879,9 @@ static FAutoConsoleCommandWithWorldAndArgs CmdItemState(
     const FEPItemData*       Row = Sub->FindData(ItemId);
     const UEPItemDefinition* Def = Sub->FindDefinition(ItemId);
 
-    UE_LOG(LogTemp, Log, TEXT("[ItemCore] %s  Charges=%d  Durability=%.1f  SlotSize=%d  (%s)"),
-           *ItemId.ToString(), State.Charges, State.Durability,
-           Row->SlotSize, *GetNameSafe(Def->GetClass()));
+    UE_LOG(LogTemp, Log, TEXT("[ItemCore] %s  Uid=%s  Charges=%d  Stats=%d  SlotSize=%d  (%s)"),
+           *ItemId.ToString(), *State.ItemUid.ToString(EGuidFormats::Short), State.Charges,
+           State.Stats.Num(), Row->SlotSize, *GetNameSafe(Def->GetClass()));
 }), ECVF_Cheat);
 
 static FAutoConsoleCommandWithWorldAndArgs CmdItemDump(
@@ -840,13 +920,16 @@ static FAutoConsoleCommandWithWorldAndArgs CmdItemDump(
 
 ```
 > EP.Item.State Weapon_AK74_HitScan
-[ItemCore] Weapon_AK74_HitScan  Charges=30  Durability=100.0  SlotSize=5   (WeaponDefinition)
+[ItemCore] Weapon_AK74_HitScan  Uid=Xr3kQ…  Charges=30  Stats=0  SlotSize=5   (WeaponDefinition)
+
+> EP.Item.State Weapon_AK74_HitScan                       ← ★ 한 번 더. Uid가 달라야 한다
+[ItemCore] Weapon_AK74_HitScan  Uid=b9TzW…  Charges=30  Stats=0  SlotSize=5   (WeaponDefinition)
 
 > EP.Item.State AmmoBox_545
-[ItemCore] AmmoBox_545          Charges=100 Durability=100.0  SlotSize=1   (ItemDefinition)
+[ItemCore] AmmoBox_545          Uid=…       Charges=100 Stats=0  SlotSize=1   (ItemDefinition)
 
 > EP.Item.State Resume
-[ItemCore] Resume               Charges=0   Durability=100.0  SlotSize=1   (ItemDefinition)
+[ItemCore] Resume               Uid=…       Charges=0   Stats=0  SlotSize=1   (ItemDefinition)
 
 > EP.Item.Dump
 [ItemCore] DataCache=9  Definitions=9

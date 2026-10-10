@@ -351,8 +351,8 @@ Step 04에서 **`Resolve`·`MoveTo`·`UEPInventoryLayoutSave`·`UEPInventoryLayo
 
 | 파일 | 관계 |
 |---|---|
-| **`DOCS/Notes/05/05_Loot_03_Inventory.md`** | **이번 변경의 본체.** 03-1 `SortKey` 절 · 03-2 구현 절 (1763줄) |
-| **`DOCS/Notes/05/05_Loot_04_InventoryUI.md`** | 04-8 전면 교체 · 04-7 `HandleDrop` (934줄) |
+| **`DOCS/Notes/05/Implementation/05_Loot_03_Inventory.md`** | **이번 변경의 본체.** 03-1 `SortKey` 절 · 03-2 구현 절 (1763줄) |
+| **`DOCS/Notes/05/Implementation/05_Loot_04_InventoryUI.md`** | 04-8 전면 교체 · 04-7 `HandleDrop` (934줄) |
 | `DOCS/Mine/EquipmentSlots.md` §13 | 결정 기록 · Claude 권고가 뒤집힌 경위 |
 | `DOCS/Notes/05/Status/05_Loot_STATUS.md` | 확정표 순서 9행 · 11차 이력 · 정정 기록 |
 | `DOCS/Notes/05/05_Loot_03_Inventory_STATUS.md` | 11차 코드 항목 |

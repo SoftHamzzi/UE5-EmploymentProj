@@ -37,7 +37,7 @@ Tab으로 인벤토리 화면을 열어 착용 슬롯 12칸과 컨테이너 구�
 
 | | 범위 | 완료 조건 | 검증 수단 |
 |---|---|---|---|
-| **04-A 표시** | 04-0 · 04-1 · 04-2 · 04-3 · 04-4 · 04-6 | 1~6, 13, 14 (8개) | `EP.Inv.Add` / **`EP.Inv.Move`** 디버그 커맨드 (14차) |
+| **04-A 표시** | 04-0 · 04-1 · 04-2 · 04-3 · 04-4 · 04-6<br>**＋ `GetEntryView` (컴포넌트에 붙인다 — 2026-10-08, D-110)** | 1~6, 13, 14 (8개) | `EP.Inv.Add` / **`EP.Inv.Move`** 디버그 커맨드 (14차) |
 | **04-B 드래그** | 04-5 · 04-7 · 04-8 | 7~12, 15 (7개) | 마우스 조작 |
 
 **분할선의 근거는 의존성이다.** 04-A는 Step 03만 있으면 검증되지만, **04-B는 `Server_MoveEntry`·`SwapEntries`가 있어야 한다.** (`ReorderEntry` 내부 함수는 03-A라 이미 있고 `EP.Inv.Reorder`로 계약이 닫혀 있다 — 04-B가 여는 것은 **`Server_ReorderEntry` RPC와 드래그 UI**다.) 즉 04-A가 끝나는 지점이 **RPC 표면이 처음 열리기 직전**이고, 8차·9차가 쓴 기준(*"검증 표면은 소비자를 따라간다"*)이 그대로 분할선이 된다.
@@ -375,6 +375,68 @@ TArray<FName> ContainerOrder;   // ["Coat", "Torso", "Legs", "Back", "Wrist"]
 >
 > **`ContainerOrder`가 공유되는 것은 "순서"이지 "목록"이 아니다.** 표시 순서와 획득 시 채우는 순서가 지금은 같기 때문에 배열 하나를 둘이 본다. *"주울 때 팔목은 마지막에 채운다"* 같은 게 나오면 목록이 둘로 갈리는데, **`GetInsertionOrder()`가 이미 함수라 쪼개는 비용이 0이다** — §7-1이 그 함수를 만든 이유 그대로다.
 
+### ★ 클라는 엔트리를 `GetEntryView` 하나로 읽는다 (2026-10-08, D-110)
+
+**UI 코드는 `FindEntry` · `GetEntries`로 엔트리의 `ItemId` · `State`를 읽지 않는다.** §7-1에서 엔트리가 공개 부분(`EntryId` · `ParentEntryId` · `SlotId` · `SortKey` · 크기)과 비공개 부분(`ItemId` · `State`)으로 갈리고, 보는 사람이 그 아이템을 모르면 비공개 부분이 빈 채로 온다(D-109 · D-110). UI가 필드를 직접 읽고 있으면 그때 읽는 곳마다 고쳐야 한다. 접근자 하나를 지나면 §7-1은 그 함수 본문만 바꾼다.
+
+```cpp
+// EPInventoryTypes.h — 복제하지 않는다. 클라가 읽는 모양일 뿐이다
+USTRUCT()
+struct FEPEntryView
+{
+    GENERATED_BODY()
+
+    int32 EntryId       = INDEX_NONE;
+    int32 ParentEntryId = INDEX_NONE;
+    FName SlotId;
+    int32 SlotSize      = 0;      // ★ 공개 — 몰라도 칸 계산 · 게이지 · SizeBadge가 돈다 (D-109)
+
+    bool         bKnown = false;  // ★ 거짓 = "모름". 아래 둘은 비어 있다
+    FName        ItemId;
+    FEPItemState State;
+};
+```
+
+```cpp
+// UEPInventoryComponent (public) — 04-A에서 붙인다
+// ★ 클라 UI가 엔트리를 읽는 유일한 문. 없으면 false (FindEntry와 같은 규약)
+bool GetEntryView(int32 EntryId, FEPEntryView& Out) const;
+
+bool UEPInventoryComponent::GetEntryView(int32 EntryId, FEPEntryView& Out) const
+{
+    const FEPInventoryEntry* E = Entries.FindEntryPtr(EntryId);   // 리스트의 색인 경유 (03-A-부록, D-113)
+    if (!E) return false;
+
+    Out = FEPEntryView();
+    Out.EntryId       = E->EntryId;
+    Out.ParentEntryId = E->ParentEntryId;
+    Out.SlotId        = E->SlotId;
+
+    // ★ §7-1 전까지 모든 엔트리는 아는 상태다 (D-109 — 모름은 상자 · 시체 내용물에서만 생긴다)
+    //   §7-1이 바꾸는 곳은 이 블록 하나다: "비공개 부분이 채워져 왔나"로 bKnown을 정하고,
+    //   크기는 공개 부분에서 읽는다
+    Out.bKnown = true;
+    Out.ItemId = E->ItemId;
+    Out.State  = E->State;
+
+    const FEPItemData* Data = Defs() ? Defs()->FindData(E->ItemId) : nullptr;
+    Out.SlotSize = Data ? Data->SlotSize : 0;
+    return true;
+}
+```
+
+**어디에 두나 — 컴포넌트 멤버, 붙이는 단계는 04-A** (D-110이 구현 쪽에 맡긴 판단, 2026-10-08)
+
+| 후보 | 판정 |
+|---|---|
+| UI 쪽 헬퍼 (위젯 · 정적 함수) | ✗ 헬퍼가 엔트리 필드를 직접 읽으므로 **계약이 UI 안으로 들어온다.** §7-1에서 필드가 갈리면 비공개 부분이 어디 있는지 아는 것은 `FEPInventoryList`의 주인인 컴포넌트뿐이다 |
+| 컴포넌트, 03-A에서 | ✗ 03-A에는 클라 소비자가 없어 **호출자 0개 함수**가 된다 — 14차가 `Server_EquipBackpack`을 지운 근거와 같다. D-110도 03-A의 형태를 지금 안 바꾼다고 했다 |
+| **컴포넌트, 04-A에서** | ✓ 첫 소비자(`Rebuild` · 칸 위젯)와 같이 들어온다. `Server_ReorderEntry`(04-B)처럼 **컴포넌트에 붙지만 소비자 단계가 연다** |
+
+- **서버 코드는 이 계약 밖이다.** `MoveEntry` · `SwapEntries` 등은 서버 진실을 읽으므로 `FindEntry` · `FindEntryPtr` 그대로다.
+- **디버그 커맨드(`EPInvDump`)도 밖이다.** 복제된 원본을 보여주는 것이 목적이다 — §7-1 뒤 클라 `Dump`에 빈 비공개 부분이 찍히면 그게 맞는 결과다.
+- **컴파일러는 이 계약을 막지 못한다** — `FindEntry`는 서버 코드가 쓰는 public이다. 지키는 것은 리뷰다: 04-A 코드에서 위젯 클래스(`UEP*Widget` · `UEPContainerPanel` · `UEPSegmentedBar`)의 `FindEntry` · `GetEntries` 호출이 **0개**여야 한다(함정 15).
+
 ### 칸 채우기 — 순서는 로컬, 부피는 서버
 
 ```cpp
@@ -389,12 +451,12 @@ void UEPContainerPanel::Rebuild(UEPInventoryComponent* Inv, int32 Container, FTe
     int32 i = 0;
     for (int32 EntryId : Ordered)
     {
-        FEPInventoryEntry E;
-        if (!Inv->FindEntry(EntryId, E)) continue;
+        FEPEntryView V;
+        if (!Inv->GetEntryView(EntryId, V)) continue;       // ★ FindEntry가 아니다 (D-110)
 
         // ★ NewObject가 아니다 — UDynamicEntryBox가 풀에서 꺼내 준다
         UEPItemCellWidget* Cell = CellBox->CreateEntry<UEPItemCellWidget>();
-        Cell->SetEntry(E, i, this);                         // 아이콘 · Charges · SizeBadge · DisplayIndex
+        Cell->SetEntry(V, i, this);                         // 아이콘 · Charges · SizeBadge · DisplayIndex
         ++i;
     }
 
@@ -405,7 +467,7 @@ void UEPContainerPanel::Rebuild(UEPInventoryComponent* Inv, int32 Container, FTe
 
     HeaderText  ->SetText(Header);
     CapacityText->SetText(FText::Format(NSLOCTEXT("EP", "Cap", "{0} / {1}"), Used, Max));
-    CapacityBar ->SetSegments(Ordered, Inv, Max);           // ★ 아이템별 구간 (04-0)
+    CapacityBar ->SetSegments(Ordered, Inv, Max);           // ★ 아이템별 구간 (04-0). 구간 크기는 View.SlotSize — 몰라도 그린다 (D-110)
 }
 ```
 
@@ -450,7 +512,7 @@ at both design- and run-time.
 > ```
 > 도입하면 엔트리마다 UObject 래퍼를 만들어 넘겨야 한다 — **방금 지운 `UEPItemInstance`를 UI 전용으로 부활시키는 것**이고 수명 관리까지 딸려온다. **값 타입 설계와 안 맞는 것은 `UListView`의 아이템 타입이지 풀링이 아니다** — 풀링은 `UDynamicEntryBox`로 받는다(위).
 
-> `GetEntries()`는 Step 03에서 추가하는 읽기 전용 뷰다. **반환 참조는 그 프레임 안에서만 유효하다** — `FindEntry`가 값으로 돌려주는 이유이기도 하다.
+> `GetEntries()`는 Step 03에서 추가하는 읽기 전용 뷰다. **반환 참조는 그 프레임 안에서만 유효하다** — `FindEntry`가 값으로 돌려주는 이유이기도 하다. **UI는 둘 다 부르지 않는다 — `GetEntryView`로 읽는다**(위, D-110).
 
 ---
 
@@ -504,7 +566,7 @@ class EMPLOYMENTPROJ_API UEPItemCellWidget : public UUserWidget
 {
     GENERATED_BODY()
 public:
-    void SetEntry(const FEPInventoryEntry& Entry);
+    void SetEntry(const FEPEntryView& View);         // ★ 엔트리가 아니라 뷰를 받는다 (D-110)
 
 protected:
     virtual FReply NativeOnMouseButtonDown(const FGeometry&, const FPointerEvent&) override;
@@ -534,21 +596,32 @@ private:
 ### 아이콘은 비동기 로드 + 플레이스홀더
 
 ```cpp
-void UEPItemCellWidget::SetEntry(const FEPInventoryEntry& Entry)
+void UEPItemCellWidget::SetEntry(const FEPEntryView& View)
 {
-    EntryId = Entry.EntryId;
+    EntryId = View.EntryId;
 
-    const FEPItemData* Data = /* DefinitionSubsystem->FindData(Entry.ItemId) */;
+    // ★ SizeBadge는 컨테이너 칸에만 있다. 착용 슬롯은 칸을 안 먹으므로 숫자가 거짓말이 된다 (04-0)
+    //   크기는 정체를 몰라도 보인다 (D-109) — 그래서 모름 분기보다 앞이다
+    if (SizeBadge) SizeBadge->SetText(FText::AsNumber(View.SlotSize));
+
+    // ★ 모름 — 정체에서 나오는 것(아이콘 · 희귀도 · Charges)을 그리지 않는다 (D-110)
+    //   §7-1 전엔 타지 않는다. 그래도 지금 둔다 — 이 분기가 있어야 §7-1이 UI를 안 고친다
+    if (!View.bKnown)
+    {
+        ChargesText->SetVisibility(ESlateVisibility::Collapsed);
+        ItemIcon->SetBrushFromTexture(PlaceholderIcon);
+        return;
+    }
+
+    const FEPItemData* Data = /* DefinitionSubsystem->FindData(View.ItemId) */;
     if (!Data) return;
 
     // ★ 이름은 칸에 안 들어간다 — hover 시 하단 바에 띄운다 (툴팁은 범위 밖)
-    // ★ SizeBadge는 컨테이너 칸에만 있다. 착용 슬롯은 칸을 안 먹으므로 숫자가 거짓말이 된다 (04-0)
-    if (SizeBadge) SizeBadge->SetText(FText::AsNumber(Data->SlotSize));
 
     // Charges가 0인 아이템(잡템·퀘스트)은 숫자를 숨긴다
-    ChargesText->SetVisibility(Entry.State.Charges > 0
+    ChargesText->SetVisibility(View.State.Charges > 0
         ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
-    ChargesText->SetText(FText::AsNumber(Entry.State.Charges));
+    ChargesText->SetText(FText::AsNumber(View.State.Charges));
 
     if (RarityBorder)
         if (const FLinearColor* C = RarityColors.Find(Data->Rarity))
@@ -840,6 +913,8 @@ MoveEntry 검사 5:  CanFit(NewParent, ItemId) = GetUsedSlots(NewParent) + SlotS
 찬 슬롯 위              →  노랑 (교환). ★ CanPlaceInSlot은 검사 4에서 false다 — 네 번째 인자로 상대를 무시한다
 ```
 
+> **★ 판정에 넘기는 `ItemId`는 `GetEntryView`에서 온다 (D-110).** 모르면 `NAME_None`이라 `CanPlaceInSlot`이 거절한다 — *"미확인 아이템은 장착할 수 없다"*(D-109)와 같은 답이다. 반면 `CanFit(Container, ItemId)`는 `ItemId`로 크기를 찾으므로 **모르는 아이템을 판정할 수 없는데**, D-109는 미확인 아이템을 가방에 넣게 한다 — §7-1에서 크기로 판정하는 길이 필요하다. 지금은 모든 엔트리가 아는 상태라 타지 않는다.
+
 **거절 사유가 "자리가 없다"가 아니라 "이만큼 모자라다"로 보이는 것**이 04-0에서 빈 칸의 개수를 포기한 대가로 얻는 것이다. **그리고 그 "이만큼"을 말하는 것은 색이 아니라 `7 → 11 / 20` 숫자다** — 색은 가부까지만 답한다.
 
 > **★ `NativeOnDragOver`에서 매 프레임 `GetUsedSlots`를 부르지 않는다.** `GetUsedSlots`는 **드래그 중에 바뀌지 않는다** — 서버 상태가 바뀌는 유일한 계기는 `PostReplicatedReceive`이고 그건 알림을 쏜다(Step 03 03-7). **드래그 시작에 한 번 캐고 알림이 오면 버린다.**
@@ -866,7 +941,7 @@ MoveEntry 검사 5:  CanFit(NewParent, ItemId) = GetUsedSlots(NewParent) + SlotS
 | `RemoveEntry` 캐스케이드 | ✗ `ParentEntryId`로만 판정 |
 | `FindFungibleEntryId` | **△ 배열 순서를 본다.** 단 그건 서버 `Entries.Items`의 물리적 순서지 **표시 순서가 아니다** (아래) |
 
-> **★ `FindFungibleEntryId`만 정확히 적어둔다(10차).** 병합 대상이 여럿일 때 **어느 현금뭉치에 합쳐질지는 배열 순서가 정한다.** 그 배열은 `RemoveSelf`가 `RemoveAtSwap`을 쓰면 뒤섞이고 수신 측에서도 순서가 보장되지 않는다(`FastArraySerializer.h:54`). **무해한 진짜 이유는 "첫 번째를 찾으니 순서와 무관"이 아니라 "그 축에서는 원소가 서로 교환 가능하다"** 이다 — 현금뭉치 둘은 구분할 수 없다. **`bFungible`인데 구분 가능한 상태를 갖는 아이템(예: `Durability`가 다른)이 생기면 이 문장이 깨진다.**
+> **★ `FindFungibleEntryId`만 정확히 적어둔다(10차).** 병합 대상이 여럿일 때 **어느 현금뭉치에 합쳐질지는 배열 순서가 정한다.** 그 배열은 `RemoveSelf`가 `RemoveAtSwap`을 쓰면 뒤섞이고 수신 측에서도 순서가 보장되지 않는다(`FastArraySerializer.h:54`). **무해한 진짜 이유는 "첫 번째를 찾으니 순서와 무관"이 아니라 "그 축에서는 원소가 서로 교환 가능하다"** 이다 — 현금뭉치 둘은 구분할 수 없다. **`bFungible`인데 구분 가능한 상태를 갖는 아이템(예: `Stats`가 다른)이 생기면 이 문장이 깨진다.**
 
 ### ★★ 뒤집은 이유는 "권한"이 아니라 **"지속"** 이다
 
@@ -875,7 +950,7 @@ MoveEntry 검사 5:  CanFit(NewParent, ItemId) = GetUsedSlots(NewParent) + SlotS
 **클라 로컬로 두면 순서를 저장할 곳이 따로 필요하다.** 그리고 그 저장이 `EntryId`와 충돌한다:
 
 ```
-NextEntryId는 컴포넌트 필드고 초기값이 1이다 (EPInventoryComponent.h)
+NextEntryId는 인벤토리 리스트의 필드고 초기값이 1이다 (EPInventoryComponent.h, D-114)
    → 매치마다 1번부터 다시 발급된다
    → 그런데 ULocalPlayerSaveGame은 디스크에 남아 매치를 넘어 산다
 
@@ -1034,6 +1109,7 @@ const int32 PrevEntryId = (Idx == 0) ? INDEX_NONE : Sorted[Idx - 1];
 | **13e** | **순서를 클라 로컬 세이브(`ULocalPlayerSaveGame`)에 둠** | `NextEntryId`가 매치마다 1부터 재발급되는데 세이브는 디스크에 남는다 → **지난 매치의 순서가 이번 매치의 같은 번호에 적용된다.** 세션 검사로 막으면 지속이 한 번도 안 되어 **인메모리와 같아진다.** 10차 설계였다 | `SortKey`를 엔트리에 (04-8 · 03-1) ★★ |
 | **13f** | **UI가 `SortKey` 값을 직접 계산해 서버에 보냄** | 클라가 보낸 키를 서버가 그대로 쓰면 **겹치거나 범위를 벗어난 값을 심을 수 있다.** 증상은 순서가 무작위가 되는 것 | 클라는 **앞 이웃(`EntryId`)** 만 보내고 키는 서버가 만든다 (03-2) ★★ |
 | **14** | **`NativeOnDragOver`에서 매 프레임 `GetUsedSlots`** | 드래그 중엔 값이 안 바뀌는데 구획마다 O(N)을 매 프레임 돈다 | 드래그 시작에 한 번 캐고 `OnInventoryChanged`에 무효화 (04-7) |
+| **15** | **UI가 `FindEntry` · `GetEntries`로 `ItemId` · `State`를 읽음** (2026-10-08) | §7-1 전까지는 **아무 증상이 없다** — 모든 엔트리가 아는 상태다. §7-1에서 엔트리가 갈리면 읽는 곳마다 빈 값이 나와 **UI 전체를 다시 뒤진다** — D-110이 피하려던 것 | `GetEntryView` 하나 (04-2). 리뷰에서 위젯 클래스의 두 호출 0개를 확인 |
 
 ---
 
@@ -1044,7 +1120,7 @@ const int32 PrevEntryId = (Idx == 0) ? INDEX_NONE : Sorted[Idx - 1];
 - 장착 강조 표시 → **Step 05** (`ActiveHotbarIndex` → `GetEquippedEntryId()`). 이 단계는 **슬롯에 무엇이 들었나**까지만 그린다
 - **핫바 5~0 UI** → **Step 05.** `HotbarRefs` 필드는 이 단계에서 선언하지만 청소가 Step 05(`RemoveSelf` 한 줄)라 UI도 같이 미룬다. 그릴 때는 **1~4와 시각적으로 갈라야 한다** — 5~0은 참조라 아이템이 구획에도 그대로 보이므로, 테두리만/반투명 + 구획 칸에 `⑤` 배지를 붙이지 않으면 *"5번에 걸었는데 왜 가방에 그대로 있지?"* 가 난다
 - 부착물 UI (`Optic`/`Muzzle`/`Grip`/`Mag`) → **§7-3.** 슬롯 표현은 같지만 **무기 상세 화면**이 따로 필요하다
-- 월드 컨테이너 루팅 UI → **§7-1.** 그때 왼쪽에 열이 하나 더 붙는다 (04-0)
+- 월드 컨테이너 루팅 UI → **§7-1.** 그때 왼쪽에 열이 하나 더 붙는다 (04-0). 미확인 아이템의 회색 `?` 그림 · 수색 진행 표시도 §7-1이다 — 이 단계는 `bKnown == false` 분기 자리만 둔다 (04-4)
 - 2D 격자(테트리스) 배치 → **하지 않는다.** 데이터 모델에 2D 크기가 없고, 넣으면 Step 03 재작성이다 (04-0)
 - `UListView` → 아이템 타입이 `UObject*` 고정이라 안 쓴다. **풀링은 반대로 넣는다** — `UDynamicEntryBox(Wrap)` (04-2)
 - **"전부 옮기기"(Shift+클릭)** → 04-8에 이름만 적어둔다. **11차에 우회로가 필요 없어졌다** — 서버가 `GetSortedContents`를 직접 부른다
@@ -1055,6 +1131,7 @@ const int32 PrevEntryId = (Idx == 0) ? INDEX_NONE : Sorted[Idx - 1];
 
 | 날짜 | 무엇 |
 |---|---|
+| 2026-10-08 (D-110 계약 — 설계 세션 전달) | **클라는 엔트리를 `GetEntryView` 하나로 읽는다.** `FEPEntryView`(공개 필드 ＋ 크기 ＋ `bKnown` ＋ `ItemId` · `State`)를 두고 `Rebuild` · 칸 위젯 · 드래그 판정이 그것을 받는다. §7-1 전까지 `bKnown`은 언제나 참이고, 칸 위젯은 모름 분기 자리를 지금 둔다. **배치는 컴포넌트 멤버, 붙이는 단계는 04-A** — UI 헬퍼는 필드를 직접 읽어 계약이 UI로 들어오고, 03-A에 두면 호출자 0개다. 03-A 복제 형태는 그대로. 함정 15 |
 | 2026-08-26 (15차 — 03의 13·14차 반영) | **★★ `SwapEntries`가 03의 13차 변경 둘에 걸린다.** ① **`CanPlaceInSlot`을 그대로 부르면 슬롯 교환이 전부 거절된다** — 검사 4가 *"그 자리가 비었나"* 인데 교환에서 그 자리는 상대가 차지하고 있다. `IgnoreEntryId` 네 번째 인자를 **이 단계에서** 붙인다(검증 표면은 소비자를 따라간다 — 9·11·14차와 같은 규칙). ② **`SortKey`도 맞바꾼다** — 안 바꾸면 함정 4x가 교환 경로로 되살아난다. 재발급이 아니라 교환이라 `KeySpace_NextAtEnd`가 필요 없다. 함정 **11e·11f** 신설, 11c의 *"필드 둘"* → **셋**. 04-1 ②의 판정식 목록을 **`CanFit` / `CanPlaceInSlot`** 으로(`SlotPriority`·`BodySlots` 직독 금지, 함정 12b 대응 교체). `ContainerOrder`에 **§8 미정 #10** 표시 — 04-3이 그 두 번째 소비자다. `EP.Inv.Add`의 **`[Container]` 인자** 명시(본체 0칸 이후 04-A 검증 절차). `MoveEntry` 방어는 **이미 검사 0으로 들어갔다.** 줄 참조 `03_Inventory.md:747` → `:1530` |
 | 2026-08-23 (11차 검수) | **`Server_ReorderEntry` RPC 표면이 이 단계로 왔다** — 9차가 `Server_MoveEntry`에 적용한 규칙(검증 표면을 소비자보다 먼저 열지 않는다). Step 03은 내부 함수 `ReorderEntry`까지만 만들고 `EP.Inv.Reorder`가 그것을 직접 부른다. `CanMutateInventory()` 게이트가 이 래퍼에 붙는다 |
 | 2026-08-23 (11차) | **★★ 순서를 서버로 옮겼다 — 10차 결론을 뒤집는다.** 근거 *"서버 로직 중 순서를 보는 곳이 0곳"* 은 지금도 사실이지만, 그건 **"서버가 순서를 볼 필요가 없다"** 이지 **"순서를 서버에 두면 안 된다"** 가 아니었다. 뒤집은 이유는 **지속** — `NextEntryId`가 매치마다 1부터 재발급되므로 클라 세이브는 지난 매치의 순서를 이번 매치의 같은 번호에 적용한다. `FEPInventoryEntry::SortKey`(`int32` 희소, `Step = 1<<16`) 도입, `Server_ReorderEntry(EntryId, PrevEntryId)` 신설, 정렬은 `GetSortedContents`로 **클라·서버 공용**. **`Resolve`/`MoveTo`/`ULocalPlayerSaveGame`/`ULocalPlayerSubsystem`/`FEPContainerOrder` 전부 삭제.** "전부 옮기기" 우회로와 자동 정렬 우회로가 같이 사라짐. 함정 13~13f 전면 개편, 12d는 13으로 흡수. 완료 조건 15개(＋2, 순서 지속 · 배낭 되줍기) |

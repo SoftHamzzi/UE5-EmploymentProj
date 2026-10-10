@@ -46,10 +46,10 @@ UE5 C++ 멀티플레이 익스트랙션 슈터 "EmploymentProj" — 포트폴리
 
 - **코드는 사용자가 직접 작성한다. Claude는 코드 파일을 직접 수정하지 않는다.** 코드 검토, 오류 지적, 설계 설명은 한다. Edit/Write는 문서에만 쓴다.
 - **STATUS 파일이 진행 상태의 진실의 원천이다.** 단계 문서는 예정 코드를 보여줄 뿐 구현 여부를 보장하지 않는다. 진행 상황은 영역 STATUS를 본다. 운영 절차는 `SESSION.md`.
-- 세션은 역할별로 나눈다: `/session-start <설계|검토|개발|리뷰|질문> <영역> [대상]`으로 시작하고, 끝낼 때는 compact 대신 `/handoff`.
+- 세션은 역할별로 나누지 않는다. 새 세션은 영역 STATUS와 단계 STATUS를 읽고 이어간다.
 - 문서 위치·이름·가이드 형식은 `DOCS/ROADMAP.md` §6.
 - 외부 리뷰 답변(`Review/*_Answer.md`, Codex 답 포함)은 그대로 반영하지 않고 `review-verifier`로 검증한 뒤 CONFIRMED된 주장만 반영한다.
-- Codex 사용처: 검토 세션은 `/codex:adversarial-review`(설계 문서 반박), 리뷰 세션은 `/codex:review`(사용자 코드 diff).
+- Codex 사용처: 설계 문서 반박 검토는 `/codex:adversarial-review`, 사용자 코드 리뷰는 `/codex:review`(diff).
 
 ## 세션 시작
 

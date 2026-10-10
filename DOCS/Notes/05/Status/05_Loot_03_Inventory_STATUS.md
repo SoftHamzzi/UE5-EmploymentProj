@@ -1,37 +1,74 @@
 # 05_Loot_03_Inventory — 구현 상태
 
-**전체 상태(2026-09-30 재대조): 03-A 로직은 사실상 구현돼 있다. 진짜 버그 2건 발견, 우선 수정.**
+**전체 상태: 03-A 구현 끝, 핵심 PIE 통과 (2026-10-11). 미검증 PIE(16 · 17 · 18 · 19)와 1a의 BP 지정자 하나가 남았다. 03-B는 미착수(스텁 5개).**
 
-> 세션 시작 시 이 파일을 반드시 읽을 것.
-> 현재 코드 상태의 정확한 스냅샷. 문서(`05_Loot_03_Inventory.md`)의 예정 코드와 혼동 금지.
-> 최종 확인: **2026-09-30** (소스 3종 + `EPInventoryCheats.cpp/h` **재대조**, 아래 5+ 주 전 스냅샷을 대체한다)
+> 세션 시작 시 이 파일을 반드시 읽을 것. **현재 코드 상태와 남은 작업만** 적는다 — 구현서의 예정 코드와 혼동 금지. 결정 경위는 `05_Loot_DECISIONS.md`, 문서 개정 경위는 구현서 맨 아래 변경 이력.
+> 최종 코드 대조: **2026-09-30** (소스 3종 + `EPInventoryCheats.cpp/h`).
+> **10-04 보충:** `BodySlots` 데이터 선결, `CanPlaceInSlot` 부착 거절은 의도, 완료 조건 번호를 구현서에 맞춤. 버그 2건은 그대로(소스 재확인).
+> **10-07 보충:** 확장성 재검토(D-098~D-103)로 이미 짠 03-A 코드에 바꿀 곳이 생겼다 — 남은 작업 1. 소스는 다시 읽지 않았다.
+> **10-08 보충:** Codex 반박 검토(D-104~D-106)와 설계 판정(D-108)이 1e · 5에 붙었다. D-107은 지금 코드와 무관하다.
+> **10-11 대조:** 코드(`EPTypes.h` · `EPInventoryTypes.h` · `EPInventoryComponent.h/.cpp` · `EPInventoryCheats.h/.cpp` · `EPCharacter.cpp` · `DefaultGame.ini`)를 읽었다. 1a~1g · 2 · 4a · 4b가 코드에 있다. PIE는 사용자가 돌렸다(아래 3).
+> **10-09 대조:** 작업 중 코드(`git diff` — `EPTypes.h` · `EPInventoryTypes.h` · `EPItemDefinitionSubsystem.cpp`)를 읽었다. 1b · 1c 완료, 1a 진행 중(아래). 1d~1g는 아직 손대지 않았다.
 
 ---
 
-## ★★ 2026-09-30 재대조 — 이전 스냅샷(08-25)은 틀렸다
+## 남은 작업 (2026-10-07 갱신)
 
-이전 스냅샷은 "골격만, 로직 0줄"이라고 적었다. **사실이 아니다.** 08-25 이후 GAS-polish 작업과
-겹쳐 진행됐는지 커밋 이력은 확인 못 했지만, 지금 소스는 03-A 함수 대부분이 **실제 로직을
-갖고 있다.** 아래 "함수별 상태"가 진실이고, 그 아래 옛 섹션들(골격 결함 3건 등)은 **전부
-해소됐다** — 지우지 않고 취소선 처리한다.
+**~~Step 03 전체~~ — 03-A 로직은 거의 끝나 있다. 다만 2026-10-07 확장성 결정으로 바꿀 곳이 생겼다.**
+가이드: `Guide/05_Loot_03_Inventory_A_Core_Guide.md` (읽기 + 개정, L2 — 불변식 1~36 · PIE 표 · 자기 점검 §A 1~7·15~19·24~26 / §B 8~14·20~23). **2026-10-07 · 10-08 변경분 반영 완료.**
 
-### 디버그 커맨드 — 문서와 다른 이름으로 이미 존재한다
-
-`EPInventoryCheats.cpp/h`가 콘솔 CVar(`EP.Inv.*`)가 아니라 **`UCheatManagerExtension`**으로
-구현돼 있다. 기능은 동일하지만 **이름이 다르다** — 이 문서 하위 섹션이 인용하는 `EP.Inv.Add`
-등은 전부 아래로 고쳐 읽는다.
-
-| 문서가 부르는 이름 | 실제 이름 | 시그니처 |
+| 순서 | 할 것 | 비고 |
 |---|---|---|
-| `EP.Inv.Add` | `EPInvAdd` | `(ItemId, Container=-1)` — PlayerIndex 없음, 빙의 폰 기준 |
-| `EP.Inv.Move` | `EPInvMove` | `(EntryId, NewParent, SlotId)` — `"-"`가 `NAME_None` |
-| `EP.Inv.Reorder` | `EPInvReorder` | `(EntryId, PrevEntryId)` |
-| `EP.Inv.Dump` | `EPInvDump` | 인자 없음. 본체+컨테이너별 칸 사용량까지 찍는다 |
-| (문서에 없음) | `EPInvDrop` | `(EntryId)` — `Server_DropItem` 호출만, 본체는 스텁 |
-| (문서에 없음) | `EPInvDumpAll` | 인자 없음. 월드의 모든 `AEPCharacter` 엔트리 수 |
+| 0 | ~~**가이드 갱신**~~ — **2026-10-07 완료.** 가이드 §2 "바꾼다" 표가 1a~1g의 이름 목록이고, 불변식 23~35가 새 성질이다 | §A 15~19 · 24~26을 **코딩 전에** 답해 둔다 |
+| 1 | **확장성 반영 (D-098~D-103)** — 정답지는 구현서다. 아래 a~g | 기존 버그 2건(`KeyOf` · `AddItem` null)은 이 작업에서 같이 고친다 — 구현서의 새 `KeyOf` 본문이 `SortKey`를 돌려주고 반환형이 `bool`이다 |
+| 1a | `EPTypes.h` — `FEPItemStat` 신설, `FEPItemState` = `ItemUid`(`NotReplicated`) · `Charges` · `Stats`. **`Durability` 삭제** + `EP.Item.State` 로그 | `Implementation/05_Loot_00_ItemCore.md` 00-1 · 00-9. Step 00은 끝난 단계지만 이 변경은 03이 끌고 온다<br>**🔶 진행 중 (10-09):** `Durability` 삭제 · 로그 교체는 끝(소스에 `Durability` 0곳). `EPTypes.h`에 **구현서와 어긋난 곳 넷** — 선언 순서(컴파일 에러) · include · `Value` 초기값 · BP 지정자. 00-1 "옮겨 적을 때 지킬 넷" 표<br>**✅ 대부분 완료 (10-11)** — 선언 순서 · include · `Value = 0` OK. **남은 하나: 4번 BP 지정자** — `ItemUid` · `Stats` · `Tag` · `Value`가 아직 `BlueprintReadWrite`다(`Charges`만 ReadWrite여야 한다). `FindStat` · `SetStat`은 들어가 있다(D-113) |
+| 1b | `MakeItemState` 끝에 `OutState.ItemUid = FGuid::NewGuid();` | 00-6. **발급 지점은 여기 하나**<br>**✅ 코드 있음 (10-09)** — `EPItemDefinitionSubsystem.cpp:62`. **PIE 통과 (10-11, 완료 조건 00)** |
+| 1c | `EPInventoryTypes.h` — `SortKey`를 `int64`로 | 03-1 · D-102<br>**✅ 코드 있음 (10-09)** — `EPInventoryTypes.h:21`. `Dump`의 `%lld`(1g)와 키 함수(1d · 1e)도 `int64`로 바뀌었다 (10-11) |
+| 1d | `EPInventoryComponent.h` — `FIndex` · `EnsureIndex` · `MarkIndexDirty` · `FindEntryPtr` · `FindEntryMutable` · `SetEntryStat`/`GetEntryStat` · `GetReplicationCondition` 재정의 · `BeginPlay`/`EndPlay` · `friend struct FEPInventoryList` · 키 함수 `int64` · **`CheckIdentity` · `AppendEntry`(2026-10-08)** | 03-2 헤더 블록<br>**✅ 코드 있음 (10-11)** — 색인 · `Find*`는 4a로 `FEPInventoryList`에 있다 |
+| 1e | `EPInventoryComponent.cpp` — 조회 전부 색인 경유, 쓰기 지점 `FindEntryMutable`, **무효화 넷**(`InsertEntry`·`RemoveSelf`·`MoveEntry`·클라 수신), **정체 검사 `CheckIdentity`를 `AddItem` 합치기 앞 · `InsertEntry`에서 부른다(D-104)**, **`AddItem`의 `bFungible` 분기 맨 앞에서 `Stats`가 비어 있는지 검사한다(D-108)**, **`InsertEntry` = `CheckIdentity` + 키 + 몸통 `AppendEntry`(색인을 안 읽는다, D-106)**, `GetLifetimeReplicatedProps`에서 조건 제거, `PostReplicatedReceive`는 무효화 → `Broadcast`, `ReorderEntryInternal`의 제자리 판정을 키 계산 앞으로 + `uint64` 중점 | 03-2 · 03-3 · 03-7 · 03-A-부록<br>**✅ 코드 있음 (10-11).** 병합 · 용량 · 이동 · 복제는 PIE 통과. **재배치(16 · 18 · 19)는 PIE 미검증** |
+| 1f | `AEPCharacter` 생성자 — `bReplicateUsingRegisteredSubObjectList = true;` | **빠뜨리면 인벤토리가 아무에게도 복제되지 않는다**(`BeginPlay`가 끊는다 — 함정 1)<br>**✅ 코드 있음 (10-11)** — `EPCharacter.cpp:92`. 복제 PIE 통과 |
+| 1g | `EPInventoryCheats` — `EPInvDumpServer` 추가, `Dump`의 `SortKey`를 `%lld`, `Uid` 열 | 03-9<br>**✅ 완료 (10-11)** — `EPInvDumpServer`(`BlueprintAuthorityOnly`) · `SortKey` `%lld` · `Uid` 열(클라는 `-`). 덤프 본문은 `EPInventoryCheats.cpp`의 `DumpInventory` 하나다 |
+| 2 | **데이터** — Project Settings의 `BodySlots` 12개, `DT_Items` 배낭·무기 행의 `SlotPriority` | 아래 "데이터 선결" 절. 없으면 슬롯 이동이 전부 거절된다<br>**🔶 부분 (10-11)** — `BodySlots` 12개는 `DefaultGame.ini:42-53`에 있다. `DT_Items` `SlotPriority`는 배낭 행만 확인됨(총 · 근접 행은 아직 없다) |
+| 3 | **PIE 검증** — `EPInvAdd`/`EPInvMove`/`EPInvReorder`/`EPInvDump`/`EPInvDumpAll`/`EPInvDumpServer`로 03-A 몫(2~6, 4 전반, 7 후반, 13~19, 21)을 돌린다. **1 전엔 13·16·21을, 2 전엔 7 후반·17을 통과로 치지 않는다** | 절차는 가이드 §5. **18 ①은 이제 같은 틈 32회**다<br>**🔶 부분 통과 (10-11)** — 통과: 00 · 2 · 3 · 4 · 5 · 6 · 7 후반 · 14 · 15 · 이동 · 복제 · 21. **미검증: 16 · 17 · 18 ① ② · 19** — Step 04 UI에서 "한 틈에 32번 이상 끼워 넣기"를 시나리오에 넣어 확인한다 |
+| 4 | **`IsFungible()` — 삭제 보류 (2026-10-11 사용자 결정).** UI에서 쓸 수 있어 남긴다. 지우거나 `Data->bFungible`에 위임할지는 Step 04에서 정한다 | 지금 반환값이 맞는지는 "함수별 상태" 그대로 |
+| 4a | **D-113 · D-114 이동** — 색인 · 원소 접근 · 번호 발급기를 `FEPInventoryList`로, 수치 찾기를 `FEPItemState`로. **✅ 구현서 · 가이드 반영 완료, 코드 이동 완료 (2026-10-11).** 3의 통과분 뒤, 5 전에 한다 | 정답지: `_A_Core.md` 03-1 "리스트는 데이터를" 절 · 03-A-부록 · 03-7, `_00_ItemCore.md` 00-1. **검증 = 새 PIE 표 없음.** 03-A 통과 항목(00 · 2 · 3 · 4 · 5 · 6 · 7 후반 · 13 · 14 · 15 · 21 · 이동)을 다시 돌리고 + 컴파일 + 이동 전후 `EPInvDumpServer` 비교(`EntryId` · `Parent` · `SlotId` · 키 열은 줄 단위로 같다, `Uid`는 성질로) — 가이드 §5 끝<br>**회귀: 통과 항목 재실행 OK (사용자, 10-11).** 이동 전 기준 덤프는 찍지 않았다 |
+| 4b | **디버그 덤프를 구현서대로 치트로 옮긴다 (2026-10-11 사용자 결정 — ⓐ).** 작업 폴더 코드의 `UEPInventoryComponent::DumpToLog`(`.h:231`)와 `Server_DumpToLog`(`UFUNCTION(Server, Reliable)`, `.h:235`)를 **없애고**, `EPInvDumpServer`를 `UFUNCTION(Exec, BlueprintAuthorityOnly)`로 두어 서버에서 덤프 함수를 돌린다(`_A_Core.md` 03-9). 처음 요청한 형태(헤더 · cpp · 호출부를 `#if !UE_BUILD_SHIPPING`)는 UHT가 거절한다 — `UFUNCTION`은 정해진 블록(`WITH_EDITOR` 등) 밖의 `#if` 안에 둘 수 없다(UE 5.7 `UhtHeaderFileParser.cs:715`, 허용 목록 `:120-123`). Shipping에서는 CheatManager가 생기지 않아(`PlayerController.cpp:1155-1171`) **덤프가 불릴 경로가 없다.** 코드와 리플렉션은 바이너리에 남는다 — 그것까지 빼려면 Lyra `LyraBotCheats`처럼 선언은 가드 밖, 본문만 `#if UE_WITH_CHEAT_MANAGER`(지금은 하지 않는다) | 확인: 개발 구성 빌드 → `EPInvDumpServer`가 서버 로그에 표를 찍는다(가이드 §5의 21). Shipping 구성 컴파일 통과. 컴포넌트에 `DumpToLog` 이름이 0곳<br>**✅ 코드 완료 (10-11)** — 컴포넌트의 `DumpToLog` · `Server_DumpToLog` 삭제(grep 0건), `EPInvDumpServer`는 `BlueprintAuthorityOnly` Exec. 개발 빌드 · PIE OK. **Shipping 구성 컴파일은 미확인** |
+| 5 | **03-B** — `AddSubtree`(**넣기 전 전부 검사 — 함정 12c · 12d**, 루프는 `AppendEntry`만 — D-105 · D-106)/**`RemoveEntry` 일괄 제거**(재귀는 표시만, 끝에서 `RemoveSelf(Doomed)` 한 번 — D-106)/`TryAutoEquip`/`GetInsertionOrder`/`Server_DropItem_Implementation`/`SpawnPickupInFront` 본체 채우기 + `EPGA_Interact`(픽업 경로)가 `AddItem`을 실제로 부르게 배선. 지금은 F로 주워도 인벤토리에 안 들어간다(호출자 0곳, 직접 확인) | Step 02 이월 2건(02-3 사거리, 02-4 동시 F)도 여기서. 완료 조건 22 |
 
-**즉 완료 조건 14·15·17(★, `EP.Inv.Move`/`EP.Inv.Reorder` 필요)은 "커맨드가 없어서 검증
-불가"가 아니라 "커맨드는 있고 PIE에서 안 돌려봤다"로 상태가 바뀐다.**
+**요약: 03-A는 "이미 쓰인 코드를 2026-10-07 설계에 맞춰 고치고(버그 2개 포함) 처음으로 PIE에 태운다"이다.**
+03-B(줍기 연동)는 여전히 처음부터다 — 스텁 5개와 pickup 배선이 남아 있다.
+
+---
+
+## 현재 코드 상태 (2026-09-30 대조)
+
+### 디버그 커맨드 — `EPInv*` 치트
+
+`EPInventoryCheats.cpp/h`가 `UCheatManagerExtension`으로 구현돼 있다(구현서 03-9). 구현서 앞쪽 완료 조건 문구와 옛 검수 이력의 `EP.Inv.*`는 아래 이름으로 읽는다.
+
+| 옛 이름(`FAutoConsoleCommand`) | 지금 이름 | 시그니처 · 실행 위치 |
+|---|---|---|
+| `EP.Inv.Add` | `EPInvAdd` | `(ItemId, Container=-1)` — `BlueprintAuthorityOnly`라 서버로 라우팅, 친 창의 플레이어에게 |
+| `EP.Inv.Move` | `EPInvMove` | `(EntryId, NewParent, SlotId)` — `"-"`가 `NAME_None`. 서버 |
+| `EP.Inv.Reorder` | `EPInvReorder` | `(EntryId, PrevEntryId)` — 서버 |
+| `EP.Inv.Drop` | `EPInvDrop` | `(EntryId)` — 서버. `Server_DropItem` 본체가 스텁이라 03-B 전엔 무동작 |
+| `EP.Inv.Dump` | `EPInvDump` | 인자 없음. **로컬**(그 창의 복제본). 본체+컨테이너별 칸 사용량 |
+| (`DumpAll`) | `EPInvDumpAll` | 인자 없음. **로컬**. 월드의 모든 `AEPCharacter` 엔트리 수 — 가시성(소유자 그룹) 검증용 |
+| — | **`EPInvDumpServer`** (2026-10-07 신설, **아직 코드 없음**) | 인자 없음. **서버**(`BlueprintAuthorityOnly`). `Dump`와 같은 표 ＋ `Uid` 열 — `ItemUid`는 복제되지 않는다(D-098) |
+
+**완료 조건 15·16·17(커맨드 필요)은 "커맨드가 없어서 검증 불가"가 아니라 "커맨드는 있고 PIE에서
+안 돌려봤다"이다.**
+
+### ★ 데이터 선결 — `BodySlots`가 비어 있다 (2026-10-04 확인)
+
+`UEPLootDeveloperSettings::BodySlots`(`EPLootDeveloperSettings.h:37`)는 C++ 기본값이 없고,
+`DefaultGame.ini`의 `[/Script/EmploymentProj.EPLootDeveloperSettings]` 절에도 항목이 없다 — **빈 배열이다.**
+`CanPlaceInSlot`이 `BodySlots.Contains(SlotId)`로 거절하므로 **슬롯 이동(`EPInvMove … -1 Back`,
+`Hotbar1` 등)이 전부 거절된다.** 완료 조건 7 후반·17은 이걸 채우기 전엔 PIE로 못 본다.
+
+- 채울 것: `BodySlots` 12개(`Hotbar1`~`Hotbar4` + 착용 8, 이름은 `DOCS/Mine/EquipmentSlots.md`),
+  `DT_Items` 배낭·무기 행의 `SlotPriority`(`["Back"]`, 무기는 핫바)
+- 자리: Project Settings(→ `DefaultGame.ini`). 코드 변경 아님
 
 ### 함수별 상태 (`.cpp` 기준, 2026-09-30)
 
@@ -97,191 +134,53 @@ bool UEPInventoryComponent::IsFungible(FName ItemId) const { return true; }
 선언돼 있고 항상 `true`를 반환하는데 **호출자가 0곳**이라 지금은 무해하지만, 나중에 누가
 "있으니까" 불러 쓰면 항상 `true`를 받는다. 지우거나 `Data->bFungible`을 돌려주게 고친다.
 
-**관찰 — `CanPlaceInSlot`이 부착 슬롯(`Parent != INDEX_NONE`)을 전부 거절한다**
+**관찰 — `CanPlaceInSlot`이 부착 슬롯(`Parent != INDEX_NONE`)을 전부 거절한다 → 의도된 동작이다.** 부착 갈래는 §7-3에서 연다(구현서 함정 `3j`). 헤더 코멘트(`:110`)의 *"부착 슬롯이면 그 무기의 EntryId"* 는 그때의 계약을 미리 적어 둔 것이다.
 
-```cpp
-if (!GetDefault<UEPLootDeveloperSettings>()->BodySlots.Contains(SlotId)) return false;
-if (Parent != INDEX_NONE) return false;   // ← 몸 슬롯 외엔 전부 거절
-```
-
-헤더 코멘트(`:110`)는 "부착 슬롯이면 그 무기의 EntryId"라고 몸 슬롯 외 경로를 전제하는데,
-본문은 `Parent != INDEX_NONE`이면 무조건 거절한다. **의도적으로 부착물(Step 05?)을 지금
-막아둔 것인지, 03-A 범위에서 빠뜨린 것인지 문서상 확인이 안 된다.** 03-A 완료 조건에 부착
-슬롯이 없으니 지금 당장 막힌 건 아니지만, 결정이면 여기에 이유를, 실수면 언제 고칠지를
-적어야 한다 — 결정 필요.
+**`EmploymentProj.Build.cs:11`에 `NetCore` 추가 완료** — 없으면 `LNK2019: Z_Construct_UScriptStruct_FFastArraySerializerItem`.
 
 ---
 
-**소스 확인 결과 (2026-08-25 재대조, ~~2026-09-30 대체됨~~)** — 세 파일 전부 존재. ~~골격이 8월 22일 스냅샷보다 훨씬 앞서 있다.~~
+## 진행 구간
 
-| 파일 | 줄(08-25) | 줄(09-30) | 상태 |
-|---|---|---|---|
-| `Public/Inventory/EPInventoryTypes.h` | 22 | 22 | 그대로 |
-| `Public/Inventory/EPInventoryComponent.h` | 131 | **307** | 함수 수 그대로, **코멘트/문서화가 대폭 늘었다** |
-| `Private/Inventory/EPInventoryComponent.cpp` | 189 | **539** | ~~세 개만 본문 있고 나머지 스텁~~ → **위 "함수별 상태" 참고 — 대부분 실구현** |
-
-> **★ 옛 스냅샷이 *"엔진 템플릿 그대로 / `bCanEverTick = true`"* 라고 적고 있었다 (13차 답변).** 셋 다 사실이 아니었다 — **결함 #1·#3·#4가 이미 고쳐진 뒤**였다. `CLAUDE.md`가 STATUS를 진실의 원천으로 못박았으므로 **이 표가 소스보다 뒤에 있으면 안 된다.** ← **이 경고가 09-30에도 한 번 더 맞았다.** 08-25 스냅샷 자체가 5주 넘게 방치되며 다시 소스보다 뒤처졌다. STATUS는 "세션 시작 시 읽는 것"이지 "한 번 재대조하면 끝"이 아니다.
-
-**`EmploymentProj.Build.cs:11`에 `NetCore` 추가 완료** — 없으면 `LNK2019: Z_Construct_UScriptStruct_FFastArraySerializerItem`. 실증됨.
-
-### ~~남은 골격 결함 3건~~ — 2026-09-30 확인: 전부 해소됨
-
-| # | 위치 | 08-25 문제 | 09-30 상태 |
-|---|---|---|---|
-| ~~1~~ | `EPInventoryComponent.h:20` | `TArray<class FEPInventoryEntry> Items;`의 `class` 키워드 | **해소.** 지금은 `TArray<FEPInventoryEntry> Items;`(`class` 없음) |
-| ~~2~~ | `EPInventoryComponent.h:24` | `Owner`를 `TObjectPtr<UActorComponent>` + 캐스트로 교체하기로 했었음 | **다른 형태로 해소.** 지금은 `TObjectPtr<UEPInventoryComponent> Owner`(구체 타입 그대로)이고 `PostReplicatedReceive`도 캐스트 없이 `Owner->OnInventoryChanged.Broadcast()`. 같은 헤더 안이라 애초에 불완전 타입 문제가 없었다 — **11차가 전제한 문제 상황 자체가 성립 안 했던 것으로 보인다.** 지금 형태로 컴파일되고 동작하니 재론하지 않는다 |
-| ~~3~~ | `EPInventoryComponent.cpp:104` | `FScopedInventoryNotify` 정의 없음 | **해소.** `.cpp` 11-24행에 정의됨, `MoveEntry`·`SetEntryCharges`·`InsertEntry`·`AssignSortKey`·`RemoveEntryInternal`·`RemoveSelf` 전부가 이걸로 감싸져 있다 |
-
-### 9차(2026-08-22) 기획 확대로 추가된 코드 항목
-
-| 위치 | 추가할 것 |
-|---|---|
-| `Public/Data/EPItemData.h` | `TArray<FName> SlotPriority` — **순서가 곧 자동 배정 우선순위.** DT 배낭 행에 `["Back"]` |
-| `Public/Data/EPLootDeveloperSettings.h` | `TArray<FName> BodySlots` — 몸 슬롯 12개 목록 |
-
-### 11차(2026-08-23)에서 추가된 코드 항목 — 순서를 서버로
-
-| 파일 | 추가 |
-|---|---|
-| `Public/Inventory/EPInventoryTypes.h` | **`FEPInventoryEntry::SortKey`(`int32`)** — 형제 스코프. `SlotId`가 있으면 무의미 |
-| `Public/Inventory/EPInventoryComponent.h` | **public** `GetSortedContents(Container)` · `ReorderEntry(EntryId, PrevEntryId)` — **RPC가 아니다**<br>**private** `AssignSortKey` · `RenormalizeSortKeys` · `KeySpace_NextAtEnd`(**`const` 아님**) · `KeySpace_Min` · `KeySpace_NextAbove` · `KeyOf` · `ReorderEntryInternal(bRetry)` · `SortKeyStep = 1<<16` · `SortKeyGuard`<br>**＋ 파일 앞부분:** `#include "Inventory/EPInventoryTypes.h"` · 전방선언 3개 · `Owner`를 `TObjectPtr<UActorComponent>`로 |
-| `Private/Inventory/EPInventoryComponent.cpp` | `InsertEntry`가 키 발급 · `MoveEntry`가 **부모 변경 시 재발급**(함정 4m) · `RemoveEntryInternal` ②가 **`bIsRoot`일 때만 `SortKey=0`**(함정 4n) · `AddSubtree`가 **자식 키 복원** |
-| 디버그 | `EP.Inv.Reorder <EntryId> <PrevEntryId> [PlayerIndex]` (서버 전용) · `EP.Inv.Dump`에 `SortKey` 열, **행을 `SortKey` 순으로** |
-
-> **★ `Server_ReorderEntry`(RPC)는 04-B다 (11차 검수).** 9차가 `Server_MoveEntry`에 적용한 규칙 그대로 — 소비자(드래그)가 거기다. `EP.Inv.Reorder`가 내부 함수 `ReorderEntry`를 직접 불러 **RPC 없이 계약이 닫힌다.**
-
-> **★★ 12차 검수가 잡은 것 — `ReorderEntry`가 맨 앞에서 무한 재귀했다(함정 4t).** 재정규화 가드에 `PrevEntryId != INDEX_NONE`이 없으면 맨 앞 분기(`NewKey == PrevKey`)에서 조건이 **항상 참**이고 재정규화가 그걸 못 바꾼다. **아이템 2개 이상 컨테이너에서 하나를 맨 앞으로 끌면 서버가 죽는다.** 경계/고갈 판정을 분리하고 `ReorderEntryInternal(bRetry)` ＋ `ensure`로 종료를 문법으로 보장한다. **제자리 드롭 조기 반환(4u)** 도 같이 들어갔다.
-
-> **★ 11차 검수가 잡은 결함 둘이 반영돼 있다.**
-> - **함정 4q — 키 공간을 `GetSortedContents`로 구하면 동률이 난다.** `KeySpace_*` 셋과 `RenormalizeSortKeys`는 **부모가 같은 것 전부**를 본다(슬롯 포함). **접두어가 스코프를 이름에 싣는다** — 같은 혼동이 두 번(4q·4s) 났다. `InsertEntry`의 삼항과 `MoveEntry`의 `NewSlotId` 조건이 **사라졌다** — 예외 셋이 없어지고 코드가 줄었다
-> - **함정 4r — 재정규화는 세 분기 공통이다.** 이분 고갈뿐 아니라 맨 앞/맨 뒤의 무한 증감도 막는다. 발급 쪽 가드는 `KeySpace_NextAtEnd` 안에 있다(유일 발급 지점). **재배치 쪽 가드는 12차에서 경계/고갈로 분리됐다**(함정 4t)
-
-> **나머지는 03-A다 — 단 스냅샷의 루트/자식 규칙만 03-B다.** `InsertEntry`가 발급하고 `MoveEntry`가 재발급하므로 정의가 뒤에 있으면 03-A가 컴파일되지 않는다. 반면 루트/자식 분기는 `RemoveEntry`/`AddSubtree`가 있어야 표현된다.
-
-> **★ `EP.Inv.Reorder`가 없으면 `Server_ReorderEntry`는 두 단계 뒤(04-B 드래그)에야 처음 실행된다.** 04-A가 `EP.Inv.Add`/`EP.Inv.Move`를 요구하는 것과 같은 이유다 (14차에 `EP.Inv.Equip` 폐기).
-
-> **★ `RenormalizeSortKeys`는 완료 조건이 없으면 죽은 코드가 된다.** 같은 틈에 ~16회 꽂아야 도달하므로 정상 개발 중에는 한 번도 안 돈다. **완료 조건 16(*"같은 틈에 20번 연속으로 꽂아도 순서가 안 깨진다"*)이 그것을 강제한다.**
-
-### 14차 (2026-08-25) — 사용자 지적. `Server_EquipBackpack` 삭제
-
-> 질문: *"어차피 옷도 컨테이너고 하의도 컨테이너인데 `EquipBackpack`을 만들 이유가 있었나."*
-
-| 위치 | 변경 |
-|---|---|
-| `EPInventoryComponent.h` | **`Server_EquipBackpack` 선언 삭제.** 착용의 클라 표면은 **04-B의 `Server_MoveEntry` 하나**로 확정. 13차가 붙이라고 했던 `UFUNCTION(Server, Reliable)`도 같이 없어진다 |
-| 디버그 (04-A) | **`EP.Inv.Equip` 폐기** — `EP.Inv.Move <id> -1 Torso`가 정확히 그 일이다. 얇은 별칭이라 어휘만 둘로 늘린다 |
-| 함정 **9f** | `Server_EquipBackpack` 전용 → **`Server_*` 일반**으로. Step 03의 대상은 `Server_DropItem` 하나, 04-B에서 셋이 는다 |
-
-**근거 셋.**
-
-1. **9차의 *"좁은 RPC가 넓은 RPC보다 낫다"* 는 `Server_MoveEntry`와의 비교인데, 04-B가 그것을 연다**(`05_Loot_04_InventoryUI.md:610,619`). 넓은 문이 열린 뒤의 좁은 문은 **공격 표면을 하나도 줄이지 않는다** — 조작된 클라는 `Server_MoveEntry(id, -1, "Back")`을 부른다
-2. **13차가 옮긴 04-A에도 호출자가 0개다.** 근거였던 `EP.Inv.Equip`은 **콘솔 커맨드**이고, 문서가 두 번 확립한 규칙(*"커맨드는 내부 함수를 직접 부른다. RPC 표면을 열지 않는다"*)이 그대로 적용된다
-3. **배낭이 특별할 근거가 없다.** `SlotPriority`(아이템) ＋ `BodySlots`(설정)가 상의·하의·외투·배낭을 같은 모양으로 만든다. 문서 자신이 `TryAutoEquip`에 *"배낭 전용 함수를 만들지 않는다"* 를 적용해 놓고 **RPC 이름에만 적용하지 않았다**
-
-> **13차 판정이 부족했던 건이다** — *"호출자 0개"* 를 찾고도 **삭제가 아니라 이동**을 골랐다. 반영: `05_Loot_03_Inventory.md`(03-2 별도 절 재작성·03-6 RPC 삭제·함정 9f·체크포인트 ④·변경 이력), `05_Loot_04_InventoryUI.md`(04-A 커맨드), `Mine/EquipmentSlots.md` **§15 신설**.
-
----
-
-### 13차 **답변** 반영 (2026-08-25) — `Review/05_Loot_REVIEW13_SelfReview21_Answer.md`
-
-| 위치 | 변경 |
-|---|---|
-| `EPInventoryComponent.h` | **`bool CanPlaceInSlot(int32 Parent, FName SlotId, FName ItemId) const`** 신설 — `MoveEntry` 검사 2·3·4를 뽑는다. 소비자 셋(`MoveEntry` · `AddSubtree` · §7-3) |
-| `EPInventoryComponent.cpp` | **`MoveEntry`가 키를 재부모 *전에* 구한다** — `InsertEntry`와 같은 결함이었다(함정 4x가 두 함수로 넓어졌다). 안 고치면 키가 컨테이너 사이로 전염된다<br>**`FScopedInventoryNotify` 정의를 `.cpp` 상단에** — 골격 결함 #3 |
-| `Public/Data/EPItemData.h` 검증 | **`IsDataValid`에 `SlotSize >= 1`** — 본체 0칸에서 `0 + 0 <= 0`이 참이라 0칸 아이템이 무한히 들어간다 |
-| 디버그 | **`EP.Inv.Add <ItemId> [Container] [PlayerIndex]`** — `[Container]`가 없으면 `MaxSlots = 0` 전환이 03-A 완료 조건 아홉 개를 죽인다 |
-| **구간** | **옛 03-B(배낭) 삭제.** `Server_EquipBackpack` → 04-A(→ **14차에 함수째 삭제**), 완료 조건 7 후반 → **03-A 마지막 검증** |
-
-> **★ 답변의 수치 하나가 틀려서 안 따랐다.** 완료 조건 18의 경계 도달 횟수를 답변은 32,763회라 했는데(`65,536 × 32,763 = 2,147,278,848`이라 적었으나 실제는 `2,147,155,968`), 직접 계산하면 **32,764회**다 — `-65536 × 32764 = -2,147,221,504 = MIN_int32 + SortKeyGuard`. 문서에는 **32,764**로 적었다.
-
-> **답변이 권했으나 안 하기로 한 것:** 이분 중간값의 `int64` 캐스트(도달에 6만 회 필요 — 답변 자신이 선택 사항으로 뒀다), 함정표 `4a` 결번 채우기.
-
----
-
-### 13차 검수(2026-08-25)에서 추가·변경된 코드 항목
-
-> 근거: `Review/05_Loot_REVIEW_Inventory_Summary.md`. 결정 4건(A-2·A-3·A-5·D-2)은 사용자 확정.
-
-| 위치 | 변경 |
-|---|---|
-| `EPInventoryComponent.h` | **`AddSubtree(int32 Parent, FName SlotId, const TArray&)`** — 목적지가 `(Parent, SlotId)` 쌍. **기본값 금지**<br>**`KeySpace_NextAbove` / `KeyOf`를 `bool` 반환 + out 파라미터로** — `INDEX_NONE` 센티널이 키 −1과 충돌한다(함정 4w)<br>~~**`Server_EquipBackpack`에 `UFUNCTION(Server, Reliable)`**~~ → **14차에 선언째 삭제**(함정 9f는 `Server_*` 일반으로)<br>`Owner`를 `TObjectPtr<UActorComponent>`로 (골격 결함 #2) |
-| `EPInventoryComponent.cpp` | **`MoveEntry`가 배열 원소의 참조에 쓴다** — `FindEntry` 복사본에 쓰면 무동작인데 `true`(함정 4v). 검사 6의 지역 변수는 `Cur`로 개명<br>**`RemoveEntryInternal` ②가 `bIsRoot`일 때 `SlotId = NAME_None`도** (함정 4z)<br>**`InsertEntry`가 키를 `AddDefaulted` 전에 발급** (함정 4x)<br>**`AddSubtree`가 `SlotId`면 `CanFit`을 건너뛴다** (함정 4y)<br>**`GetOwner<AEPCharacter>()` 널 가드** (§7-1 대비)<br>**가드를 "단일 쓰기 지점 다섯"에 건다** — `InsertEntry`·`SetEntryCharges`·`RemoveSelf`·`AssignSortKey`·**`MoveEntry`** |
-| `EPInventoryComponent.h` (`FEPInventoryList`) | **`PostReplicatedReceive`에 `Cast<UEPInventoryComponent>`** — 지금 문서대로면 컴파일 안 됨 |
-| `Public/Data/EPLootDeveloperSettings.h` | **`TArray<FName> StartingEquipment`** — `["Shirt_Basic","Pants_Basic"]`. 소비자는 `BeginPlay` → `TryAutoEquip` (03-B) |
-| `DT_Items` | **용량표 확정** — 상의 `SlotSize 11 / Cap 10`, 하의 `6 / 5`, 배낭A `15 / 12`, 배낭B `10 / 8`. 규칙은 **`Capacity < SlotSize`**(등호 없음). `MaxSlots`는 **테스트값 10**이고 최종 **0** |
-| 디버그 | **`EP.Inv.Move <EntryId> <NewParent> <SlotId> [PlayerIndex]`** (서버 전용) — 없으면 `MoveEntry`가 Step 04까지 한 줄도 안 돈다 |
-
-> **★★ 구간이 하나 움직였다.** `AddSubtree` · `TryAutoEquip` · `StartingEquipment`가 **03-B로 내려갔다.** 셋 다 호출자가 03-B(`OnInteract`)에 있어서, 03-B에 두면 **죽은 코드와 그것을 깨울 커맨드(`EP.Inv.AutoEquip`)가 같이 늘어난다.** 9차가 다섯 개를 03-A로 **올린** 것과 방향만 반대이고 기준은 같다 — *"호출자와 같은 구간에."*
-
----
-
-### 10차(2026-08-23)에서 추가된 코드 항목
-
-| 위치 | 추가할 것 |
-|---|---|
-| `Public/Data/EPLootDeveloperSettings.h` | `TArray<FName> ContainerOrder` — `["Coat","Torso","Legs","Back","Wrist"]`. **`GetInsertionOrder()`(03-B)는 이 배열을 그대로 반환하지 않는다** — 맨 앞에 `INDEX_NONE`(본체)을 붙이고 이름을 `GetEntryInSlot`으로 EntryId로 옮긴다. **본체가 빠지면 테스트값(`MaxSlots=10`) 동안 완료 조건 2~6이 전부 걸린다.** 본체를 0칸으로 내린 뒤에는 `CanFit`이 걸러내므로 무해하다 (13차) |
-| `MoveEntry` 검사 목록 | **검사 0 — 목적지가 지금 자리와 같으면 `false`.** 없으면 검사 5의 `CanFit`이 자기 크기를 두 번 센다. `Server_MoveEntry`가 Step 04에서 열리므로 UI가 안 불러도 경로가 남는다 |
-| `RemoveEntryInternal` | **①→③ 순서 계약을 코드 주석으로.** 순서를 바꿔도 컴파일되고, 증상이 *"0으로 덮인다"* 가 아니라 *"안 불린다"* 라 더 조용하다 (함정 4k) |
-
-**전부 03-A다.** DT 필드 추가는 코드가 아니라 데이터 마이그레이션이라 늦을수록 비싸고, `BodySlots`는 `MoveEntry`의 정합 검사가 읽는다.
-
----
-
-## 진행 — 둘로 나눈다 (13차에 셋에서 줄었다)
-
-완료 조건 19개는 다른 단계 두 개 분량이라 작업을 둘로 나눈다. **파일은 쪼개지 않는다** (경계에서 `RemoveEntry`가 갈려 stale이 세 번 연속 난 것이 이유 — 문서 §체크포인트).
+완료 조건 22개(1~20 ＋ 2026-10-07의 21·22)를 둘로 나눈다. 구현서도 A · B 두 파일이다.
 
 | | 범위 | 완료 조건 | 상태 |
 |---|---|---|---|
-| **03-A 코어** | 03-1 · 03-2 · 03-3 · **03-7** · 03-9<br>**＋ `GetEntryInSlot(Parent, SlotId)`**<br>**＋ `MoveEntry` (정합·사이클 검사 포함)**<br>**＋ `GetCapacity` 통째로** (컨테이너 갈래 포함 — `EP.Inv.Move`가 부른다)<br>**＋ `ActiveHotbarIndex` 필드**<br>**＋ `FEPItemData::SlotPriority`**<br>**＋ `UEPLootDeveloperSettings::BodySlots`**<br>**＋ `SortKey` 일습**<br>**＋ `EP.Inv.Move` · `EP.Inv.Add [Container]` (13차)**<br>**＋ `CanPlaceInSlot` (13차 답변)** | 2~6, **7의 후반**, 14·15·17~19 | ⬜ 미착수 |
-| **03-B 줍기·버리기** | 03-4 · 03-5 · 03-6<br>**＋ `GetInsertionOrder()`**<br>**＋ `AddSubtree` · `TryAutoEquip` · `StartingEquipment`** (13차) | 1, 7의 전반, 8~13, 16 + 이월 2건 | ⬜ 미착수 |
-
-> **★★ 옛 03-B(배낭) 구간이 없어졌다 (13차 답변).** 거기 남은 새 코드가 `Server_EquipBackpack`(3줄) 하나였는데 **Step 03에 호출자가 0개**다 — 자동 착용은 서버 내부(`TryAutoEquip`), 벗기는 `Server_DropItem`, 검증은 `EP.Inv.Move`, 수동 착용 UI는 Step 04. **9차가 `Server_MoveEntry`에, 11차가 `Server_ReorderEntry`에 적용한 규칙이 여기만 빠져 있었다** → 13차는 **04-A로 보냈다**(`EP.Inv.Equip`이 있는 자리). 완료 조건 7의 후반(독립 풀)은 **03-A의 마지막 검증**으로 간다.
->
-> **★★ 14차에 함수째 없어졌다** — `EP.Inv.Equip`이 **콘솔 커맨드**라 `EP.Inv.Reorder`·`EP.Inv.Move`와 같이 **내부 함수를 직접 부른다.** 04-A에도 호출자가 0개였다. 아래 별도 절.
-
-> **★ 03-7(알림)은 03-A다.** `FScopedInventoryNotify`를 03-3의 `AddItem`·`SetEntryCharges`가 쓰므로 정의가 03-B에 있으면 **03-A가 컴파일되지 않는다.** 8차 검수에서 옮겨졌고, `05_Loot_STATUS.md`가 한동안 옛 분할선(03-B에 03-7)을 들고 있었다 — 2026-08-20 수정.
-
-> **★ 9차(2026-08-22)에서 같은 이유로 다섯 개가 03-A로 왔다.** ~~03-B의 `Server_EquipBackpack`이 `MoveEntry`의 래퍼이고~~(14차 삭제 — 지금 근거는 **`EP.Inv.Move`가 `MoveEntry`를 직접 부른다**), `GetCapacity`가 `GetEntryInSlot`을 쓴다. **`MoveEntry`는 `RemoveEntry`·`AddSubtree`에 의존하지 않으므로 03-A 단독 컴파일 조건을 깨지 않는다** — 확인함. `SlotPriority`는 DT **데이터 마이그레이션**이라 늦을수록 비싸고, `BodySlots`는 `MoveEntry`의 정합 검사가 읽는다.
-
-> **★ 함정표 ★★는 03-B에 몰려 있고, 9차에서 03-A에 4건(4h·4i·4j·4k)이 추가됐다.**
-
-> **★ 9차에서 03-A 코드가 늘었다.** `MoveEntry`(검사 7개) + `GetEntryInSlot` + `BodySlots`/`SlotPriority` 데이터로 **03-A가 이전 추정보다 무겁다.** 대신 `EquippedEntryId`/`EquippedBackpackEntryId` 관련 분기와 함정 2건(3h·5b)이 사라져 일부 상쇄된다.
+| **03-A 코어** | 03-1 · 03-2 · 03-3 · **03-7** · 03-9<br>**＋ `GetEntryInSlot(Parent, SlotId)`**<br>**＋ `MoveEntry` (정합·사이클 검사 포함)**<br>**＋ `GetCapacity` 통째로** (컨테이너 갈래 포함 — `EP.Inv.Move`가 부른다)<br>**＋ `ActiveHotbarIndex` 필드**<br>**＋ `FEPItemData::SlotPriority`**<br>**＋ `UEPLootDeveloperSettings::BodySlots`**<br>**＋ `SortKey` 일습**<br>**＋ `EP.Inv.Move` · `EP.Inv.Add [Container]` (13차)**<br>**＋ `CanPlaceInSlot` (13차 답변)** | 2~6, 4 전반, **7의 후반**, 13~19, 21 | 🟨 코드 대부분 있음 · PIE 미검증 · 2026-10-07 변경분 미반영 |
+| **03-B 줍기·버리기** | 03-4 · 03-5 · 03-6<br>**＋ `GetInsertionOrder()`**<br>**＋ `AddSubtree` · `TryAutoEquip` · `StartingEquipment`** (13차) | 1, 4 후반, 7의 전반, 8~12, 20, 22 + 이월 2건 | ⬜ 미착수 (스텁 5개) |
 
 ---
 
 ## 완료 조건 대조
 
-> **2026-09-30 — 03-A 항목 전부 상태가 바뀌었다.** "코드가 없어서 ⬜"가 아니라 **"코드는 있는데
-> 한 번도 PIE로 안 돌려봤다"**로 이유가 바뀐다. `EPInvAdd`/`EPInvMove`/`EPInvReorder`/`EPInvDump`
-> (구 `EP.Inv.*`, 위 재대조 절 참고)로 지금 바로 검증 가능하다. **단 14번은 `KeyOf` 버그부터
-> 고쳐야 신뢰할 수 있다.**
+> 03-A 항목의 ⬜는 *"코드가 없다"* 가 아니라 **"코드는 있는데 PIE로 안 돌려봤다"** 다. 번호는 구현서(`Implementation/05_Loot_03_Inventory_A_Core.md` · `_B_PickupDrop.md`)와 같다.
 
 | # | 완료 조건 | 담당 | 상태 |
 |---|---|---|---|
 | 1 | 주운 아이템이 인벤토리에 들어가고 클라이언트에 복제된다 | 03-B | ⬜ |
-| 2 | 붕대 3개를 주우면 엔트리가 3개다 (스택 없음) | 03-A | ⬜ |
+| 2 | 붕대 3개를 넣으면 엔트리가 3개다 (스택 없음) | 03-A | ⬜ |
 | 3 | 현금뭉치 둘 → 엔트리 1개, `Charges` 합산 (`bFungible`) | 03-A | ⬜ |
-| 4 | 칸이 모자라면 **아무것도 안 들어가고** 픽업이 그대로 남는다 | 03-A | ⬜ |
+| 4 | 칸이 모자라면 **아무것도 안 들어간다**(전반) / 픽업이 그대로 남는다(후반, `bClaimed` 되돌림) | **전반 03-A / 후반 03-B** | ⬜ |
 | 5 | 가방이 꽉 차도 현금뭉치·탄약상자는 들어간다 | 03-A | ⬜ |
 | 6 | 무기(`SlotSize=5`) → `UsedSlots` +5 (개수가 아니라 **칸 수**) | 03-A | ⬜ |
-| 7 | 배낭을 주우면 자동 착용 ＋ **별도 풀**이 열린다 | **후반 03-A / 전반(자동 착용) 03-B** | ⬜ |
+| 7 | 배낭을 주우면 자동 착용(전반) ＋ **별도 풀**이 열린다(후반) | **후반 03-A / 전반 03-B** | ⬜ 후반은 **`BodySlots` 선결** |
 | 8 | 배낭을 버리면 안의 아이템이 같이 나가고 **고아 엔트리가 없다** | 03-B | ⬜ |
 | 9 | 배낭을 버렸다 되주우면 내용물이 그대로 돌아온다 (`Parent` 유지) | 03-B | ⬜ |
-| 10 | 12/30까지 쏘고 버렸다 주우면 `Charges`가 12 그대로 | 03-B | ⬜ |
+| 10 | 무기 `Charges`가 버렸다 주워도 보존된다 (12/30은 Step 05 이후) | 03-B | ⬜ |
 | 11 | 버린 직후 0.5초 동안 회색 프롬프트 + 서버 거부 | 03-B | ⬜ |
-| 12 | 다른 클라이언트에 내 인벤토리가 복제되지 않는다 (`COND_OwnerOnly`) | 03-A | ⬜ |
-| 13 | 줍고 버려도 기존 `EntryId`가 **재번호되지 않는다** | 03-B | ⬜ |
-| 14 | **★ `EP.Inv.Reorder`로 자리를 바꾸면 `Dump` 순서가 바뀌고 클라·서버가 같다** (11차) | 03-A | ⬜ **`KeyOf` 버그 선결** |
+| 12 | 스폰 직후 **상의·하의를 입고 시작한다** (`StartingEquipment`) | 03-B | ⬜ |
+| 13 | 다른 클라이언트에 내 인벤토리가 복제되지 않는다 (소유자 그룹 — D-101) | 03-A | ⬜ **가시성 코드 변경 선결** (남은 작업 1) |
+| 14 | 넣고 빼도 기존 `EntryId`가 **재번호되지 않는다** | 03-A ("빼기"는 03-B 이후 확인) | ⬜ |
 | 15 | **★ 다른 컨테이너로 옮기면 목적지 맨 뒤** — 옛 키를 들고 가지 않는다 (함정 4m) | 03-A | ⬜ |
-| 16 | **★ 배낭에 4개 이상 넣고 순서를 섞은 뒤 버렸다 주우면 그 순서 그대로** (11차) | 03-B | ⬜ |
-| 17 | **★ 핫바에 꽂았다 빼면 원래 자리로 돌아온다** — 동률이 안 난다 (함정 4q) | 03-A | ⬜ |
+| 16 | **★ `EPInvReorder`로 자리를 바꾸면 `Dump` 순서가 바뀌고 클라·서버가 같다** (11차) | 03-A | ⬜ **`KeyOf` 버그 선결** |
+| 17 | **★ 핫바에 꽂았다 빼면 원래 자리로 돌아온다** — 동률이 안 난다 (함정 4q) | 03-A | ⬜ **`BodySlots` 선결** |
 | 18 | **★ 이분 고갈 → 재정규화 / 맨 앞 20회 → `ensure` 없이 순서가 바뀐다** (함정 4r·4t) | 03-A | ⬜ |
 | 19 | **★ 원래 자리에 도로 놓으면 `SortKey`가 안 바뀐다** (함정 4u) | 03-A | ⬜ |
+| 20 | **★ 배낭에 4개 이상 넣고 순서를 섞은 뒤 버렸다 주우면 그 순서 그대로** (11차) | 03-B | ⬜ |
+| 21 | **정체** — `EPInvDumpServer`의 `Uid`가 엔트리마다 다르고, `EPInvMove`로 옮겨도 그대로 (2026-10-07, D-098) | 03-A | ⬜ **코드 없음** (남은 작업 1) |
+| 22 | **정체** — 배낭을 버렸다 주우면 `EntryId`는 새 번호, `Uid`는 그대로 (2026-10-07, D-098) | 03-B | ⬜ |
 
-> **★ 15·17은 `EP.Inv.Move` 없이는 검증할 수 없다 (13차).** `MoveEntry`를 부르는 커맨드가 하나도 없어서 **03-A가 만드는 코드가 Step 04까지 한 줄도 안 돌 예정이었다.** `EP.Inv.Move <EntryId> <NewParent> <SlotId>`를 03-A에 넣는다 — `EP.Inv.Reorder`가 `ReorderEntry`를 직접 부르는 것과 같은 형태다.
-
-**★ Step 02에서 이월된 검증 2건** (번호를 매기지 않는다 — 위 13개가 Step 03의 완료 조건이고 이 둘은 Step 02의 미필이다)
+**★ Step 02에서 이월된 검증 2건** (번호를 매기지 않는다 — 위 22개(1~20 ＋ 21·22)가 Step 03의 완료 조건이고 이 둘은 Step 02의 미필이다)
 
 | | 이월 항목 | 상태 |
 |---|---|---|
@@ -290,84 +189,6 @@ if (Parent != INDEX_NONE) return false;   // ← 몸 슬롯 외엔 전부 거절
 
 > **둘 다 03-B에서 본다.** 그 전에는 버린 픽업을 만드는 경로 자체가 없다.
 
-> **★ 완료 조건 10의 "12/30"은 이 단계에서 확인할 수 없다.** `Charges`를 12로 만들려면 발사가 필요하고 그건 장착 상태여야 하는데 장착 경로가 Step 05다. **여기서는 "`EP.Inv.Drop` 후 `Charges` 보존"까지만** 본다 — 값 복사가 도는지는 그걸로 증명된다.
-
 ---
 
-## 설계 문답 (개발 기록)
-
-> 구현 전 설계 확인 과정에서 나온 질문과 결론. **결정의 근거를 남기는 것이 목적**이라, 나중에 같은 의문이 다시 올라올 때 여기부터 본다.
-
-### Q. `EntryId`가 증가만 하면 오버플로우가 나지 않나? 빠르게 줍고 버리면?
-
-**결론: 도달 불가능하다. `int32` 유지.**
-
-`int32` 최대는 **21억 4748만**이다. `NextEntryId`는 `UEPInventoryComponent`의 서버 전용 필드고 복제하지 않으므로 **수명이 매치 단위**다.
-
-| 가정 | 소진까지 |
-|---|---|
-| 매치 30분, 초당 1회 줍기/버리기 | 1,800개 사용 (0.0001%) |
-| **초당 100회를 쉬지 않고** (매크로로도 불가능) | **248일 연속** |
-| 세이브 도입 후, 하루 1,000개씩 계정 누적 | **5,800년** |
-
-정말 문제가 되면 그때 `int64`로 넓히면 되고, `ParentEntryId`와 RPC 시그니처만 바꾸는 **기계적 변경**이다. 지금 선불할 이유가 없다.
-
-> **단, 세이브(로드맵 5단계)에는 `NextEntryId`를 반드시 넣는다.** 빠뜨리면 로드 후 1부터 재발급해 기존 엔트리와 충돌하고, 하필 `ParentEntryId`를 오염시켜 아이템이 엉뚱한 컨테이너로 들어간다. 오버플로우보다 이쪽이 압도적으로 현실적인 위험이다.
-
-### Q. 그럼 링크드 리스트가 낫지 않나?
-
-**결론: 아니다. 문제를 풀지 못하고, 풀려고 하면 더 나쁜 버그를 만든다.**
-
-**① 식별 문제가 그대로 남는다.** 리스트로 바꿔도 클라가 서버에 *"이걸 버려"* 를 보내려면 번호가 필요하다. **포인터는 복제되지 않는다.** 결국 노드마다 ID를 붙이게 되고 원점이다.
-
-**② 델타 복제를 통째로 잃는다.** `FFastArraySerializer`는 아이템 배열이 **최상위 `UPROPERTY` `TArray`** 일 것을 요구한다(`FastArraySerializer.h:721-728`). 리스트로 가면 인벤토리 전체를 매번 통짜로 보낸다.
-
-**③ 번호 재사용(free list)은 ABA 버그를 만든다 — 이게 핵심이다.**
-
-```
-클라: Server_DropItem(5) 발사
-      ↓ (RTT 사이에)
-서버: 5번이 이미 제거됨 → 번호 재활용 → 새로 주운 AK가 5번이 됨
-      ↓
-서버: 5번을 버림 → 엉뚱한 아이템이 바닥에 떨어진다
-```
-
-단조 증가면 5번은 **영영 없는 번호**라 요청이 그냥 실패한다. 재사용은 그 보호막을 없애는 대가로 **절대 오지 않을 오버플로우**를 막는 거래다.
-
-`ParentEntryId`도 같다 — 배낭 번호가 재활용되면 그 안의 아이템이 **다른 배낭에 매달린다.** 무증상이고, 산발적이고, 재현이 안 된다.
-
-> **한 줄 요약:** 20억 번은 도달 불가고, 번호 재사용은 **도달 가능한** 버그를 만든다. 일어나지 않을 일을 막으려고 일어날 일을 사는 거래라 하지 않는다.
-
-> 배열 인덱스를 안 쓰는 근거는 별개로 엔진 주석에 있다 — *"the \*order\* of the list is not guaranteed to be identical between client and server in all cases."* (`FastArraySerializer.h:54`)
-
-### Q. 총도 배낭처럼 컨테이너를 갖고 부착물을 담는 건가?
-
-**결론: 링크는 같고 판정 경로가 다르다. 총은 컨테이너가 아니다.**
-
-| | 배낭 (수납) | 총 (부착) |
-|---|---|---|
-| `SlotId` | `NAME_None` | `Optic` / `Muzzle` / ... |
-| 제한 | **칸 수** (`ContainerCapacity`) | **슬롯 이름** (슬롯당 하나) |
-| `GetUsedSlots` | 합산됨 | `continue` — **아예 안 센다** |
-| `GetCapacity` | DT의 `ContainerCapacity` | **0** |
-
-`GetCapacity(총) == 0`이라 총에 뭘 **수납**하는 건 원천 봉쇄다. 조준경이 들어가는 건 `CanFit`을 통과해서가 아니라 **칸 검사를 거치지 않기 때문**이다.
-
-`ParentEntryId` 하나로 배낭·부착물·상자가 전부 같은 표현이 되는 것이 이 설계의 이득이고, 그래서 **`SlotId`를 Step 03에 미리 넣는다** — 읽는 코드는 아직 0곳이지만, 없으면 용량 판정식을 §7-3에서 다시 써야 한다. 부착 깊이는 **1**이다 (조준경에 또 붙이지 않는다).
-
----
-
-## 남은 작업 (2026-09-30 갱신)
-
-**~~Step 03 전체~~ — 03-A 로직은 거의 끝나 있다.** 순서를 다시 잡는다.
-
-| 순서 | 할 것 | 비고 |
-|---|---|---|
-| 1 | **버그 수정** — `KeyOf`가 `E.SortKey`를 돌려주게(반환형도 `bool`로), `AddItem`에 `if (!Data) return INDEX_NONE;` 가드 | 둘 다 위 "새로 발견된 버그" 절. 작고 03-A를 신뢰하려면 선행돼야 한다 |
-| 2 | **결정** — `CanPlaceInSlot`의 부착 슬롯(`Parent != INDEX_NONE`) 거절이 의도인지. 의도면 이 문서에 이유를, 실수면 조건 자체를 고친다 | 03-A 완료 조건엔 부착이 없어 지금 당장 급하진 않다 |
-| 3 | **PIE 검증** — `EPInvAdd`/`EPInvMove`/`EPInvReorder`/`EPInvDump`(구 `EP.Inv.*`)로 완료 조건 2~6, 12, 14~15, 17~19를 실제로 돌려본다. **1번을 하기 전엔 14번을 통과로 치지 않는다** | 커맨드는 이미 있다 — `05_Loot_00_ItemCore.md`류 검증 패턴과 동일 |
-| 4 | **`IsFungible()` 정리** — 죽은 스텁이니 지우거나 `Data->bFungible` 위임 | 사소, 아무 때나 |
-| 5 | **03-B** — `AddSubtree`/`TryAutoEquip`/`GetInsertionOrder`/`Server_DropItem_Implementation`/`SpawnPickupInFront` 본체 채우기 + `EPGA_Interact`(픽업 경로)가 `AddItem`을 실제로 부르게 배선. 지금은 F로 주워도 인벤토리에 안 들어간다(호출자 0곳, 직접 확인) | Step 02 이월 2건(02-3 사거리, 02-4 동시 F)도 여기서 |
-
-**요약: "03-A를 시작한다"가 아니라 "이미 쓰인 03-A를 버그 2개 고치고 처음으로 PIE에 태운다"에
-더 가깝다.** 03-B(줍기 연동)는 여전히 처음부터다 — 스텁 5개와 pickup 배선이 남아 있다.
+> **옛 내용이 옮겨 간 곳 (2026-10-08 정리):** 9~14차 "추가된 코드 항목" 표와 구간 이동 경위 → `05_Loot_DECISIONS.md` "차수별 경위" · 구현서 A/B 변경 이력. `Server_EquipBackpack` 삭제 근거 셋 → `DOCS/Mine/EquipmentSlots.md` §15. 13차 답변의 *"32,764회 정정"* 과 *"권했으나 안 한 것"* → `Review/05_Loot_REVIEW_Inventory_Summary.md` 13차 답변 절. "설계 문답" 셋 → `05_Loot_DECISIONS.md` D-111 · D-112.

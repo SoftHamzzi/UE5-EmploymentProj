@@ -134,7 +134,7 @@ MoveEntry(id, INDEX_NONE, "Hotbar1")
 
 | | 배정 — 어느 칸에 넣나 | 활성 — 어느 칸을 손에 드나 |
 |---|---|---|
-| 상태 | `SlotId = "HotbarN"` (엔트리 필드, 복제) | `ActiveHotbarIndex` (컴포넌트 필드, `COND_OwnerOnly`) |
+| 상태 | `SlotId = "HotbarN"` (엔트리 필드, 복제) | `ActiveHotbarIndex` (컴포넌트 필드, 소유자 그룹 — 03-A "가시성", D-101) |
 | 연산 | `MoveEntry` | 대입 |
 | 표면 | **`Server_MoveEntry`** — 04-B 드래그 | **`Server_SetActiveHotbarIndex`** — 이 단계 |
 | 빈도 | 가끔 | **전투 중 수시로** |
@@ -289,7 +289,7 @@ void UEPCombatComponent::UnequipWeapon()
 
 **표현은 Step 03에서 이미 확정돼 있다(03-2)** — `FEPInventoryEntry::SlotId`가 장착의 유일한 진실이고, 남는 상태는 `ActiveHotbarIndex`(`COND_OwnerOnly`) 하나다. 이 단계는 **그 인덱스를 실제로 세팅하는 경로**를 만든다.
 
-**`COND_OwnerOnly`로 충분하다.** 다른 클라이언트는 `AEPWeapon` 액터가 복제되고(`EPWeapon.cpp:19` `bReplicates = true`) 캐릭터 소켓에 부착되므로 **이미 보인다.** 이 값은 순전히 소유자 UI("어느 칸을 들고 있나")를 위한 것이다.
+**소유자에게만 가면 충분하다** (인벤토리 컴포넌트가 소유자 그룹이다 — 03-A "가시성", D-101). 다른 클라이언트는 `AEPWeapon` 액터가 복제되고(`EPWeapon.cpp:19` `bReplicates = true`) 캐릭터 소켓에 부착되므로 **이미 보인다.** 이 값은 순전히 소유자 UI("어느 칸을 들고 있나")를 위한 것이다.
 
 - **장착된 무기는 칸을 먹지 않는다** — `SlotId != None`이면 `GetUsedSlots`가 건너뛴다(03-3). 8차까지의 *"자기 `SlotSize`만큼 칸을 차지한 채로 장착된다"* 는 9차 기획 확대로 뒤집혔다
 - **`TMap<EEPEquipSlot, int32>`로 가지 않는다** — 슬롯이 12개가 돼도 마찬가지다. `SlotId`가 이미 엔트리 안에 있고 이미 복제된다. §8 미정 #5는 **확정으로 이동**했다
@@ -404,7 +404,7 @@ AttributeSet::Ammo          float     ← GAS 규격상 float 고정
 | 5 | `Ammo`를 `MaxAmmo`보다 먼저 세팅 | 이전 무기의 낮은 `MaxAmmo`에 클램프됨 | `MaxAmmo` 먼저 |
 | 6 | write-back을 경로별로 분산 | 특정 경로에서만 잔탄 되돌아감. 재현 조건이 좁음 | `UnequipWeapon()` 한 곳에만. **★ ⓐ에서 재장전이 `UnequipWeapon()`을 안 거치므로 `WriteBackAmmo()` 추출이 이 함정의 연장선이다** (ⓐ 대비 절) |
 | 7 | 사망 시 write-back 누락 | 시체/드랍의 잔탄이 만탄 | 사망 처리에서 `UnequipWeapon()` |
-| 8 | `ActiveHotbarIndex` / `Entries`를 무조건 복제 | 남이 뭘 들었는지 패킷으로 노출 | `COND_OwnerOnly` |
+| 8 | `ActiveHotbarIndex` / `Entries`를 무조건 복제 | 남이 뭘 들었는지 패킷으로 노출 | 컴포넌트 단위 `COND_NetGroup` ＋ `NetGroupOwner` (03-A 함정 1) |
 | 9 | 인벤토리가 `AEPWeapon`을 직접 스폰 | 무기 수명·애님·어빌리티 배선이 두 곳으로 갈림 | `CombatComponent`에 위임 |
 | 10 | `DefaultWeaponClass`를 먼저 제거 | 무기 없이 스폰. 다른 버그로 오인 | `DefaultLoadout` 검증 후 제거 |
 | 11 | 착용 컨테이너 용량이 `DefaultLoadout`보다 작음 | 뒤쪽 아이템이 조용히 누락 | 실패 시 경고 로그 (05-5) |
@@ -450,4 +450,4 @@ AttributeSet::Ammo          float     ← GAS 규격상 float 고정
 - 무기 2정 이상 슬롯(주무기/보조) → §8 미정 #5
 - **방어구·헬멧 장착** → **§7-5.** 그때 붙는 것은 *"장착하면 `AbilitySet`을 부여한다"* 이고 **훅은 `MoveEntry` 한 곳**이다(Lyra `AbilitySetsToGrant` — `LyraEquipmentDefinition.h:49-51`). **회수 자리는 이 단계가 이미 만든다** — `RemoveEntry`의 ① write-back과 **같은 칸**이라, 05-3의 순서 규칙이 그대로 그쪽에도 걸린다
 - 사망 시 전체 드랍 → §8 미정 #4
-- 내구도(`Durability`) 실제 감소 로직
+- 내구도(`State.Stats`의 `Item.Stat.Durability`, D-099) 실제 감소 로직

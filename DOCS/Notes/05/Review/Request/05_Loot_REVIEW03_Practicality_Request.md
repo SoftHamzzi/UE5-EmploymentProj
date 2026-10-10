@@ -150,7 +150,7 @@ InventoryComponent::RemoveEntry(id)
 | `DOCS/ROADMAP.md` | `:45` `:65` `:179` |
 | `DOCS/Notes/05/05_Loot_Design.md` | 마스터 (1007줄) |
 | `DOCS/Notes/05/Status/05_Loot_STATUS.md` | 확정 결정표 + 손대야 할 것 |
-| `DOCS/Notes/05/05_Loot_00_ItemCore.md` ~ `05_Loot_05_Equipment.md` | 구현 스펙 6개 |
+| `DOCS/Notes/05/Implementation/05_Loot_00_ItemCore.md` ~ `05_Loot_05_Equipment.md` | 구현 스펙 6개 |
 | `DOCS/Notes/05/05_Loot_REVIEW*.md` | 검증 기록 4개 (참고용) |
 
 **구현 코드는 여전히 0줄이다. 지금 고치는 게 가장 싸다.**

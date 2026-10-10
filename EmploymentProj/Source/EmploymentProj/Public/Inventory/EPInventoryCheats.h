@@ -18,6 +18,10 @@ public:
 	UFUNCTION(EXEC) void EPInvDump();
 	UFUNCTION(EXEC) void EPInvDumpAll();
 	
+	// 서버에서 도는 덤프. BlueprintAuthorityOnly라 클라 창에서 쳐도 엔진이 ServerExec으로 서버에 보낸다(CheatManager.cpp:95-128)
+	UFUNCTION(Exec, BlueprintAuthorityOnly)
+	void EPInvDumpServer();
+	
 	UFUNCTION(Exec, BlueprintAuthorityOnly)
 	void EPInvAdd(const FString& ItemId, int32 Container = -1);
 	UFUNCTION(Exec, BlueprintAuthorityOnly)

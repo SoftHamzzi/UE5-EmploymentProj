@@ -1,12 +1,13 @@
 #include "Inventory/EPInventoryComponent.h"
 
-#include "AudioMixerBlueprintLibrary.h"
 #include "Combat/EPCombatComponent.h"
 #include "Core/EPCharacter.h"
 #include "Data/EPItemData.h"
 #include "Data/EPItemDefinitionSubsystem.h"
 #include "Data/EPLootDeveloperSettings.h"
 #include "Net/UnrealNetwork.h"
+#include "Net/Core/Misc/NetConditionGroupManager.h"
+#include "Net/Subsystems/NetworkSubsystem.h"
 
 struct FScopedInventoryNotify
 {
@@ -32,7 +33,91 @@ bool FEPInventoryList::NetDeltaSerialize(FNetDeltaSerializeInfo& DeltaParms)
 
 void FEPInventoryList::PostReplicatedReceive(const FFastArraySerializer::FPostReplicatedReceiveParameters&)
 {
+	MarkIndexDirty();
 	if (Owner) Owner->OnInventoryChanged.Broadcast();
+}
+
+const FEPInventoryIndex& FEPInventoryList::EnsureIndex() const
+{
+	if (!bIndexDirty) return Index;
+
+	Index.ChildrenOf.Reset();
+	Index.IdByUid.Reset();
+	Index.IndexById.Reset();
+	Index.UsedSlotsOf.Reset();
+
+	const UEPItemDefinitionSubsystem* IDS = UEPItemDefinitionSubsystem::Get(Owner);
+
+	for (int32 i = 0; i < Items.Num(); i++)
+	{
+		const FEPInventoryEntry& E = Items[i];
+
+		Index.IndexById.FindOrAdd(E.EntryId, i);
+		Index.ChildrenOf.FindOrAdd(E.ParentEntryId).Add(E.EntryId);
+		if (E.State.ItemUid.IsValid())
+			Index.IdByUid.FindOrAdd(E.State.ItemUid, E.EntryId);
+
+		if (!E.SlotId.IsNone()) continue;
+
+		const FEPItemData* Row = IDS ? IDS->FindData(E.ItemId) : nullptr;
+		if (!ensureMsgf(Row, TEXT("[Inventory] DT에 없는 ItemId: %s"), *E.ItemId.ToString()))
+			continue;
+
+		Index.UsedSlotsOf.FindOrAdd(E.ParentEntryId) += Row->SlotSize;
+	}
+
+	bIndexDirty = false;
+	return Index;
+}
+
+const FEPInventoryEntry* FEPInventoryList::FindEntryPtr(int32 EntryId) const
+{
+	const FEPInventoryIndex& CurIndex = EnsureIndex();
+
+	const int32* Idx = CurIndex.IndexById.Find(EntryId);
+	return Idx ? &Items[*Idx] : nullptr;
+}
+
+FEPInventoryEntry* FEPInventoryList::FindEntryMutable(int32 EntryId)
+{
+	const FEPInventoryIndex& CurIndex = EnsureIndex();
+	const int32* Idx = CurIndex.IndexById.Find(EntryId);
+	return Idx ? &Items[*Idx] : nullptr;
+}
+
+int32 FEPInventoryList::Append(int32 Parent, FName ItemId, const FEPItemState& State, FName SlotId, int64 SortKey)
+{
+	const int32 NewId = NextEntryId++;
+
+	FEPInventoryEntry& E = Items.AddDefaulted_GetRef();
+	E.EntryId = NewId;
+	E.ParentEntryId = Parent;
+	E.SlotId = SlotId;
+	E.ItemId = ItemId;
+	E.State = State;
+	E.SortKey = SortKey;
+
+	MarkItemDirty(E);
+	MarkIndexDirty();
+	return NewId;
+}
+
+void FEPInventoryList::RemoveAll(const TSet<int32>& Ids)
+{
+	const FEPInventoryIndex& CurIndex = EnsureIndex();
+
+	TArray<int32> Positions;
+	for (const int32 Id : Ids)
+	{
+		if (const int32* Idx = CurIndex.IndexById.Find(Id)) Positions.Add(*Idx);
+	}
+	if (Positions.IsEmpty()) return;
+
+	Positions.Sort(TGreater<int32>());
+	for (const int32 Pos : Positions) Items.RemoveAtSwap(Pos);
+
+	MarkArrayDirty();
+	MarkIndexDirty();
 }
 
 UEPInventoryComponent::UEPInventoryComponent()
@@ -42,14 +127,49 @@ UEPInventoryComponent::UEPInventoryComponent()
 	Entries.Owner = this;
 }
 
+void UEPInventoryComponent::BeginPlay()
+{
+	Super::BeginPlay();
+	if (!GetOwner()->HasAuthority()) return;
+
+	UNetworkSubsystem* NetworkSubsystem = GetWorld()->GetSubsystem<UNetworkSubsystem>();
+	if (!NetworkSubsystem) return;
+	UE::Net::FNetConditionGroupManager& NetConditionGroupManager = NetworkSubsystem->GetNetConditionGroupManager();
+	NetConditionGroupManager.RegisterSubObjectInGroup(this, UE::Net::NetGroupOwner);
+}
+
+void UEPInventoryComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	Super::EndPlay(EndPlayReason);
+	if (!GetOwner()->HasAuthority()) return;
+	
+	UNetworkSubsystem* NetworkSubsystem = GetWorld()->GetSubsystem<UNetworkSubsystem>();
+	if (!NetworkSubsystem) return;
+	UE::Net::FNetConditionGroupManager& NetConditionGroupManager = NetworkSubsystem->GetNetConditionGroupManager();
+	NetConditionGroupManager.UnregisterSubObjectFromAllGroups(this);
+}
+
+ELifetimeCondition UEPInventoryComponent::GetReplicationCondition() const
+{
+	return COND_NetGroup;
+}
+
 int32 UEPInventoryComponent::AddItem(int32 Container, FName ItemId, const FEPItemState& InState)
 {
 	if (!GetOwner()->HasAuthority()) return INDEX_NONE;
 	
-	const FEPItemData* Data = Defs() ? Defs()->FindData(ItemId) : nullptr;
+	const UEPItemDefinitionSubsystem* D = Defs();
+	if (!D) return INDEX_NONE;
+	
+	if (!CheckIdentity(InState)) return INDEX_NONE;
+	
+	const FEPItemData* Data = D->FindData(ItemId);
+	if (!ensureMsgf(Data, TEXT("[Inventory] DT에 없는 ItemId: %s"), *ItemId.ToString()))
+		return INDEX_NONE;
 	
 	if (Data->bFungible)
 	{
+		if (!InState.Stats.IsEmpty()) return INDEX_NONE;
 		const int32 Id = FindFungibleEntryId(Container, ItemId);
 		if (Id != INDEX_NONE)
 		{
@@ -70,41 +190,31 @@ int32 UEPInventoryComponent::AddSubtree(int32 Parent, FName SlotId, const TArray
 
 bool UEPInventoryComponent::FindEntry(int32 EntryId, FEPInventoryEntry& Out) const
 {
-	for (const FEPInventoryEntry& E : Entries.Items)
-	{
-		if (E.EntryId != EntryId) continue;
-		Out = E;
-		return true;
-	}
-	return false;
+	const FEPInventoryEntry* E = Entries.FindEntryPtr(EntryId);
+	if (!E) return false;
+	Out = *E;
+	return true;
 }
 
 int32 UEPInventoryComponent::FindFungibleEntryId(int32 Container, FName ItemId) const
 {
-	for (const FEPInventoryEntry& E : Entries.Items)
-		if (E.ParentEntryId == Container && E.ItemId == ItemId)
-			return E.EntryId;
+	const FIndex& CurIndex = Entries.EnsureIndex();
+	const TArray<int32>* ChildIds = CurIndex.ChildrenOf.Find(Container);
+	if (!ChildIds) return INDEX_NONE;
+	
+	for (const int32 ChildId : *ChildIds)
+	{
+		const FEPInventoryEntry* E = Entries.FindEntryPtr(ChildId);
+		if (E && E->ItemId == ItemId)
+			return E->EntryId;
+	}
 	return INDEX_NONE;
 }
 
 int32 UEPInventoryComponent::GetUsedSlots(int32 Container) const
 {
-	const UEPItemDefinitionSubsystem* D = Defs();
-	if (!D) return 0;
-	
-	int32 Sum = 0;
-	for (const FEPInventoryEntry& E : Entries.Items)
-	{
-		if (E.ParentEntryId != Container) continue;
-		if (!E.SlotId.IsNone()) continue;
-		
-		const FEPItemData* Row = D->FindData(E.ItemId);
-		if (!ensureMsgf(Row, TEXT("[Inventory] DT에 없는 ItemId: %s"), *E.ItemId.ToString()))
-			continue;
-		Sum += Row->SlotSize;
-	}
-	
-	return Sum;
+	const FIndex& CurIndex = Entries.EnsureIndex();
+	return CurIndex.UsedSlotsOf.FindRef(Container);
 }
 
 int32 UEPInventoryComponent::GetCapacity(int32 Container) const
@@ -149,10 +259,14 @@ int32 UEPInventoryComponent::GetEntryInSlot(int32 Parent, FName SlotId) const
 {
 	if (SlotId.IsNone()) return INDEX_NONE;
 	
-	for (const FEPInventoryEntry& E : Entries.Items)
+	const FIndex& CurIndex = Entries.EnsureIndex();
+	const TArray<int32>* ChildIds = CurIndex.ChildrenOf.Find(Parent);
+	if (!ChildIds) return INDEX_NONE;
+	
+	for (int32 ChildId : *ChildIds)
 	{
-		if (E.ParentEntryId == Parent && E.SlotId == SlotId)
-			return E.EntryId;
+		const FEPInventoryEntry* E = Entries.FindEntryPtr(ChildId);
+		if (E && E->SlotId == SlotId) return E->EntryId;
 	}
 	return INDEX_NONE;
 }
@@ -167,10 +281,17 @@ int32 UEPInventoryComponent::GetEquippedEntryId() const
 
 TArray<int32> UEPInventoryComponent::GetSortedContents(int32 Container) const
 {
+	const FIndex& CurIndex = Entries.EnsureIndex();
+	const TArray<int32>* ChildIds = CurIndex.ChildrenOf.Find(Container);
+	if (!ChildIds) return {};
+	
 	TArray<const FEPInventoryEntry*> Out;
-	for (const FEPInventoryEntry& E : Entries.Items)
-		if (E.ParentEntryId == Container && E.SlotId.IsNone())
-			Out.Add(&E);
+	for (int32 ChildId : *ChildIds)
+	{
+		const FEPInventoryEntry* E = Entries.FindEntryPtr(ChildId);
+		if (E && E->SlotId.IsNone())
+			Out.Add(E);
+	}
 	
 	Out.Sort([](const FEPInventoryEntry& A, const FEPInventoryEntry& B)
 	{
@@ -188,16 +309,15 @@ void UEPInventoryComponent::SetEntryCharges(int32 EntryId, int32 NewCharges)
 {
 	if (!GetOwner()->HasAuthority()) return;
 	
-	for (FEPInventoryEntry& E : Entries.Items)
-	{
-		if (E.EntryId == EntryId)
-		{
-			FScopedInventoryNotify Guard(this);
-			E.State.Charges = FMath::Max(0, NewCharges);
-			Entries.MarkItemDirty(E);
-			return;
-		}
-	}
+	FEPInventoryEntry* E = Entries.FindEntryMutable(EntryId);
+	if (!E) return;
+	
+	const int32 Clamped = FMath::Max(0, NewCharges);
+	if (E->State.Charges == Clamped) return;
+	
+	FScopedInventoryNotify Guard(this);
+	E->State.Charges = Clamped;
+	Entries.MarkItemDirty(*E);
 }
 
 void UEPInventoryComponent::AddEntryCharges(int32 EntryId, int32 Delta)
@@ -207,11 +327,32 @@ void UEPInventoryComponent::AddEntryCharges(int32 EntryId, int32 Delta)
 		SetEntryCharges(EntryId, E.State.Charges + Delta);
 }
 
+bool UEPInventoryComponent::GetEntryStat(int32 EntryId, FGameplayTag Tag, int32& OutValue) const
+{
+	if (!Tag.IsValid()) return false;
+	const FEPInventoryEntry* E = Entries.FindEntryPtr(EntryId);
+	if (!E) return false;
+	
+	return E->State.FindStat(Tag, OutValue);
+}
+
+void UEPInventoryComponent::SetEntryStat(int32 EntryId, FGameplayTag Tag, int32 Value)
+{
+	if (!GetOwner()->HasAuthority() || !Tag.IsValid()) return;
+	FEPInventoryEntry* E = Entries.FindEntryMutable(EntryId);
+	if (!E) return;
+	
+	int32 Cur;
+	if (E->State.FindStat(Tag, Cur) && Cur == Value) return;
+
+	FScopedInventoryNotify Guard(this);
+	E->State.SetStat(Tag, Value);
+	Entries.MarkItemDirty(*E);
+}
+
 bool UEPInventoryComponent::MoveEntry(int32 EntryId, int32 NewParent, FName NewSlotId)
 {
 	if (!GetOwner()->HasAuthority()) return false;
-
-	if (!ContainsEntry(EntryId)) return false;
 
 	FEPInventoryEntry Cur;
 	if (!FindEntry(EntryId, Cur)) return false;
@@ -225,27 +366,25 @@ bool UEPInventoryComponent::MoveEntry(int32 EntryId, int32 NewParent, FName NewS
 	for (int32 P = NewParent; P != INDEX_NONE; )
 	{
 		if (P == EntryId) return false;
-		FEPInventoryEntry Up;
-		P = FindEntry(P, Up) ? Up.ParentEntryId : INDEX_NONE;
+		const FEPInventoryEntry* Up = Entries.FindEntryPtr(P);
+		P = Up ? Up->ParentEntryId : INDEX_NONE;
 	}
 
 	const bool  bReparent = (NewParent != Cur.ParentEntryId);
-	const int32 NewKey    = bReparent ? KeySpace_NextAtEnd(NewParent) : 0;
+	const int64 NewKey    = bReparent ? KeySpace_NextAtEnd(NewParent) : 0;
 
 	FScopedInventoryNotify Guard(this);
 
-	for (FEPInventoryEntry& E : Entries.Items)
-	{
-		if (E.EntryId != EntryId) continue;
+	FEPInventoryEntry* E = Entries.FindEntryMutable(EntryId);
+	if (!E) return false;
+	
+	E->ParentEntryId = NewParent;
+	E->SlotId = NewSlotId;
+	Entries.MarkItemDirty(*E);
+	Entries.MarkIndexDirty();
 
-		E.ParentEntryId = NewParent;
-		E.SlotId        = NewSlotId;
-		Entries.MarkItemDirty(E);
-
-		if (bReparent) AssignSortKey(EntryId, NewKey);
-		return true;
-	}
-	return false;
+	if (bReparent) AssignSortKey(EntryId, NewKey);
+	return true;
 }
 
 bool UEPInventoryComponent::RemoveEntry(int32 EntryId, TArray<FEPInventoryEntry>* OutRemoved)
@@ -281,9 +420,9 @@ void UEPInventoryComponent::ReorderEntry(int32 EntryId, int32 PrevEntryId)
 void UEPInventoryComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
-	DOREPLIFETIME_CONDITION(UEPInventoryComponent, Entries, COND_OwnerOnly);
-	DOREPLIFETIME_CONDITION(UEPInventoryComponent, MaxSlots, COND_OwnerOnly);
-	DOREPLIFETIME_CONDITION(UEPInventoryComponent, ActiveHotbarIndex, COND_OwnerOnly);
+	DOREPLIFETIME_CONDITION(UEPInventoryComponent, Entries, COND_None);
+	DOREPLIFETIME_CONDITION(UEPInventoryComponent, MaxSlots, COND_None);
+	DOREPLIFETIME_CONDITION(UEPInventoryComponent, ActiveHotbarIndex, COND_None);
 }
 
 bool UEPInventoryComponent::RemoveEntryInternal(int32 EntryId, TArray<FEPInventoryEntry>* OutRemoved, bool bIsRoot)
@@ -323,10 +462,7 @@ bool UEPInventoryComponent::RemoveEntryInternal(int32 EntryId, TArray<FEPInvento
 
 void UEPInventoryComponent::RemoveChildrenRecursive(int32 ParentId, TArray<FEPInventoryEntry>* OutRemoved)
 {
-	TArray<int32> Children;
-	for (const FEPInventoryEntry& E : Entries.Items)
-		if (E.ParentEntryId == ParentId)
-			Children.Add(E.EntryId);
+	TArray<int32> Children = Entries.EnsureIndex().ChildrenOf.FindRef(ParentId);
 	
 	for (int32 Id : Children)
 		RemoveEntryInternal(Id, OutRemoved, false);
@@ -336,66 +472,56 @@ void UEPInventoryComponent::RemoveSelf(int32 EntryId)
 {
 	FScopedInventoryNotify Guard(this);
 	
-	for (int32 i=0; i < Entries.Items.Num(); ++i)
-	{
-		if (Entries.Items[i].EntryId != EntryId) continue;
-		
-		Entries.Items.RemoveAtSwap(i);
-		Entries.MarkArrayDirty();
-		return;
-	}
+	Entries.RemoveAll({EntryId});
 }
 
 bool UEPInventoryComponent::ContainsEntry(int32 EntryId) const
 {
-	for (const FEPInventoryEntry& E : Entries.Items)
-	{
-		if (E.EntryId == EntryId) return true;
-	}
-	return false;
+	const FIndex& CurIndex = Entries.EnsureIndex();
+	return CurIndex.IndexById.Contains(EntryId);
 }
 
 int32 UEPInventoryComponent::InsertEntry(int32 Parent, FName ItemId, const FEPItemState& State, FName SlotId)
 {
-	FScopedInventoryNotify Guard(this);
+	if (!CheckIdentity(State)) return INDEX_NONE;
+	const int64 NewKey = KeySpace_NextAtEnd(Parent);
 	
-	const int32 NewId = NextEntryId++;
-	
-	const int32 NewKey = KeySpace_NextAtEnd(Parent);
-	
-	FEPInventoryEntry& E = Entries.Items.AddDefaulted_GetRef();
-	E.EntryId = NewId;
-	E.ParentEntryId = Parent;
-	E.SlotId = SlotId;
-	E.ItemId = ItemId;
-	E.State = State;
-	E.SortKey = NewKey;
-	
-	Entries.MarkItemDirty(E);
-	return NewId;
+	return AppendEntry(Parent, ItemId, State, SlotId, NewKey);
 }
 
-void UEPInventoryComponent::AssignSortKey(int32 EntryId, int32 NewKey)
+int32 UEPInventoryComponent::AppendEntry(int32 Parent, FName ItemId, const FEPItemState& State, FName SlotId, int64 SortKey)
 {
 	FScopedInventoryNotify Guard(this);
 	
-	for (FEPInventoryEntry& E : Entries.Items)
-	{
-		if (E.EntryId != EntryId) continue;
-		if (E.SortKey == NewKey) return;
-		
-		E.SortKey = NewKey;
-		Entries.MarkItemDirty(E);
-		return;
-	}
+	return Entries.Append(Parent, ItemId, State, SlotId, SortKey);
+}
+
+void UEPInventoryComponent::AssignSortKey(int32 EntryId, int64 NewKey)
+{
+	FEPInventoryEntry* E = Entries.FindEntryMutable(EntryId);
+	if (!E) return;
+	if (E->SortKey == NewKey) return;
+	
+	FScopedInventoryNotify Guard(this);
+	E->SortKey = NewKey;
+	Entries.MarkItemDirty(*E);
 }
 
 void UEPInventoryComponent::RenormalizeSortKeys(int32 Container)
 {
 	TArray<const FEPInventoryEntry*> All;
 	
-	for (const FEPInventoryEntry& E : Entries.Items)
-		if (E.ParentEntryId == Container) All.Add(&E);
+	const FIndex& CurIndex = Entries.EnsureIndex();
+	const TArray<int32>* ChildIds = CurIndex.ChildrenOf.Find(Container);
+	if (!ChildIds) return;
+	
+	for (int32 ChildId : *ChildIds)
+	{
+		const FEPInventoryEntry* E = Entries.FindEntryPtr(ChildId);
+		if (!E) continue;
+		
+		All.Add(E);
+	}
 	
 	All.Sort([](const FEPInventoryEntry& A, const FEPInventoryEntry& B)
 	{
@@ -403,7 +529,7 @@ void UEPInventoryComponent::RenormalizeSortKeys(int32 Container)
 			: A.EntryId < B.EntryId;
 	});
 	
-	int32 K = 0;
+	int64 K = 0;
 	for (const FEPInventoryEntry* E : All)
 	{
 		AssignSortKey(E->EntryId, K);
@@ -411,19 +537,26 @@ void UEPInventoryComponent::RenormalizeSortKeys(int32 Container)
 	}
 }
 
-int32 UEPInventoryComponent::KeySpace_NextAtEnd(int32 Container)
+int64 UEPInventoryComponent::KeySpace_NextAtEnd(int32 Container)
 {
-	int32 Max = 0; bool bAny = false;
-	for (const FEPInventoryEntry& E : Entries.Items)
-		if (E.ParentEntryId == Container)
-		{
-			Max = bAny ? FMath::Max(Max, E.SortKey) : E.SortKey;
-			bAny = true;
-		}
+	int64 Max = 0; bool bAny = false;
+	
+	const FIndex& CurIndex = Entries.EnsureIndex();
+	const TArray<int32>* ChildIds = CurIndex.ChildrenOf.Find(Container);
+	if (!ChildIds) return 0;
+	
+	for (int32 ChildId : *ChildIds)
+	{
+		const FEPInventoryEntry* E = Entries.FindEntryPtr(ChildId);
+		if (!E) continue;
+		
+		Max = bAny ? FMath::Max(Max, E->SortKey) : E->SortKey;
+		bAny = true;
+	}
 	
 	if (!bAny) return 0;
 	
-	if (Max > MAX_int32 - SortKeyGuard)
+	if (Max > MAX_int64 - SortKeyGuard)
 	{
 		RenormalizeSortKeys(Container);
 		return KeySpace_NextAtEnd(Container);
@@ -432,45 +565,56 @@ int32 UEPInventoryComponent::KeySpace_NextAtEnd(int32 Container)
 	return Max + SortKeyStep;
 }
 
-int32 UEPInventoryComponent::KeySpace_Min(int32 Container) const
+int64 UEPInventoryComponent::KeySpace_Min(int32 Container) const
 {
-	int32 Min = 0; bool bAny = false;
-	for (const FEPInventoryEntry& E : Entries.Items)
+	int64 Min = 0; bool bAny = false;
+	
+	const FIndex& CurIndex = Entries.EnsureIndex();
+	const TArray<int32>* ChildIds = CurIndex.ChildrenOf.Find(Container);
+	if (!ChildIds) return 0;
+	
+	for (int32 ChildId : *ChildIds)
 	{
-		if (E.ParentEntryId != Container) continue;
+		const FEPInventoryEntry* E = Entries.FindEntryPtr(ChildId);
+		if (!E) continue;
 		
-		Min = bAny ? FMath::Min(Min, E.SortKey) : E.SortKey;
+		Min = bAny ? FMath::Min(Min, E->SortKey) : E->SortKey;
 		bAny = true;
 	}
 	
 	return bAny ? Min : 0;
 }
 
-bool UEPInventoryComponent::KeySpace_NextAbove(int32 Container, int32 Key, int32 Exclude, int32& OutKey) const
+bool UEPInventoryComponent::KeySpace_NextAbove(int32 Container, int64 Key, int32 Exclude, int64& OutKey) const
 {
 	bool bAny = false;
-	for (const FEPInventoryEntry& E : Entries.Items)
+	
+	const FIndex& CurIndex = Entries.EnsureIndex();
+	const TArray<int32>* ChildIds = CurIndex.ChildrenOf.Find(Container);
+	if (!ChildIds) return false;
+	
+	for (int32 ChildId : *ChildIds)
 	{
-		if (E.ParentEntryId != Container) continue;
-		if (E.EntryId == Exclude) continue;
-		if (E.SortKey <= Key) continue;
+		const FEPInventoryEntry* E = Entries.FindEntryPtr(ChildId);
+		if (!E) continue;
 		
-		OutKey = bAny ? FMath::Min(OutKey, E.SortKey) : E.SortKey;
+		if (E->EntryId == Exclude || E->SortKey <= Key) continue;
+		
+		OutKey = bAny ? FMath::Min(OutKey, E->SortKey) : E->SortKey;
 		bAny = true;
 	}
 	
 	return bAny;
 }
 
-int32 UEPInventoryComponent::KeyOf(int32 EntryId, int32& OutKey) const
+bool UEPInventoryComponent::KeyOf(int32 EntryId, int64& OutKey) const
 {
-	for (const FEPInventoryEntry& E : Entries.Items)
-	{
-		if (E.EntryId != EntryId) continue;
-		OutKey = E.EntryId;
-		return true;
-	}
-	return false;
+	const FEPInventoryEntry* E = Entries.FindEntryPtr(EntryId);
+	if (!E) return false;
+	
+	OutKey = E->SortKey;
+	
+	return true;
 }
 
 void UEPInventoryComponent::ReorderEntryInternal(int32 EntryId, int32 PrevEntryId, bool bRetry)
@@ -483,6 +627,7 @@ void UEPInventoryComponent::ReorderEntryInternal(int32 EntryId, int32 PrevEntryI
 	
 	const int32 Container = E.ParentEntryId;
 	
+	// 다른 컨테이너나 슬롯에 넣으려는 경우 return
 	if (PrevEntryId != INDEX_NONE)
 	{
 		FEPInventoryEntry P;
@@ -491,19 +636,27 @@ void UEPInventoryComponent::ReorderEntryInternal(int32 EntryId, int32 PrevEntryI
 		if (PrevEntryId == EntryId) return;
 	}
 	
-	int32 PrevKey = KeySpace_Min(Container) - SortKeyStep;
+	// 같은 자리에 끼워넣을 시 return
+	{
+		const TArray<int32> Cur = GetSortedContents(Container);
+		const int32 MyIdx = Cur.Find(EntryId);
+		const int32 CurPrev = (MyIdx <= 0) ? INDEX_NONE : Cur[MyIdx - 1];
+		if (CurPrev == PrevEntryId) return;
+	}
+	
+	int64 PrevKey = KeySpace_Min(Container) - SortKeyStep;
 	if (PrevEntryId != INDEX_NONE && !KeyOf(PrevEntryId, PrevKey)) return;
 	
-	int32 NextKey = 0;
+	int64 NextKey = 0;
 	const bool bTail = !KeySpace_NextAbove(Container, PrevKey, EntryId, NextKey);
 	
-	int32 NewKey;
+	int64 NewKey;
 	if (PrevEntryId == INDEX_NONE) NewKey = PrevKey;
 	else if (bTail) NewKey = PrevKey + SortKeyStep;
-	else NewKey = PrevKey + (NextKey - PrevKey) / 2;
+	else NewKey = PrevKey + (int64)(((uint64)NextKey - (uint64)PrevKey) / 2);
 	
-	const bool bOutOfRange = (NewKey <= MIN_int32 + SortKeyGuard)
-		|| (NewKey >= MAX_int32 - SortKeyGuard);
+	const bool bOutOfRange = (NewKey <= MIN_int64 + SortKeyGuard)
+		|| (NewKey >= MAX_int64 - SortKeyGuard);
 	
 	const bool bNoGap = (PrevEntryId != INDEX_NONE) && !bTail && (NewKey <= PrevKey);
 	
@@ -517,13 +670,6 @@ void UEPInventoryComponent::ReorderEntryInternal(int32 EntryId, int32 PrevEntryI
 		return;
 	}
 	
-	{
-		const TArray<int32> Cur = GetSortedContents(Container);
-		const int32 MyIdx = Cur.Find(EntryId);
-		const int32 CurPrev = (MyIdx <= 0) ? INDEX_NONE : Cur[MyIdx - 1];
-		if (CurPrev == PrevEntryId) return;
-	}
-	
 	AssignSortKey(EntryId, NewKey);
 }
 
@@ -535,4 +681,17 @@ AEPPickup* UEPInventoryComponent::SpawnPickupInFront() const
 const UEPItemDefinitionSubsystem* UEPInventoryComponent::Defs() const
 {
 	return UEPItemDefinitionSubsystem::Get(this);
+}
+
+bool UEPInventoryComponent::CheckIdentity(const FEPItemState& State) const
+{
+	if (!ensureMsgf(State.ItemUid.IsValid(), TEXT("[Inventory] 유효하지 않은 Uid")))
+		return false;
+	
+	const FIndex& CurIndex = Entries.EnsureIndex();
+	
+	if (!ensureMsgf(!CurIndex.IdByUid.Contains(State.ItemUid),
+		TEXT("[Inventory] 중복된 Uid : %s"), *State.ItemUid.ToString()))
+		return false;
+	return true;
 }

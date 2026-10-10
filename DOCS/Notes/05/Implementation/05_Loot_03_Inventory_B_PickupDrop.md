@@ -10,7 +10,7 @@
 
 **주운 아이템이 인벤토리에 들어가고, G로 버리면 픽업이 되돌아 나온다.** 배낭을 주우면 자동으로 매지고, 버리면 안의 내용물이 통째로 따라 나간다.
 
-> **★ 03-A가 끝나 있어야 한다.** 이 구간의 함수는 전부 03-A의 단일 쓰기 지점(`InsertEntry` · `RemoveSelf` · `AssignSortKey` · `MoveEntry` · `SetEntryCharges`)과 판정 함수(`CanFit` · `CanPlaceInSlot` · `GetEntryInSlot`) 위에 얹힌다.
+> **★ 03-A가 끝나 있어야 한다.** 이 구간의 함수는 전부 03-A의 단일 쓰기 지점(`InsertEntry`(몸통 `AppendEntry`) · `RemoveSelf` · `AssignSortKey` · `MoveEntry` · `SetEntryCharges` · `SetEntryStat`)과 파생 색인(`Entries.EnsureIndex()` — 2026-10-11부터 리스트, D-100 · D-113)과 판정 함수(`CanFit` · `CanPlaceInSlot` · `GetEntryInSlot`) 위에 얹힌다.
 
 **완료 조건 — 03-B 몫 (번호는 통합 문서의 것을 유지한다)**
 
@@ -26,6 +26,7 @@
 - [ ] **12.** 스폰 직후 **상의·하의를 입고 시작한다** (`StartingEquipment`)
 - [ ] **★ 배낭에 아이템 4개 이상을 넣고 순서를 섞은 뒤** 버렸다 다시 주우면 **그 순서 그대로다** — `Parent` 관계뿐 아니라 **`SortKey`도** 살아난다 (11차, 완료 조건 20)
   > **개수와 "섞기"를 조건에 적는 이유:** 두세 개면 우연히 맞아서 **통과했는데 안 고쳐진 상태**가 된다
+- [ ] **22.** (2026-10-07, D-098) 배낭을 버렸다 다시 주우면 `EPInvDumpServer`에서 **`EntryId`는 전부 새 번호인데 `Uid`는 배낭 · 내용물 모두 버리기 전과 같다**
 
 **★ Step 02에서 이월된 검증 2건** — `Status/05_Loot_STATUS.md`가 *"Step 03의 `DropCooldown`이 같은 경로를 쓰므로 그때 함께 검증"* 으로 넘긴 것이다. **번호를 매기지 않는다.**
 
@@ -163,35 +164,82 @@ int32 UEPInventoryComponent::AddSubtree(int32 Parent, FName SlotId,
     //   호출자(TryAutoEquip)가 미리 확인하지만, §7-3 부착이 두 번째 호출자로 예고돼 있다
     if (!CanPlaceInSlot(Parent, SlotId, In[0].ItemId)) return INDEX_NONE;
 
-    FScopedInventoryNotify Guard(this);
-    TMap<int32, int32> OldToNew;
-    for (const FEPInventoryEntry& Src : In)
+    // ★★ 넣기 **전에** 전부 검사한다 — 전부 아니면 전무 (2026-10-07 · 2026-10-08 보강)
+    //   루프 도중에 거절되면 서브트리가 **반만 들어가고** 나머지는 픽업과 함께 사라진다
+    //   — 값 복사 설계가 막으려던 소실이다. 그리고 아래 루프는 색인을 안 읽으므로(D-106)
+    //   **여기가 유일한 검사다.**
     {
-        const bool  bRoot     = (Src.ParentEntryId == INDEX_NONE);
+        const FEPInventoryIndex& Ix = Entries.EnsureIndex();   // 리스트의 색인 (2026-10-11, D-113)
+        // ★★ 루트는 "0번 원소" 하나다. 검사와 삽입이 같은 정의를 쓴다 (D-105)
+        if (!ensureMsgf(In[0].ParentEntryId == INDEX_NONE,
+                TEXT("[Inventory] AddSubtree: 루트가 정규화되지 않았다 (%d)"), In[0].EntryId))
+            return INDEX_NONE;
+
+        TSet<int32> SeenOld;
+        TSet<FGuid> SeenUid;
+        SeenOld.Reserve(In.Num());
+        SeenUid.Reserve(In.Num());
+        for (int32 i = 0; i < In.Num(); ++i)
+        {
+            const FEPInventoryEntry& Src = In[i];
+            const FGuid& U = Src.State.ItemUid;
+            // ① 정체 — 유효하고, 이 컴포넌트에 없고, 입력 안에서도 겹치지 않는다 (D-098)
+            if (!ensureMsgf(U.IsValid() && !Ix.IdByUid.Contains(U) && !SeenUid.Contains(U),
+                    TEXT("[Inventory] AddSubtree: 정체가 없거나 겹친다 (%s)"), *Src.ItemId.ToString()))
+                return INDEX_NONE;
+            // ② 옛 번호 — 입력 안에서 겹치지 않는다 (D-105)
+            //   겹치면 OldToNew가 덮여 뒤 원소가 엉뚱한 부모에 붙고 반환 루트도 틀린다
+            if (!ensureMsgf(!SeenOld.Contains(Src.EntryId),
+                    TEXT("[Inventory] AddSubtree: 옛 EntryId가 겹친다 (%d)"), Src.EntryId))
+                return INDEX_NONE;
+            // ③ 자식의 부모는 INDEX_NONE이 아니고 앞에서 이미 나왔다 — 전위 순회 계약 (03-2)
+            //   INDEX_NONE을 따로 막는 이유: 손으로 만든 입력의 루트 EntryId가 INDEX_NONE이면
+            //   SeenOld에 −1이 들어가 "부모가 −1인 자식"이 통과한다
+            if (!ensureMsgf(i == 0 || (Src.ParentEntryId != INDEX_NONE && SeenOld.Contains(Src.ParentEntryId)),
+                    TEXT("[Inventory] AddSubtree: 부모가 앞에 없다 (%d)"), Src.EntryId))
+                return INDEX_NONE;
+            SeenOld.Add(Src.EntryId);
+            SeenUid.Add(U);
+        }
+    }
+
+    FScopedInventoryNotify Guard(this);
+
+    // ★★ 루트 키는 루프 **앞에서** 한 번 구한다 — 색인을 읽는 마지막 지점이다 (D-106)
+    //   재정규화가 필요하면 여기서 돈다. 루프가 시작되면 색인은 낡고, 다시 읽지 않는다
+    const int64 RootKey = KeySpace_NextAtEnd(Parent);
+
+    // ★★ 이 루프는 색인을 읽지 않는다 (D-106). 원소마다 InsertEntry를 부르면 정체 검사 · 키 계산이
+    //   직전 원소의 무효화 때문에 매번 O(N)으로 색인을 다시 만든다 — 서브트리 K개면 O(K·N)
+    //   검사는 위에서 끝났고, 새 부모 번호는 OldToNew가 든다
+    TMap<int32, int32> OldToNew;
+    OldToNew.Reserve(In.Num());
+    for (int32 i = 0; i < In.Num(); ++i)
+    {
+        const FEPInventoryEntry& Src = In[i];
+        const bool  bRoot     = (i == 0);                          // ★ 검사부와 같은 정의 (D-105)
         const int32 NewParent = bRoot ? Parent
-                                      : OldToNew.FindRef(Src.ParentEntryId);   // ★ 부모가 먼저 들어와 있다
-        const FName NewSlot   = bRoot ? SlotId : Src.SlotId;   // ★ 루트의 자리는 호출자가 정한다
+                                      : OldToNew.FindChecked(Src.ParentEntryId);   // ★ 검사 ③이 보장한다
+        const FName NewSlot   = bRoot ? SlotId : Src.SlotId;       // ★ 루트의 자리는 호출자가 정한다
 
-        const int32 NewId = InsertEntry(NewParent, Src.ItemId, Src.State, NewSlot);
-
-        // ★★ 루트가 아니면 스냅샷의 키를 그대로 복원한다 (11차)
+        // ★★ 루트가 아니면 스냅샷의 키를 그대로 쓴다 (11차)
         //   부모가 방금 만들어진 빈 컨테이너라 형제 충돌이 없다 —
         //   그래서 버린 배낭을 되주우면 내용물 순서가 그대로 살아난다.
-        //   루트는 InsertEntry가 발급한 "이 컨테이너 맨 뒤"를 쓴다 (Src.SortKey는 0)
-        if (Src.ParentEntryId != INDEX_NONE) AssignSortKey(NewId, Src.SortKey);
+        //   루트는 "이 컨테이너 맨 뒤"다 (Src.SortKey는 0)
+        const int64 NewKey    = bRoot ? RootKey : Src.SortKey;
 
-        OldToNew.Add(Src.EntryId, NewId);
+        OldToNew.Add(Src.EntryId, AppendEntry(NewParent, Src.ItemId, Src.State, NewSlot, NewKey));
     }
-    return OldToNew[In[0].EntryId];
+    return OldToNew.FindChecked(In[0].EntryId);
 }
 ```
 
-> **★ 자식 키 복원이 `InsertEntry`의 "맨 뒤 발급"을 덮어쓴다.** 덮어쓰지 않고 `InsertEntry`가 발급한 값을 그냥 두면 **순서는 `In` 배열 순서로 정해지는데, `In`은 `RemoveChildrenRecursive`가 `Entries.Items`를 순회해 만든 것이라 FastArray 내부 순서다.** 화면 순서가 아니다. 증상은 *"배낭을 버렸다 주우면 내용물이 뒤섞인다"* 이고, **아이템이 두세 개면 안 보인다.**
+> **★ 자식은 스냅샷 키를 `AppendEntry`에 바로 넘긴다** (2026-10-08 전에는 `InsertEntry`가 발급한 "맨 뒤"를 `AssignSortKey`로 덮어썼다). 스냅샷 키 대신 "맨 뒤"를 새로 발급하면 **순서는 `In` 배열 순서로 정해지는데, `In`은 `RemoveChildrenRecursive`가 `Entries.Items`를 순회해 만든 것이라 FastArray 내부 순서다.** 화면 순서가 아니다. 증상은 *"배낭을 버렸다 주우면 내용물이 뒤섞인다"* 이고, **아이템이 두세 개면 안 보인다.**
 
-> **`InsertEntry`를 쓰는 것이지 `AddItem`을 쓰는 게 아니다.** 자식에 `AddItem`을 부르면 둘이 동시에 깨진다 —
+> **`AppendEntry`(`InsertEntry`의 몸통)를 쓰는 것이지 `AddItem`을 쓰는 게 아니다.** 자식에 `AddItem`을 부르면 둘이 동시에 깨진다 —
 > ① **`bFungible` 합치기**가 돌아 배낭 속 현금이 다른 컨테이너 현금과 합쳐진다
 > ② **`CanFit`이 넘겨받은 `Parent` 기준**으로 검사하는데, 자식은 루트 **안**으로 들어간다
-> 그래서 03-2가 발급·삽입·`MarkItemDirty`만 하는 `InsertEntry`를 따로 뒀다.
+> 그래서 03-2가 발급·삽입·`MarkItemDirty`만 하는 `InsertEntry`를 따로 뒀다. 2026-10-08부터는 그 몸통 `AppendEntry`를 부른다 — `InsertEntry`의 정체 검사 · 키 계산이 색인을 읽기 때문이다(D-106). 정체 검사는 위 넣기 전 검사가 대신한다.
 
 #### ★★ 목적지는 `(Parent, SlotId)` 쌍이다 — 기본값을 주지 않는다 (13차 신설)
 
@@ -235,11 +283,15 @@ AddSubtree(INDEX_NONE, NAME_None, Sub);       // §7-1 월드 컨테이너에서
 
 서브트리 전체 합을 검사하도록 **"고치면" 배낭을 되주울 때 자기 내용물이 본체 칸을 먹는 것으로 계산돼 완료 조건 9(되줍기)가 깨진다.**
 
-**★ `EntryId` 재매핑이 필수다.** 픽업이 든 번호는 **버린 사람의 것**이고 새 인벤토리에서는 `NextEntryId`로 다시 발급된다. `ParentEntryId`를 옛 번호 그대로 두면 자식이 고아가 되거나 **남의 엔트리에 매달린다.**
+**★ `EntryId` 재매핑이 필수다.** 픽업이 든 번호는 **버린 사람의 것**이고 새 인벤토리에서는 그 리스트의 `NextEntryId`로 다시 발급된다(D-114). `ParentEntryId`를 옛 번호 그대로 두면 자식이 고아가 되거나 **남의 엔트리에 매달린다.**
 
 > **`In[0]`이 루트라는 것은 탐색 결과가 아니라 계약이다** — `RemoveEntry`가 그렇게 만든다(03-2). `ParentEntryId == INDEX_NONE`인 것을 찾는 방식으로 쓰면 **배낭 안에 있던 무기를 버릴 때 루트를 못 찾는다.**
+>
+> **★★ 루트의 정의는 `i == 0` 하나다** (2026-10-08, D-105). 옛 판본은 검사가 *"0번 원소"*, 삽입이 *"`ParentEntryId == INDEX_NONE`"* 으로 두 벌이었다. 지금은 검사가 **`In[0]`의 부모가 `INDEX_NONE`이고 나머지는 아니다**를 확인하므로 두 정의가 같은 원소를 가리키지만, 코드는 한 식만 쓴다.
 
-> **`OldToNew.FindRef`가 0을 돌려주면 데이터 오류다.** 부모가 배열에 없다는 뜻이고 지금 구조에서는 발생할 수 없다. `ensureMsgf` + 그 엔트리를 건너뛴다 — 조용히 `Parent=0`으로 넣으면 `EntryId=0`이 없으므로 **고아**가 되어 이 함수가 막으려던 상태로 돌아간다.
+> **`OldToNew`에 부모가 없는 경우는 넣기 전 검사가 이미 걸렀다** (2026-10-07). 그래서 2026-10-08부터 `FindChecked`다 — 걸리면 검사가 틀린 것이다. 부모가 앞에 없는 원소가 있으면 **아무것도 넣지 않고** `INDEX_NONE`이다. 옛 판본은 *"`ensureMsgf` + 그 엔트리를 건너뛴다"* 고 적었지만 코드에 없었고, 건너뛰는 것 자체가 **반만 넣기**라 틀린 처방이었다 — 건너뛴 원소와 그 자식들은 픽업이 파괴되며 사라진다. 조용히 `Parent=0`으로 넣으면 `EntryId=0`이 없으므로 **고아**가 된다.
+
+> **★ 정체(`ItemUid`)는 저절로 따라간다** (D-098). `AppendEntry`가 `Src.State`를 값으로 복사하므로 버린 배낭을 되주워도 **배낭과 내용물 전부가 같은 `ItemUid`** 를 갖는다 — 바뀌는 것은 `EntryId`뿐이다. 버리기가 `RemoveEntry`로 먼저 빼므로 되줍기 때 색인에 같은 정체가 없어 중복 검사에 걸리지 않는다.
 
 #### `bFungible`과의 관계 — 판정은 "자식이 있는가"다
 
@@ -285,7 +337,7 @@ if (Inv->AddItem(...))       // ← INDEX_NONE == -1 이라 실패를 성공으�
 > ① **월드 상호작용**, 그리고 **시간·비용·애님이 붙는 행동** → **어빌리티**
 > ② **서버가 이미 소유한 상태에 대한 변경 요청** → **`UEPInventoryComponent`의 서버 RPC**
 
-**드랍은 ②다.** 클라는 월드를 조회하지 않는다. `EntryId`는 서버가 발급해 `COND_OwnerOnly`로 그 클라에게만 보낸 번호이고, 클라는 그중 하나를 **지목**할 뿐이다. 서버 검증은 `ContainsEntry(EntryId)` 하나로 **완전하다** — 거리도 가시성도 클라/서버 불일치도 없다.
+**드랍은 ②다.** 클라는 월드를 조회하지 않는다. `EntryId`는 서버가 발급해 소유자 그룹(D-101)으로 그 클라에게만 보낸 번호이고, 클라는 그중 하나를 **지목**할 뿐이다. 서버 검증은 `ContainsEntry(EntryId)` 하나로 **완전하다** — 거리도 가시성도 클라/서버 불일치도 없다.
 
 **이 선은 Lyra의 것과 같다.** Lyra 게임 모듈 전체에서 손으로 쓴 서버 RPC는 **정확히 하나**이고, 그것이 인벤토리/장비의 활성 슬롯 변경이다.
 
@@ -531,7 +583,7 @@ int32 TryAutoEquip(const TArray<FEPInventoryEntry>& In);
 
 - **자동 착용을 고른 이유:** Step 04(UI)가 없어도 Step 03만으로 검증된다. 수동 착용은 조작 UI가 있어야 하는데 그건 다음 단계다
 - **교체는 지금 넣지 않는다.** "벗고 다시 줍기"로 충분하고, 교체를 넣으면 *현재 배낭 내용물을 어디로 옮기나*가 따라온다. **★ 그 "벗기"의 경로는 아래에서 확정한다**
-- **`RemoveEntry()`가 이 번호도 정리한다**(03-2). 배낭을 버렸는데 죽은 번호가 남으면 `GetCapacity`가 0을 돌려주고 Step 04에 **유령 구획**이 남는다
+- **정리할 번호가 없다**(9차). 착용은 배낭 엔트리의 `SlotId == "Back"`이 전부라 배낭을 버리면 `RemoveSelf`가 엔트리째 빼고 `GetEquippedBackpack()`이 저절로 `INDEX_NONE`이 된다 — **죽은 번호를 남길 문법이 없어** Step 04의 **유령 구획**이 생길 수 없다. 8차까지는 `EquippedBackpackEntryId` 필드를 여기서 손으로 비웠다
 
 #### ★★ 벗기는 `MoveEntry`가 아니라 `Server_DropItem`이다
 
@@ -562,7 +614,7 @@ int32 TryAutoEquip(const TArray<FEPInventoryEntry>& In);
 
 > **★ 이 결정이 `Server_EquipBackpack`을 없애는 첫 번째 조각이었다 (14차).** 벗기가 드랍이면 그 RPC는 **매기 전용**이 되고, 매기는 Step 03에서 서버 내부(`TryAutoEquip`)라 클라 호출자가 사라진다. 나머지 조각은 03-2에 있다 — 04-B가 `Server_MoveEntry`를 여는 이상 좁은 래퍼가 좁히는 것이 없다.
 
-> **슬롯이 셋(주무기/보조/배낭)이 되면 `TMap<EEPEquipSlot, int32>`로 간다** — §8 미정 #5. 지금은 **필드 둘**이다. 원소가 둘인 맵을 만들 이유가 없다.
+> ~~슬롯이 셋이 되면 `TMap<EEPEquipSlot, int32>`로 간다~~ — **9차에 무효가 됐다.** 장착 필드도 맵도 없고 **`FEPInventoryEntry::SlotId`가 진실**이다(§8 확정 "장비 슬롯"). 슬롯이 12개(핫바 4 + 착용 8)여도 같은 표현이다.
 
 ---
 
@@ -606,6 +658,9 @@ TArray<FName> StartingEquipment;      // ["Shirt_Basic", "Pants_Basic"]
 | 10 | `ClearLoot`이 버린 아이템까지 삭제 | `EP.Loot.Respawn` 시 플레이어 소지품이 사라짐 | Step 01의 `SpawnedPickups` 약참조 — **여기서 처음 검증 가능** |
 | **10c** | **`AddSubtree`가 서브트리 전체 칸을 검사하도록 "고침"** | 배낭을 되주울 때 자기 내용물이 본체 칸을 먹는 것으로 계산돼 **완료 조건 9가 깨진다** | 루트만 검사가 정확하다 (03-4) |
 | **10e** | **★ `SlotSize`에 하한이 없다** | 기본값이 1일 뿐이고 `ClampMin`도 `IsDataValid` 검사도 없다. **본체가 0칸이 되면** `CanFit`이 `0 + 0 <= 0` → **참**이라 `SlotSize = 0`인 아이템만 0칸 본체에 무한히 들어가고, `GetInsertionOrder`의 맨 앞이 본체라 **컨테이너에는 절대 안 들어간다.** 크래시도 경고도 없이 *"이 아이템만 가방에 안 들어간다"* | `IsDataValid`에 `SlotSize >= 1` (`05_Loot_00_ItemCore.md`). **컨테이너 깊이 증명이 쓰는 전제이기도 하다** |
+| **12** | **`MakeItemState`를 안 지난 `State` / 같은 `ItemUid`를 두 번 넣음** (2026-10-07, D-098) | `CheckIdentity`가 **`ensure` 후 거절**한다 — 줍기가 *"가방에 자리가 없습니다"* 처럼 실패로 보인다. **합치기 경로도 막는다**(2026-10-08, D-104 — 전에는 합치기가 검사를 건너뛰어 수량만 올랐다) | 발급 지점은 `MakeItemState` 하나 (`05_Loot_00_ItemCore.md` 00-6). 양쪽 표에 둔다 |
+| **12c** | **★★ `AddSubtree`가 넣는 도중에 거절됨** (2026-10-07) | 자식 하나가 `InsertEntry`에서 거절되면 **서브트리가 반만 들어가고**, 성공으로 처리된 픽업이 파괴되며 **나머지가 사라진다.** 정상 데이터에서는 안 나지만 dupe 시도 · 손상된 세이브에서 난다 | 넣기 **전에** 정체 · 옛 번호 중복 · 루트 · 부모 순서를 전부 검사한다 — 전부 아니면 전무 (03-4) ★★. 2026-10-08부터 루프는 검사하지 않으므로(D-106) **여기가 유일한 검사다** |
+| **12d** | **옛 `EntryId`가 입력 안에서 겹침** (2026-10-08, D-105) | 정체가 전부 달라도 통과한다 — `OldToNew`가 덮여 **뒤 원소가 엉뚱한 부모에 붙고** 반환 루트 번호도 틀린다. `RemoveEntry`의 출력에서는 안 나고 손상된 세이브 · 손으로 만든 입력에서 난다 | 넣기 전 검사 ② (03-4) |
 
 > **★★ 표시가 붙은 것 중 넷은 정상 플레이에서 반드시 나오고 증상이 원인을 가린다 — 4k(잔탄이 조용히 사라짐) · 4q(배치가 조금씩 무너짐) · 4v(장착이 무동작인데 `true`) · 4y(등이 비었는데 못 맨다).**
 >
@@ -617,6 +672,8 @@ TArray<FName> StartingEquipment;      // ["Shirt_Basic", "Pants_Basic"]
 
 | 날짜 | 무엇 |
 |---|---|
+| 2026-10-08 (Codex 반박 검토 — `review-verifier` 확인, 사용자 승인, `05_Loot_DECISIONS.md` D-104~D-106) | **`AddSubtree`가 일괄 경로가 됐다**(D-106) — 넣기 전 검사 · 루트 키를 루프 앞에서 색인 한 번으로 끝내고, 루프는 `AppendEntry`(색인을 안 읽는다)만 부른다. 자식 키는 `AssignSortKey`로 덮어쓰지 않고 바로 넘긴다. 옛 판본은 원소마다 색인을 다시 만들어 O(K·N)이었다. **넣기 전 검사 보강**(D-105) — 옛 `EntryId` 중복(`OldToNew`가 덮여 부모 연결 · 반환 루트가 틀어졌다), `In[0]`의 부모가 `INDEX_NONE`, 자식의 부모가 `INDEX_NONE`이 아님. 루트 정의를 `i == 0` 하나로. **원소 하나짜리 경로**는 `AddItem`으로 빠지는데 거기서 정체 검사가 합치기 앞으로 왔다(D-104, 함정 12) |
+| 2026-10-07 (확장성 재검토 — 사용자 승인, `05_Loot_DECISIONS.md` D-098~D-103) | **정체(`ItemUid`)가 서브트리와 함께 따라간다** — 버렸다 주워도 `EntryId`만 바뀐다(완료 조건 22). **`AddSubtree`가 넣기 전에 전부 검사한다** — `InsertEntry`의 정체 검사가 도중에 걸리면 서브트리가 반만 들어가 나머지가 사라졌다(함정 12c). 옛 판본이 *"`FindRef` 0이면 건너뛴다"* 고 적었지만 코드에 없었고 처방 자체가 반만 넣기였다. 9차 이전 문장 둘(*"이 번호도 정리한다"*, *"필드 둘"*)을 고쳤다 |
 | 2026-08-26 (15차 — **파일 분할**) | **통합 문서 `05_Loot_03_Inventory.md`(2692줄)를 03-A / 03-B 둘로 쪼갰다.** 8차의 *"파일을 쪼개지 않는다"* 를 뒤집는다 — 근거였던 *"`RemoveEntry`가 경계에서 갈린다"* 가 두 번 무너졌다(13차가 가운데 구간 삭제 / 제거 경로 셋이 전부 03-B). **직접적 계기는 열 함수의 본문이 통째로 빠진 것을 아무도 못 본 것**이다. **03-A-부록(기본 함수 열)은 A 문서에 있다** — `FindEntry`·`ContainsEntry`·`FindFungibleEntryId`·`GetEntryInSlot`·`GetEquippedEntryId`·`RemoveSelf`·`AssignSortKey`·`KeySpace_Min`·`KeySpace_NextAbove`·`KeyOf` 본문. 함정표는 대응 열로 라우팅(A 44 / B 16, 겹치는 4는 양쪽). **완료 조건 번호는 통합 문서의 1~20을 유지한다** |
 | 2026-08-25 (14차 — 사용자 지적) | **★★ `Server_EquipBackpack`을 없앴다.** 13차가 *"Step 03에 호출자 0개"* 까지 찾고 **04-A로 이동**을 골랐는데, 근거였던 `EP.Inv.Equip`이 **콘솔 커맨드**라 이 문서 자신의 규칙(*"커맨드는 내부 함수를 직접 부른다"*)대로면 **옮긴 자리에도 호출자가 0개**다. 그리고 9차의 근거 *"좁은 RPC가 넓은 RPC보다 낫다"* 는 **04-B가 `Server_MoveEntry`를 여는 이상 성립하지 않는다** — 넓은 문이 열린 뒤의 좁은 문은 표면을 안 줄인다. 배낭이 특별할 근거도 없다(`SlotPriority` ＋ `BodySlots`가 상의·하의·외투·배낭을 같은 모양으로 만든다 — **`TryAutoEquip`에 이미 적용한 규칙이 RPC 이름에만 안 적용돼 있었다**). 03-2 별도 절 재작성, 03-6 RPC 삭제, 함정 9f를 `Server_*` 일반으로, `EP.Inv.Equip`(04-A)도 `EP.Inv.Move`의 별칭이라 폐기 |
 | 2026-08-26 (15차) | **03-9에 커맨드 구현 형태를 적었다** — 여태 시그니처만 있었다. 자리는 **`Private/Inventory/EPInventoryDebugCommands.cpp` 전용 파일**(Step 01의 `EPLootDebugCommands.cpp`와 같은 형태). `FindInv(World, Args, ArgIdx)` 헬퍼, `ECVF_Cheat` ＋ `#if !(UE_BUILD_SHIPPING \|\| UE_BUILD_TEST)`, **반환값 로그 필수**(안 찍으면 결함 A-1의 검증이 성립하지 않는다), 서버 전용 가드의 예외는 `Dump` 둘. **`Owner` 타입을 코드에 맞춘다** — `TObjectPtr<UEPInventoryComponent>`이므로 `PostReplicatedReceive`에 `Cast`가 필요 없다(11차의 `UActorComponent` 판정을 뒤집는다 — Lyra는 리스트를 여러 컴포넌트가 쓸 여지를 둔 형태이고 우리는 소유자가 하나로 고정이다). **정의는 `.cpp`** — `FEPInventoryList`가 컴포넌트보다 위에 있어 인라인 본문은 불완전 타입이다 |
